@@ -91,7 +91,9 @@ class Handler(BaseHTTPRequestHandler):
             return self._deny()
         mods = modules()
         if path == "/api/modules":
-            return self._send(200, mods)
+            info = dict(mods, version=service._plugin_version(),
+                        user=(config.env("WEB_USER", "admin") or "admin") if config.env("WEB_PASSWORD") else "")
+            return self._send(200, info)
         if path == "/api/wtm/data":
             if not mods["wtm"]:
                 return self._send(404, {"success": False, "error": "웹툰 다운로더가 꺼져 있습니다 (WTM_ENABLED)."})
