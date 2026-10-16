@@ -79,6 +79,54 @@ class LibrariesTest(unittest.TestCase):
         self.assertEqual((libs[0]["db_type"], libs[0]["id"]), ("audiobook", 1))
 
 
+class EnvEscapeTest(unittest.TestCase):
+    def test_multiline_roundtrip(self):
+        value = '[{"name":"NID_AUT","value":"a\\b"},\n{"x":"y\"z"}]'
+        config.save_env({"WTM_NAVER_COOKIE_JSON": value})
+        self.assertEqual(config.read_env_file()["WTM_NAVER_COOKIE_JSON"], value)
+        with open(config.ENV_PATH, encoding="utf-8") as handle:
+            self.assertEqual(sum(1 for line in handle if line.startswith("WTM_NAVER_COOKIE_JSON=")), 1)
+
+
+class WebtoonHostTest(unittest.TestCase):
+    def test_settings_split_env_and_json(self):
+        from wtm import host
+        host.save_settings({"PARALLEL_TITLES": 4, "DOWNLOAD_ROOT": "/mnt/webtoon", "KAKAO_COOKIE": "a=b; c=d"})
+        with open(host.SETTINGS_PATH, encoding="utf-8") as handle:
+            self.assertEqual(json.load(handle), {"PARALLEL_TITLES": 4})
+        env = config.read_env_file()
+        self.assertEqual(env["WTM_DOWNLOAD_ROOT"], "/mnt/webtoon")
+        self.assertEqual(env["WTM_KAKAO_COOKIE"], "a=b; c=d")
+        cfg = host.load_settings()
+        self.assertEqual((cfg["PARALLEL_TITLES"], cfg["DOWNLOAD_ROOT"]), (4, "/mnt/webtoon"))
+
+    def test_question_mark_placeholder(self):
+        path = os.path.join(TMP, "q.db")
+        db = sqlite3.connect(path)
+        db.executescript("DROP TABLE IF EXISTS books; CREATE TABLE books(library_id INT, series_name TEXT);"
+                         "INSERT INTO books VALUES(1, 'A'), (2, 'B');")
+        db.commit()
+        db.close()
+        gw = bookoasis_db.Gateway("general", "sqlite:///" + path)
+        self.assertEqual(gw.fetch_all("SELECT series_name FROM books WHERE library_id = ?", (2,)), [{"series_name": "B"}])
+        self.assertEqual(gw._sql.__func__(type("G", (), {"scheme": "mysql"})(), "x = ?"), "x = %s")
+
+
+class HandoffTest(unittest.TestCase):
+    def test_enqueue_inside_library_only(self):
+        from gdw import handoff
+        service._db().close()  # state.db 스키마
+        service._write_json("runtime.json", {"buffer_seconds": 5, "libraries": [
+            {"db_type": "general", "id": 1, "roots": ["/mnt/lib"]}]})
+        self.assertTrue(handoff.enqueue("/mnt/lib/작품/1화.zip"))
+        self.assertFalse(handoff.enqueue("/mnt/lib/작품/1화.zip"))  # 대기 중 중복
+        self.assertFalse(handoff.enqueue("/mnt/other/1화.zip"))
+        db = service._db()
+        row = db.execute("SELECT root, action, item_type, status FROM event WHERE path=?", ("/mnt/lib/작품/1화.zip",)).fetchone()
+        db.close()
+        self.assertEqual(tuple(row), ("웹툰 다운로더", "create", "file", "pending"))
+
+
 class DispatchTest(unittest.TestCase):
     def test_unknown_and_bad_names(self):
         svc = service.Service()

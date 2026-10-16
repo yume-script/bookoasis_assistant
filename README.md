@@ -1,8 +1,15 @@
-# 드라이브 변경 감시 · 독립형 (gdrive_watch_sa)
+# BookOasis 보조 프로그램 · 독립형 (gdrive_watch_sa)
 
-Google Drive·로컬 폴더의 변경을 감지해 rclone VFS 캐시를 새로고침하고, 바뀐 폴더만 BookOasis에 부분 스캔을 요청합니다.
-BookOasis 플러그인으로 쓰던 [gdrive_watch](https://github.com/yume-script/gdrive_watch)(v1.18.8)를 **BookOasis 밖에서 따로 도는 프로그램**으로 옮긴 것입니다.
-감지·처리 로직(`worker.py`)과 관리 화면은 플러그인과 같고, 플러그인이라서 생기던 제약만 걷어냈습니다.
+BookOasis 플러그인으로 쓰던 두 가지를 **BookOasis 밖에서 따로 도는 프로그램 하나**로 옮겼습니다. 관리 화면·포트·비밀번호·`.env`는 하나이고,
+각 모듈의 무거운 일은 모듈마다 따로 도는 작업 프로세스가 합니다(한쪽이 느려지거나 죽어도 다른 쪽은 영향 없음).
+
+| 모듈 | 원본 | 하는 일 | 켜기 |
+|---|---|---|---|
+| **드라이브 변경 감시** | [gdrive_watch](https://github.com/yume-script/gdrive_watch) v1.18.8 | Google Drive·로컬 폴더 변경 감지 → rclone VFS 새로고침 → 바뀐 폴더만 BookOasis 부분 스캔 | `GDW_ENABLED=true` (기본) |
+| **웹툰 다운로더** | [webtoon_manager](https://github.com/yume-script/webtoon_manager) v1.39.3 | 네이버웹툰·카카오웹툰·카카오웹소설 구독/다운로드, kavita.yaml 등 | `WTM_ENABLED=true` |
+
+감지·다운로드 로직과 화면은 플러그인과 같고, 플러그인이라서 생기던 제약만 걷어냈습니다.
+두 모듈을 함께 켜면 **웹툰 회차가 라이브러리에 들어가는 즉시 드라이브 변경 감시가 VFS 새로고침 → BookOasis 부분 스캔**을 합니다(Drive 변경 감지를 기다리지 않음).
 
 ## 왜 독립형인가 (플러그인과 달라진 점)
 
@@ -69,6 +76,10 @@ docker compose up -d --build
 | `BOOKOASIS_DB_TYPES` | `general,adult,audiobook,video` | 읽을 세션 |
 | `BOOKOASIS_DB_URL_<TYPE>` | (없음) | 세션별로 따로 지정 (예: `BOOKOASIS_DB_URL_ADULT`) |
 | `LIBRARIES_FILE` | `DATA_DIR/libraries.manual.json` | DB 없이 쓸 때 보관함 정의 파일 |
+| `GDW_ENABLED` / `WTM_ENABLED` | `true` / `false` | 모듈 켜기/끄기. 드라이브 변경 감시를 끄면 `/`는 웹툰 화면으로 넘어감 |
+| `WTM_DATA_DIR` | `DATA_DIR/webtoon` | 웹툰 데이터(titles.json, 이력, 로그, settings.json) |
+| `WTM_HANDOFF_GDW` | `true` | 받은 회차를 드라이브 변경 감시에 바로 넘김 |
+| `WTM_DOWNLOAD_ROOT` 등 `WTM_…` | | 웹툰 저장 경로·임시 폴더·쿠키·알림 주소/토큰 (아래 "웹툰 다운로더" 참고) |
 
 `.env`가 아니라 실제 환경변수(systemd `Environment=`, docker `environment:`)로 준 값이 있으면 그 값이 우선합니다.
 
@@ -88,10 +99,44 @@ docker compose up -d --build
 4. `BOOKOASIS_URL`은 이제 BookOasis 컨테이너 "안"이 아니라 이 프로그램에서 접속할 주소입니다 (같은 호스트면 포트 매핑된 주소).
 5. `python3 app.py --check` 후 실행합니다.
 
+## 웹툰 다운로더
+`.env`에 `WTM_ENABLED=true`를 넣고 다시 시작하면 상단 메뉴에 **웹툰 다운로더**가 생깁니다(`/webtoon`). 화면과 기능은 플러그인 v1.39.3과 같습니다.
+> ⚠️ 본 프로그램의 사용으로 인해 발생하는 모든 저작권 분쟁 및 법적 문제에 대한 책임은 다운로드를 수행한 이용자에게 있습니다.
+> 저작권법 제30조(사적 이용을 위한 복제) 범위 안에서 개인 소장 목적으로만 쓰세요.
+
+**플러그인과 달라진 점**
+- 작업 프로세스(`wtm/worker_main.py`, nice 19)는 프로그램이 시작되면 바로 뜹니다. 플러그인 때는 화면을 열거나 BookOasis 요청이 있어야 스케줄러가 떴습니다.
+- 설정·BookOasis DB를 작업 프로세스도 직접 읽습니다(플러그인 시절 `worker_cfg.json`·`compare_library_cache.json`으로 넘겨주던 것 불필요, "웹툰 다운로더 화면을 한 번 열어야 라이브러리 목록이 전달됨" 같은 제약 없음).
+- 서비스를 멈추면 진행 중인 작업에 취소를 요청하고 작업 프로세스까지 정리하고 끝납니다.
+- 업데이트는 이 저장소를 `git pull` 후 다시 시작 (플러그인의 업데이트 배지·plugin_board 연동은 없음).
+- 받은 회차(zip·epub)가 라이브러리에 들어가면 드라이브 변경 감시 대기열에 바로 넣습니다(`WTM_HANDOFF_GDW`). 같은 폴더에 연달아 들어오는 회차는
+  '폴더가 조용해질 때까지' 묶여 새로고침·스캔이 한 번이고, 나중에 Drive 쪽에서 같은 파일을 감지해도 이미 등록된 파일로 건너뜁니다.
+  보관함 밖 경로는 넘기지 않습니다.
+
+**설정이 저장되는 곳** — 화면의 [설정 저장]이 알아서 나눠 씁니다.
+| 어디 | 무엇 |
+|---|---|
+| `.env`의 `WTM_…` | 저장 경로(`WTM_DOWNLOAD_ROOT`, `WTM_KAKAO_DOWNLOAD_ROOT`, `WTM_KAKAO_NOVEL_DOWNLOAD_ROOT`, `WTM_TEMP_DOWNLOAD_ROOT`), 쿠키(`WTM_NAVER_COOKIE_JSON`, `WTM_KAKAO_COOKIE`), 알림(디스코드·텔레그램·슬랙·ntfy 주소/토큰) |
+| `WTM_DATA_DIR/settings.json` | 자동 실행·주기, 구독 대상, 속도, 플랫폼별 옵션, 중복 확인 폴더/라이브러리 등 운영 옵션 |
+
+쿠키 JSON처럼 여러 줄인 값도 `.env`에는 한 줄로(`\n` 이스케이프) 저장됩니다. 쿠키는 화면에 붙여 넣는 것을 권장합니다.
+저장 경로는 BookOasis 보관함 경로와 **같은 경로로 보여야** 받은 회차가 그 보관함 스캔으로 이어집니다(드라이브 변경 감시와 같은 조건).
+
+**플러그인에서 옮겨 오기**
+1. BookOasis 웹툰 다운로더 화면에서 자동 실행을 끄고, 진행 중인 작업이 없을 때 플러그인을 비활성화합니다 (둘이 같이 돌면 같은 회차를 두 번 받습니다).
+2. BookOasis의 `plugins/data/webtoon_manager/` 내용을 `WTM_DATA_DIR`(기본 `data/webtoon/`)에 복사합니다 — 작품 목록, 이력, 쿠키 갱신 상태, kavita 기록이 이어집니다.
+3. 첫 실행 때 그 폴더의 `worker_cfg.json`(플러그인 설정 전체)을 `settings.json`과 `.env`로 옮깁니다. `.env`에 이미 적어 둔 `WTM_…` 값은 덮지 않습니다.
+4. 플러그인 설정에 적었던 경로가 BookOasis 컨테이너 안 경로라면, 이 서버에서도 같은 경로로 보이는지 확인합니다 (`python3 app.py --check`가 경로마다 ✓/✗).
+
+**명령줄 도구** (저장소 폴더에서)
+- `venv/bin/python -m wtm.backfill_all --dry-run` : 구독 작품의 빠진 과거 회차 일괄 받기 (먼저 `--dry-run`)
+- `venv/bin/python wtm/migrate_filenames.py --dry-run <폴더>` : 예전 파일 이름 형식 정리
+
 ## 관리 화면 / API
-- `GET /` 관리 화면 (플러그인 탭과 같은 화면: 현황, 변경 기록, 감시 설정, 스캔 일정, 로그)
-- `POST /api/rpc/<동작>` 화면이 쓰는 RPC (본문 JSON). `Content-Type: application/json`만 받습니다(다른 사이트 폼 전송 차단).
-- `GET /healthz` 인증 없이 `{"ok": true, "worker": true|false}` (모니터링용)
+- `GET /` 드라이브 변경 감시 (현황, 변경 기록, 감시 설정, 스캔 일정, 로그) · `GET /webtoon` 웹툰 다운로더
+- `POST /api/rpc/<동작>` 드라이브 변경 감시 RPC, `GET /api/wtm/data`·`POST /api/wtm/action` 웹툰 다운로더.
+  `Content-Type: application/json`만 받습니다(다른 사이트 폼 전송 차단).
+- `GET /api/modules` 켜진 모듈, `GET /healthz` 인증 없이 `{"ok": true, "worker": true|false}` (모니터링용)
 
 ## 파일
 | 파일 | 역할 |
@@ -102,14 +147,17 @@ docker compose up -d --build
 | `gdw/bookoasis_db.py` | BookOasis DB 직접 연결 (MySQL/MariaDB·SQLite) |
 | `gdw/screener.py` | 이미 등록된 파일 건너뛰기 (BookOasis DB 확인) |
 | `gdw/supervisor.py` | 자동 시작·워커 재시작·보관함 목록 갱신 |
-| `gdw/web.py` | 관리 화면 웹 서버 |
-| `worker.py` | 상주 워커: 변경 감지, VFS 새로고침, 스캔 요청 (플러그인과 같은 코드) |
-| `web/` | 관리 화면 (`index.html`, `style.css`, `script.js`) |
+| `gdw/web.py` | 관리 화면 웹 서버 (두 모듈 공용) |
+| `gdw/handoff.py` | 다른 모듈이 라이브러리에 넣은 파일을 드라이브 변경 감시 대기열로 |
+| `worker.py` | 드라이브 변경 감시 워커: 변경 감지, VFS 새로고침, 스캔 요청 (플러그인과 같은 코드) |
+| `wtm/` | 웹툰 다운로더 (플러그인 코드 그대로 + `host.py`: 설정·DB·데이터 폴더, `service.py`: 화면 연결) |
+| `web/` | 관리 화면 (`theme.css` 공용, `index.html`·`style.css`·`script.js` 드라이브 감시, `webtoon/` 웹툰) |
+| `docs/webtoon_manager_CHANGELOG.md` | 웹툰 다운로더 플러그인 시절 변경 기록 |
 | `deploy/`, `Dockerfile`, `docker-compose.example.yml` | 배포 예시 |
 
 테스트: `python3 -m unittest discover -s tests`
 
-## 기능 (플러그인과 동일)
+## 드라이브 변경 감시 기능 (플러그인과 동일)
 ### 동작
 ```
 Drive Changes/Activity 확인 (기본 60초)

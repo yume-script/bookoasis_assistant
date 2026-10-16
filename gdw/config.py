@@ -16,10 +16,16 @@ _LINE = re.compile(r"^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$"
 _LOADED = set()  # .env에서 읽어 os.environ에 넣은 키 (실제 환경변수로 이미 있던 키는 .env가 덮지 않음)
 
 
+_ESCAPES = {"\\": "\\", '"': '"', "n": "\n", "r": "\r"}
+
+
 def _unquote(value):
     if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
         inner = value[1:-1]
-        return inner.replace('\\"', '"').replace("\\\\", "\\") if value[0] == '"' else inner
+        if value[0] == "'":
+            return inner
+        # 큰따옴표 값: \\ \" \n \r 이스케이프 (쿠키 JSON처럼 여러 줄 값도 한 줄로 저장)
+        return re.sub(r"\\(.)", lambda m: _ESCAPES.get(m.group(1), "\\" + m.group(1)), inner)
     return re.split(r"\s+#", value, 1)[0].strip()  # 따옴표 없는 값 뒤의 ' # 주석'
 
 
@@ -27,7 +33,8 @@ def _quote(value):
     value = str(value)
     if value == "" or re.fullmatch(r"[A-Za-z0-9_./:@%+,=-]+", value):
         return value
-    return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+    escaped = value.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n").replace("\r", "\\r")
+    return '"' + escaped + '"'
 
 
 def read_env_file(path=None):

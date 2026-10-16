@@ -1,0 +1,52 @@
+/* web/theme.css - 두 화면(드라이브 변경 감시 / 웹툰 다운로더)이 함께 쓰는 색 변수와 상단 메뉴.
+   플러그인일 때 BookOasis 테마가 주던 var(--app-*) 변수를 여기서 정의한다. */
+/* 플러그인일 때 BookOasis 테마가 주던 전역 변수. 기본은 어두운 테마, 시스템이 밝은 테마면 밝게. */
+:root {
+  color-scheme: dark;
+  --app-bg-main: #14161a;
+  --app-bg-card: #1d2026;
+  --app-bg-card-hover: #252931;
+  --app-bg-sidebar: #181a1f;
+  --app-input-bg: #15171b;
+  --app-border: rgba(255, 255, 255, 0.12);
+  --app-border-light: rgba(255, 255, 255, 0.07);
+  --app-text-primary: #e6e8eb;
+  --app-text-secondary: #b4b9c2;
+  --app-text-muted: #8a909b;
+  --app-accent: #5b9cf5;
+  --app-primary: #5b9cf5;
+  --app-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    color-scheme: light;
+    --app-bg-main: #f4f5f7;
+    --app-bg-card: #ffffff;
+    --app-bg-card-hover: #f0f2f5;
+    --app-bg-sidebar: #eceef2;
+    --app-input-bg: #ffffff;
+    --app-border: rgba(0, 0, 0, 0.13);
+    --app-border-light: rgba(0, 0, 0, 0.07);
+    --app-text-primary: #1d2127;
+    --app-text-secondary: #464c57;
+    --app-text-muted: #6b717c;
+    --app-accent: #2f6fd6;
+    --app-primary: #2f6fd6;
+    --app-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+  }
+}
+html, body { margin: 0; background: var(--app-bg-main); color: var(--app-text-primary); }
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans KR", "Malgun Gothic", sans-serif; }
+.gdw-page { max-width: 1280px; margin: 0 auto; padding: 16px; box-sizing: border-box; }
+input, select, textarea, button { font-family: inherit; }
+input, select, textarea { background: var(--app-input-bg); color: var(--app-text-primary); border: 1px solid var(--app-border); }
+.app-nav { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; max-width: 1280px; margin: 0 auto;
+  padding: 12px 16px 0; box-sizing: border-box; }
+.app-nav a { padding: 6px 14px; border-radius: 999px; border: 1px solid var(--app-border); color: var(--app-text-secondary);
+  text-decoration: none; font-size: 13px; font-weight: 600; background: var(--app-bg-card); }
+.app-nav a:hover { background: var(--app-bg-card-hover); color: var(--app-text-primary); }
+.app-nav a.is-active { color: var(--app-accent); border-color: var(--app-accent); }
+.app-nav a[hidden] { display: none; }
+.app-off { max-width: 720px; margin: 40px auto; padding: 24px; border: 1px solid var(--app-border); border-radius: 12px;
+  background: var(--app-bg-card); line-height: 1.7; }
+.app-off code { background: var(--app-bg-main); padding: 1px 6px; border-radius: 4px; }

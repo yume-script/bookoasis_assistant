@@ -1,4 +1,5 @@
 {
-  "version": "2.0.0",
-  "based_on_plugin": "1.18.8"
+  "version": "2.1.0",
+  "based_on_plugin": "1.18.8",
+  "webtoon_manager": "1.39.3"
 }

@@ -1,0 +1,725 @@
+# -*- coding: utf-8 -*-
+import json
+import os
+import re
+import shutil
+import threading
+import time
+import zipfile
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from xml.sax.saxutils import escape as _xml_escape
+
+import requests
+
+from . import naver_api
+
+_SAFE_RE = re.compile(r'[\\/:*?"<>|]')
+_IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".webp", ".gif")
+
+
+def lower_thread_priority(nice_level=10):
+    """현재 스레드의 CPU 스케줄링 우선순위만 낮춘다(리눅스 전용). 다운로드/
+    압축 백그라운드 작업이 BookOasis 웹서버 본체나 다른 사용자 요청과 CPU를
+    두고 경쟁할 때 웹서버 쪽이 우선권을 갖게 하기 위함이다.
+
+    os.nice()는 프로세스 전체에 적용되어 BookOasis 전체가 느려지므로 쓰면
+    안 되고, 대신 os.setpriority(PRIO_PROCESS, tid, ...)를 현재 스레드의
+    커널 스레드 ID(threading.get_native_id() - 리눅스에서는 스레드마다
+    독립된 스케줄링 엔티티라 개별 우선순위 조정이 가능)에만 적용한다.
+
+    리눅스가 아니거나 권한이 없어 실패해도 조용히 무시한다 - 그냥 기본
+    우선순위로 도는 것뿐이라 무해하고, 이것 때문에 다운로드가 막히면 안 된다."""
+    try:
+        tid = threading.get_native_id()
+        # 이미 더 낮은 우선순위(더 큰 nice)라면 그대로 둔다 - 별도 작업 프로세스는 nice 19로
+        # 시작하는데, 여기서 10으로 '올려' 버리면 안 되므로.
+        cur = os.getpriority(os.PRIO_PROCESS, tid)
+        if int(nice_level) > cur:
+            os.setpriority(os.PRIO_PROCESS, tid, int(nice_level))
+        return True
+    except (AttributeError, OSError, ValueError):
+        return False
+
+
+# 시리즈 썸네일(메인 이미지)을 회차마다 매번 새로 내려받지 않도록 URL 기준으로 캐시한다.
+# {url: (bytes, 확장자) | None}. None은 "이 URL은 실패했음"(같은 실행 중 반복 재시도 방지).
+# 1.39.2: 예전에는 한 번 받은 표지를 프로세스가 끝날 때까지 전부 들고 있어서(카카오 원본 표지
+# 장당 평균 약 800KB) 작품 수백~수천 개를 처리하면 수백 MB가 쌓였고, 다시 안 쓰는 메모리라
+# 스왑으로 밀려났다. 표지는 "지금 받는 작품"에만 필요하므로 최근 것 몇 개만 남긴다.
+import collections as _collections
+_THUMBNAIL_CACHE = _collections.OrderedDict()
+_THUMB_MAX_ITEMS = 24                  # 동시에 받는 작품 수(최대 10) x 2 정도면 충분
+_THUMB_MAX_BYTES = 32 * 1024 * 1024
+_thumb_lock = threading.Lock()
+
+
+def _thumb_get(url):
+    with _thumb_lock:
+        if url in _THUMBNAIL_CACHE:
+            _THUMBNAIL_CACHE.move_to_end(url)
+            return True, _THUMBNAIL_CACHE[url]
+    return False, None
+
+
+def _thumb_put(url, value):
+    with _thumb_lock:
+        _THUMBNAIL_CACHE[url] = value
+        _THUMBNAIL_CACHE.move_to_end(url)
+        total = sum(len(v[0]) for v in _THUMBNAIL_CACHE.values() if v)
+        while _THUMBNAIL_CACHE and (len(_THUMBNAIL_CACHE) > _THUMB_MAX_ITEMS or total > _THUMB_MAX_BYTES):
+            _k, old = _THUMBNAIL_CACHE.popitem(last=False)
+            if old:
+                total -= len(old[0])
+
+
+def fetch_cover_bytes(session, thumbnail_url, timeout=10, log=None):
+    """시리즈 썸네일(메인 이미지)을 다운로드해서 (bytes, 확장자) 튜플로
+    반환한다. 실패하거나 URL이 없으면 None - 호출 측은 이걸 이유로 회차
+    다운로드 자체를 실패로 처리하면 안 된다(부가 기능이므로)."""
+    if not thumbnail_url:
+        return None
+    hit, cached = _thumb_get(thumbnail_url)
+    if hit:
+        return cached
+    try:
+        getter = session.get if session is not None else requests.get
+        resp = getter(thumbnail_url, timeout=timeout)
+        resp.raise_for_status()
+        ext = ".jpg"
+        for cand in (".jpg", ".jpeg", ".png", ".webp", ".gif"):
+            if cand in thumbnail_url.lower():
+                ext = cand
+                break
+        result = (resp.content, ext)
+    except Exception as e:  # noqa: BLE001
+        if log:
+            log("메인 이미지(썸네일) 다운로드 실패(무시하고 계속) - %s" % e)
+        result = None
+    _thumb_put(thumbnail_url, result)
+    return result
+
+
+def safe_name(name):
+    name = _SAFE_RE.sub("_", str(name)).strip()
+    return name or "untitled"
+
+
+def build_comicinfo_xml(series=None, number=None, sub_title=None, summary=None,
+                         writer=None, genre=None, web=None, age_rating=None,
+                         page_count=None, language_iso="ko", notes=None):
+    """Komga/Kavita/ComicRack 등이 표준으로 인식하는 ComicInfo.xml 내용을
+    만든다. 값이 없는 필드는 아예 태그를 안 넣는다(빈 태그보다 필드 자체가
+    없는 쪽이 리더들의 "정보 없음" 처리와 더 잘 맞는다). 텍스트는 전부
+    xml.sax.saxutils.escape로 이스케이프해서, 제목/작가명에 &, <, > 같은
+    문자가 있어도 깨진 XML이 나오지 않게 한다."""
+    def esc(v):
+        return _xml_escape(str(v)) if v not in (None, "") else ""
+
+    lines = ['<?xml version="1.0" encoding="utf-8"?>',
+             '<ComicInfo xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" '
+             'xmlns:xsd="http://www.w3.org/2001/XMLSchema">']
+    if series:
+        lines.append("  <Series>%s</Series>" % esc(series))
+    if number is not None:
+        lines.append("  <Number>%s</Number>" % esc(number))
+    if sub_title:
+        lines.append("  <Title>%s</Title>" % esc(sub_title))
+    if summary:
+        lines.append("  <Summary>%s</Summary>" % esc(summary))
+    if writer:
+        lines.append("  <Writer>%s</Writer>" % esc(writer))
+    if genre:
+        lines.append("  <Genre>%s</Genre>" % esc(genre))
+    if web:
+        lines.append("  <Web>%s</Web>" % esc(web))
+    if age_rating:
+        lines.append("  <AgeRating>%s</AgeRating>" % esc(age_rating))
+    if page_count is not None:
+        lines.append("  <PageCount>%s</PageCount>" % esc(page_count))
+    if language_iso:
+        lines.append("  <LanguageISO>%s</LanguageISO>" % esc(language_iso))
+    if notes:
+        lines.append("  <Notes>%s</Notes>" % esc(notes))
+    lines.append("</ComicInfo>")
+    return "\n".join(lines)
+
+
+def title_dir(download_root, title, title_id):
+    """작품(시리즈) 폴더 경로."""
+    return os.path.join(download_root, safe_name("%s (%s)" % (title, title_id)))
+
+
+def write_series_json(download_root, title, title_id, meta, log=None):
+    """시리즈 폴더(회차 zip들과 같은 레벨)에 series.json을 써서 BookOasis
+    자체 스캐너가 시리즈 단위 메타데이터(작가/줄거리/장르/표지 등)를 인식하게
+    한다. 각 회차 zip 안의 ComicInfo.xml(Komga/Kavita 같은 외부 리더용)과는
+    완전히 별개의, 폴더 레벨 파일이다.
+
+    스키마는 tools/scanner/metadata/ 파서들의 공통 반환 필드셋
+    (author/publisher/summary/link/score/release_date/genre/tags)을 따르고,
+    series.json은 "웹툰용" 전용으로 원격 표지 URL(cover_image_url)을 추가
+    지원한다고 스캐너 파서 가이드에 명시되어 있어 그 필드를 포함했다.
+    meta: {"author", "publisher", "summary", "link", "score", "release_date",
+           "genre", "tags", "cover_image_url"} 중 있는 키만 채워서 넘기면 됨.
+    실패해도(디스크 오류 등) 예외를 올리지 않고 조용히 무시한다 - 다운로드
+    자체를 막을 이유가 없는 부가 메타데이터이기 때문이다."""
+    try:
+        series_dir = title_dir(download_root, title, title_id)
+        os.makedirs(series_dir, exist_ok=True)
+        data = {
+            "author": meta.get("author") or "",
+            "publisher": meta.get("publisher") or "",
+            "summary": meta.get("summary") or "",
+            "link": meta.get("link") or "",
+            "score": meta.get("score") or 0,
+            "release_date": meta.get("release_date") or "",
+            "genre": meta.get("genre") or "",
+            "tags": meta.get("tags") or "",
+            "cover_image_url": meta.get("cover_image_url") or "",
+        }
+        path = os.path.join(series_dir, "series.json")
+        tmp_path = path + ".tmp"
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        os.replace(tmp_path, path)
+        return True
+    except Exception as e:  # noqa: BLE001
+        if log:
+            log("titleId=%s: series.json 쓰기 실패(무시하고 계속) - %s" % (title_id, e))
+        return False
+
+
+def temp_episode_dir(temp_root, title_id, episode_no, folder_zero_fill=4):
+    """회차 이미지를 내려받는 동안 쓰는 '임시' 작업 폴더. 실제 웹툰
+    라이브러리 경로(download_root - 원격/rclone 마운트일 수 있음)와는
+    완전히 분리된 별도 위치(기본값: 플러그인 데이터 폴더 밑, 항상 로컬
+    디스크)에 만든다. 압축 전 미완성 상태의 낱장 이미지 폴더가 BookOasis
+    스캐너가 실제로 보는 라이브러리 폴더 안에 절대 노출되지 않게 하기
+    위함이다. 다운로드가 끝나 compress_episode()가 성공하면 이 폴더는
+    삭제되고, 완성된 zip만 실제 웹툰 폴더로 옮겨진다.
+
+    경로에 제목(safe_name)을 안 쓰고 titleId만 쓰는 이유: 임시 폴더는
+    사람이 보는 게 아니라 다음 실행 때 같은 회차를 정확히 다시 찾아
+    이어받기(resume)만 하면 되므로, 제목이 나중에 바뀌어도(네이버 표기
+    변경 등) 경로가 안 흔들리게 titleId(고유 숫자)만 키로 쓴다."""
+    ep_name = str(episode_no).zfill(int(folder_zero_fill or 4))
+    return os.path.join(temp_root, str(title_id), ep_name)
+
+
+def _archive_prefix(title, episode_no, folder_zero_fill=4):
+    """압축파일명의 접두어(제목 + 회차). 실제 파일명은 여기에 ' 장수.zip'이
+    붙는다(장수는 압축해봐야 알 수 있어 접두어만 미리 정한다)."""
+    ep_name = str(episode_no).zfill(int(folder_zero_fill or 4))
+    return "%s %s화" % (safe_name(title), ep_name)
+
+
+# ---- 라이브러리 폴더 목록 캐시 ----------------------------------------------
+# "이미 받은 회차인가?"를 확인할 때마다 작품 폴더 전체를 os.listdir 했는데, 라이브러리가
+# rclone(구글 드라이브) 마운트면 회차 수백 개 폴더 목록 한 번에 수백 ms~수 초가 걸려
+# 회차마다 두 번씩 기다렸다. 목록을 잠깐(5분) 기억하고, 이 플러그인이 파일을 넣거나
+# 지울 때 바로 반영한다.
+_DIR_CACHE = {}
+_DIR_TTL = 300
+_dir_lock = threading.Lock()
+
+
+def _list_dir_cached(path):
+    now = time.time()
+    with _dir_lock:
+        ent = _DIR_CACHE.get(path)
+        if ent and now - ent[0] < _DIR_TTL:
+            return ent[1]
+    try:
+        names = set(os.listdir(path))
+    except OSError:
+        return None
+    with _dir_lock:
+        _DIR_CACHE[path] = (now, names)
+    return names
+
+
+def _dir_cache_add(path, name):
+    with _dir_lock:
+        ent = _DIR_CACHE.get(path)
+        if ent:
+            ent[1].add(name)
+
+
+def _dir_cache_remove(path, name):
+    with _dir_lock:
+        ent = _DIR_CACHE.get(path)
+        if ent:
+            ent[1].discard(name)
+
+
+def invalidate_dir(path=None):
+    """다른 곳에서 라이브러리 파일 이름을 바꿨을 때 호출(None이면 전부)."""
+    with _dir_lock:
+        if path is None:
+            _DIR_CACHE.clear()
+        else:
+            _DIR_CACHE.pop(path, None)
+
+
+# ---- 완성된 zip을 라이브러리로 옮기기(백그라운드) ---------------------------------
+# zip은 로컬 임시 폴더(temp_root/_outbox)에서 만들고, 라이브러리 폴더(원격 마운트일 수
+# 있음)로 옮기는 건 별도 스레드가 한다. 그동안 작업 스레드는 바로 다음 회차를 받는다.
+# 옮기기가 실패하면 파일은 _outbox에 남고 다음 실행 때 다시 옮긴다.
+_MOVE_WORKERS = 3
+# 옮기기 대기가 이보다 많으면(라이브러리 쓰기가 다운로드보다 느림) 다운로드 쪽이 잠깐 기다린다
+# - 로컬 임시 디스크에 zip이 무한정 쌓이지 않게.
+_MAX_PENDING_MOVES = 24
+_mover = None
+_mover_lock = threading.Lock()
+_pending = {}          # series_dir -> set(Future)
+
+
+def _get_mover():
+    global _mover
+    with _mover_lock:
+        if _mover is None:
+            def _init():
+                try:
+                    lower_thread_priority(10)
+                except Exception:  # noqa: BLE001
+                    pass
+            _mover = ThreadPoolExecutor(max_workers=_MOVE_WORKERS, thread_name_prefix="wtm_mover",
+                                        initializer=_init)
+        return _mover
+
+
+def _outbox_dir(temp_root):
+    return os.path.join(temp_root, "_outbox")
+
+
+def _move_into_library(src, series_dir, name, log=None):
+    """src(로컬 zip)를 series_dir/name 으로 원자적으로 옮긴다."""
+    dst = os.path.join(series_dir, name)
+    os.makedirs(series_dir, exist_ok=True)
+    try:
+        os.replace(src, dst)                      # 같은 디스크면 즉시
+    except OSError:
+        tmp = dst + ".tmp"
+        shutil.copyfile(src, tmp)                 # 다른 디스크(원격 마운트 등)
+        os.replace(tmp, dst)
+        try:
+            os.remove(src)
+        except OSError:
+            pass
+    try:
+        os.remove(src + ".dest")
+    except OSError:
+        pass
+    _dir_cache_add(series_dir, name)
+    try:  # 독립형: 드라이브 변경 감시에 바로 반영 요청 (VFS 새로고침 → BookOasis 부분 스캔)
+        from .host import file_ready
+        file_ready(dst)
+    except Exception:  # noqa: BLE001
+        pass
+    return dst
+
+
+def _queue_move(src, series_dir, name, log=None, wait=False):
+    with open(src + ".dest", "w", encoding="utf-8") as f:
+        json.dump({"series_dir": series_dir, "name": name}, f, ensure_ascii=False)
+    if wait:
+        return _move_into_library(src, series_dir, name, log=log)
+
+    def _job():
+        try:
+            return _move_into_library(src, series_dir, name, log=log)
+        except Exception as e:  # noqa: BLE001
+            if log:
+                log("라이브러리로 옮기기 실패(다음 실행 때 다시 시도): %s -> %s (%s)" % (name, series_dir, e))
+            raise
+    while True:
+        with _mover_lock:
+            n_pending = sum(len(v) for v in _pending.values())
+        if n_pending < _MAX_PENDING_MOVES:
+            break
+        time.sleep(0.2)
+    fut = _get_mover().submit(_job)
+    with _mover_lock:
+        _pending.setdefault(series_dir, set()).add(fut)
+
+    def _done(f, sd=series_dir):
+        with _mover_lock:
+            s_ = _pending.get(sd)
+            if s_:
+                s_.discard(f)
+                if not s_:
+                    _pending.pop(sd, None)
+    fut.add_done_callback(_done)
+    return os.path.join(series_dir, name)
+
+
+def wait_moves(series_dir=None, timeout=600):
+    """옮기는 중인 zip이 라이브러리에 다 들어갈 때까지 기다린다(kavita.yaml 갱신 전 등)."""
+    with _mover_lock:
+        if series_dir is None:
+            futs = [f for s_ in _pending.values() for f in s_]
+        else:
+            futs = list(_pending.get(series_dir) or ())
+    end = time.time() + timeout
+    for f in futs:
+        try:
+            f.result(timeout=max(0.1, end - time.time()))
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def flush_outbox(temp_root, log=None):
+    """이전 실행에서 못 옮기고 남은 zip을 라이브러리로 옮긴다."""
+    root = _outbox_dir(temp_root)
+    if not os.path.isdir(root):
+        return 0
+    _ACTIVE_TEMP_ROOTS.add(temp_root)
+    n = 0
+    for sub in os.listdir(root):
+        box = os.path.join(root, sub)
+        if not os.path.isdir(box):
+            continue
+        for fname in os.listdir(box):
+            if fname.endswith(".tmp"):
+                try:   # 압축 도중 중단돼 남은 조각
+                    if time.time() - os.path.getmtime(os.path.join(box, fname)) > 3600:
+                        os.remove(os.path.join(box, fname))
+                except OSError:
+                    pass
+                continue
+            if not fname.endswith(".dest"):
+                continue
+            src = os.path.join(box, fname[:-5])
+            try:
+                with open(os.path.join(box, fname), encoding="utf-8") as f:
+                    d = json.load(f)
+                if os.path.exists(src):
+                    _move_into_library(src, d["series_dir"], d["name"], log=log)
+                    n += 1
+                else:
+                    os.remove(os.path.join(box, fname))
+            except Exception as e:  # noqa: BLE001
+                if log:
+                    log("남아 있던 zip 옮기기 실패(다음에 다시): %s (%s)" % (fname, e))
+        try:
+            os.rmdir(box)       # 비었으면 정리
+        except OSError:
+            pass
+    if n and log:
+        log("이전 실행에서 남은 회차 zip %d개를 라이브러리로 옮겼습니다" % n)
+    return n
+
+
+def _outbox_has(temp_root, prefix, title_id):
+    box = os.path.join(_outbox_dir(temp_root), str(title_id)) if temp_root else None
+    if not box or not os.path.isdir(box):
+        return None
+    for fname in os.listdir(box):
+        if fname.startswith(prefix) and fname.endswith(".zip"):
+            return os.path.join(box, fname)
+    return None
+
+
+_ACTIVE_TEMP_ROOTS = set()
+
+
+def find_existing_episode_archive(download_root, title, title_id, episode_no, folder_zero_fill=4):
+    """이미 압축까지 끝난 회차의 zip 파일을 찾는다. 파일명에 페이지 수가
+    포함돼 있어 정확한 이름을 미리 알 수 없으므로 '제목 00xx화#' 접두어로
+    찾는다."""
+    series_dir = title_dir(download_root, title, title_id)
+    prefix = _archive_prefix(title, episode_no, folder_zero_fill) + "#"
+    names = _list_dir_cached(series_dir)
+    for fname in (names or ()):
+        if fname.startswith(prefix) and fname.lower().endswith(".zip"):
+            return os.path.join(series_dir, fname)
+    # 라이브러리로 옮기는 중(또는 지난번에 못 옮긴) zip도 "이미 받음"으로 본다
+    for tr in list(_ACTIVE_TEMP_ROOTS):
+        hit = _outbox_has(tr, prefix, title_id)
+        if hit:
+            return hit
+    return None
+
+
+def download_episode(session, download_root, temp_root, title, title_id, episode_no,
+                      image_zero_fill=4, folder_zero_fill=4,
+                      max_concurrent=5, delay_seconds=1.0, timeout=10, log=None,
+                      force=False, image_list_func=None, referer=None):
+    """
+    1단계: 이미지만 내려받는다(압축은 하지 않음 - compress_episode()가 별도
+    단계로 처리). 이미 압축까지 끝난 회차는 네트워크 요청 없이 즉시 스킵한다.
+    이미지는 실제 웹툰 폴더(download_root)가 아니라 별도의 temp_root 임시
+    폴더에 내려받는다 - 압축 전 미완성 상태가 실제 라이브러리 경로(원격
+    마운트일 수 있음)에 노출되지 않게 하기 위함이다. 압축 전 낱장 폴더가
+    있는 경우, 기대 이미지 장수(원본에서 조회)와 실제 받은 장수를 비교해서
+    완전히 받아져 있을 때만 스킵하고, 중단된 채 남은 폴더라면 빠진 이미지만
+    이어받는다(resume). 이어받은 뒤에도 장수가 모자라면 ok=False를 반환해
+    호출 측이 compress_episode()를 부르지 않도록 한다(불완전 압축 방지).
+
+    force=True면 이미 완성된 압축파일이 있어도 무시하고 지운 뒤 처음부터
+    다시 받는다("선택 회차 다운로드"에서 사용자가 파일이 잘못됐다고 판단해
+    명시적으로 재다운로드를 요청한 경우용). force=False(기본값, 자동
+    다운로드 경로들이 사용)에서도, 기존 압축파일 자체가 손상돼 열리지 않으면
+    "이미 완료"로 잘못 취급하지 않고 자동으로 재다운로드한다.
+    image_list_func/referer: 네이버 외 플랫폼(카카오페이지)용. image_list_func()가
+    이미지 URL 목록을 돌려주면 그걸 쓰고, 플랫폼별 예외(인증 만료/미구매)는
+    그대로 호출 측으로 올린다. 없으면 기존처럼 네이버에서 조회한다.
+    반환: (ok: bool, skipped: bool, image_count: int, error: str|None)
+    """
+    existing_archive = find_existing_episode_archive(
+        download_root, title, title_id, episode_no, folder_zero_fill)
+    if existing_archive and os.path.getsize(existing_archive) > 0:
+        if force:
+            if log:
+                log("titleId=%s no=%s: 강제 재다운로드 요청 - 기존 압축파일 삭제 후 다시 받음" %
+                    (title_id, episode_no))
+            try:
+                os.remove(existing_archive)
+                _dir_cache_remove(os.path.dirname(existing_archive), os.path.basename(existing_archive))
+            except OSError as e:
+                return False, False, 0, "기존 파일 삭제 실패: %s" % e
+        else:
+            try:
+                with zipfile.ZipFile(existing_archive) as zf:
+                    cnt = len(zf.namelist())
+                return True, True, cnt, None
+            except Exception as e:  # noqa: BLE001
+                # 압축파일 자체가 손상돼 열리지 않음 - 예전에는 이런 경우도
+                # "이미 완료"로 잘못 취급해서 영원히 재다운로드가 안 됐다.
+                # force 여부와 무관하게 손상된 파일은 항상 지우고 다시 받는다.
+                if log:
+                    log("titleId=%s no=%s: 기존 압축파일이 손상된 것으로 보여 재다운로드함 - %s" %
+                        (title_id, episode_no, e))
+                try:
+                    os.remove(existing_archive)
+                    _dir_cache_remove(os.path.dirname(existing_archive), os.path.basename(existing_archive))
+                except OSError:
+                    pass
+
+    target_dir = temp_episode_dir(temp_root, title_id, episode_no, folder_zero_fill)
+
+    try:
+        # 버그 수정: 예전에는 target_dir에 이미지가 "하나라도" 있으면 무조건
+        # 완료로 간주하고 곧바로 압축 단계로 넘겼다. 컨테이너 재시작/네트워크
+        # 중단 등으로 다운로드가 중간에 끊긴 폴더도 이 조건을 그대로 만족해서,
+        # 불완전한 이미지 묶음이 "제목 00xx화#N.zip"이라는 정상 파일명으로
+        # 압축되어 버리면 find_existing_episode_archive()가 그걸 완료로 인식해
+        # 다시는 재다운로드되지 않는 문제가 있었다.
+        # 이제는 항상 먼저 원본 이미지 목록(기대 장수)을 조회해서, 이미 받은
+        # 파일 수와 비교한 뒤에만 완료로 판정한다. 이미 완전히 받은 회차라도
+        # HTML 상세페이지 요청 1회는 매번 발생하지만(성능 트레이드오프),
+        # 이미 압축이 끝난 회차는 위쪽의 find_existing_episode_archive()
+        # 단계에서 이 네트워크 요청 없이 걸러지므로 실제 영향 범위는 "다운로드는
+        # 됐는데 아직 압축 전인" 좁은 구간뿐이다.
+        if image_list_func is not None:
+            # 다른 플랫폼: 예외(인증 만료/미구매/네트워크)는 호출 측이 직접 처리
+            images = image_list_func()
+        else:
+            try:
+                images = naver_api.fetch_episode_images(session, title_id, episode_no, log=log)
+            except naver_api.NaverAuthExpired:
+                raise
+            except naver_api.NaverPaidEpisode:
+                raise
+            except Exception as e:  # noqa: BLE001
+                return False, False, 0, str(e)
+
+        expected_count = len(images)
+
+        if os.path.isdir(target_dir):
+            existing_files = [f for f in os.listdir(target_dir) if f.lower().endswith(_IMAGE_EXTS)]
+            if expected_count > 0 and len(existing_files) >= expected_count:
+                # 이미 기대 장수만큼 다 받아져 있음 - 압축만 안 됐을 뿐 완료 상태.
+                return True, True, len(existing_files), None
+            if existing_files and log:
+                log("titleId=%s no=%s: 이전에 중단된 다운로드로 보임(%d/%d장) - 이어받기 시도" %
+                    (title_id, episode_no, len(existing_files), expected_count))
+
+        os.makedirs(target_dir, exist_ok=True)
+        if referer is None:
+            referer = "%s?titleId=%s&no=%s" % (naver_api.DETAIL_URL, title_id, episode_no)
+
+        def _dl_one(idx_url):
+            idx, img_url = idx_url
+            ext = ".jpg"
+            for cand in (".jpg", ".jpeg", ".png", ".webp", ".gif"):
+                if cand in img_url.lower():
+                    ext = cand
+                    break
+            fname = str(idx + 1).zfill(int(image_zero_fill or 4)) + ext
+            fpath = os.path.join(target_dir, fname)
+            if os.path.exists(fpath) and os.path.getsize(fpath) > 0:
+                # 이미 받아둔 파일 - 이어받기(resume)의 핵심: 중단됐던 다운로드도
+                # 이미 받은 낱장은 다시 받지 않고 빠진 것만 채운다.
+                return True
+            try:
+                resp = session.get(img_url, headers={"Referer": referer}, timeout=timeout)
+                resp.raise_for_status()
+                with open(fpath, "wb") as f:
+                    f.write(resp.content)
+                return True
+            except Exception as e:  # noqa: BLE001
+                if log:
+                    log("이미지 다운로드 실패 titleId=%s no=%s idx=%s: %s" %
+                        (title_id, episode_no, idx, e))
+                return False
+
+        ok_count = 0
+        # 이미지 받는 하위 스레드도 부모(작업 스레드)와 같은 낮은 우선순위로 돌게 한다.
+        # (예전에는 작업 스레드만 낮추고 실제로 일하는 하위 스레드는 기본 우선순위였다)
+        try:
+            _prio = os.getpriority(os.PRIO_PROCESS, threading.get_native_id())
+        except (AttributeError, OSError):
+            _prio = None
+        _init = (lambda: lower_thread_priority(_prio)) if _prio else None
+        with ThreadPoolExecutor(max_workers=max(1, int(max_concurrent or 5)), initializer=_init) as ex:
+            futures = [ex.submit(_dl_one, pair) for pair in enumerate(images)]
+            for fut in as_completed(futures):
+                if fut.result():
+                    ok_count += 1
+
+        if ok_count == 0:
+            shutil.rmtree(target_dir, ignore_errors=True)
+            if os.path.isdir(target_dir) and log:
+                # ignore_errors=True라 예외는 안 나지만, 원격/네트워크 마운트에서는
+                # 삭제가 조용히 실패(또는 지연)할 수 있다. 그대로 두면 다음번에
+                # "이전에 중단된 다운로드로 보임" 이어받기 경로로 자연스럽게
+                # 재시도되긴 하지만, 원인 파악을 위해 최소한 로그는 남긴다.
+                log("titleId=%s no=%s: 실패한 다운로드 폴더 정리가 안 됨(원격 마운트 지연 등으로 "
+                    "의심됨) - %s" % (title_id, episode_no, target_dir))
+            return False, False, 0, "이미지 0장 저장됨(전체 실패)"
+
+        if expected_count > 0 and ok_count < expected_count:
+            # 이번 시도로도 다 못 채움 - 폴더는 지우지 않고 그대로 둬서 다음
+            # 재시도 때 이어받을 수 있게 한다. ok=False라서 호출 측이
+            # compress_episode()를 부르지 않으므로 불완전 압축도 방지된다.
+            return False, False, ok_count, ("이미지 %d장 중 %d장만 받음(불완전, 다음 시도 때 이어받음)" %
+                                             (expected_count, ok_count))
+
+        return True, False, ok_count, None
+    finally:
+        # 성공/실패와 무관하게 다음 요청 전에 항상 쉰다. 실패 시 이 딜레이 없이
+        # 바로 다음 회차로 넘어가면 텀 없는 연속 요청이 되어 네이버 쪽의
+        # 레이트리밋/일시 차단을 유발하고, 그 차단 상태에서는 정상 페이지 대신
+        # 빈 응답이 와서 "이미지 목록을 찾지 못함"이 연쇄적으로 계속되는
+        # 악순환이 생길 수 있다(실제로 관찰된 패턴).
+        if delay_seconds:
+            time.sleep(float(delay_seconds))
+
+
+def compress_episode(download_root, temp_root, title, title_id, episode_no,
+                      folder_zero_fill=4, log=None, comicinfo_meta=None,
+                      zip_stored=True, session=None, cover_url=None, async_move=True):
+    """2단계(별도 단계): download_episode()로 temp_root 임시 폴더에 완전히
+    다 받아진 회차 이미지를 '제목 00xx화#장수.zip'으로 압축해서 실제 웹툰
+    폴더(download_root)로 옮기고, 임시 낱장 폴더는 삭제한다. 다운로드
+    자체와 완전히 분리된 단계라, 다운로드 도중에는 호출하지 않고
+    download_episode()가 성공적으로 끝난 뒤에만 호출한다.
+
+    zip_stored=True(기본값)면 ZIP_STORED(무압축 저장)로 묶는다. 이미지가 이미
+    JPEG로 압축돼 있어 DEFLATE를 걸어도 용량은 거의 안 줄면서 CPU만 많이 쓰기
+    때문에, 서버 리소스를 아끼려면 저장만 하는 쪽이 합리적이다. 용량을 조금
+    더 줄이고 싶으면 zip_stored=False로 DEFLATE를 쓸 수 있다.
+
+    comicinfo_meta가 주어지면(dict: series/sub_title/summary/writer/genre/
+    web/age_rating/notes 키를 선택적으로 포함) Komga/Kavita 등이 인식하는
+    ComicInfo.xml을 같은 zip 안에 함께 넣는다. PageCount는 실제 압축된
+    이미지 장수로 자동 채운다. XML 생성에 실패해도(예: 값 이상) 이미지
+    압축 자체는 그대로 진행한다 - 메타데이터는 부가 정보일 뿐이라 이것
+    때문에 다운로드가 실패로 처리되면 안 된다.
+
+    cover_url이 주어지면(보통 시리즈 썸네일 URL) 그 이미지를 내려받아
+    회차 실제 컷 이미지들보다 파일명이 앞서도록("0000_cover.<확장자>")
+    zip 맨 앞에 함께 넣는다 - 대부분의 리더는 zip 안 이미지를 파일명
+    순서대로 페이지로 넘기므로, 결과적으로 리더에서 폈을 때 메인
+    이미지(표지)가 1페이지로 보인다. session이 주어지면 그 세션(쿠키
+    포함)으로 받고, 없으면 새 요청을 만든다. 같은 URL은 프로세스 생존
+    기간 동안 캐시해서 회차마다 반복 다운로드하지 않는다. 다운로드에
+    실패해도 조용히 건너뛸 뿐 회차 압축 자체는 정상 진행한다.
+
+    이미 압축된 파일이 있으면 아무 것도 안 하고 그 경로를 반환한다(스킵).
+    압축할 낱장 폴더 자체가 없으면(예: 애초에 이미지 다운로드가 실패한 경우)
+    실패로 처리한다.
+    반환: (ok: bool, archive_path: str|None, message: str)
+    """
+    existing = find_existing_episode_archive(download_root, title, title_id, episode_no, folder_zero_fill)
+    if existing and os.path.getsize(existing) > 0:
+        return True, existing, "이미 압축되어 있음"
+
+    target_dir = temp_episode_dir(temp_root, title_id, episode_no, folder_zero_fill)
+    if not os.path.isdir(target_dir):
+        return False, None, "압축할 폴더가 없음(다운로드가 안 된 상태)"
+
+    files = sorted(f for f in os.listdir(target_dir) if f.lower().endswith(_IMAGE_EXTS))
+    if not files:
+        return False, None, "압축할 이미지가 없음"
+
+    # 압축 결과물(zip)은 처음부터 실제 웹툰 폴더(series_dir)에 ".tmp" 이름으로
+    # 만들고, 다 쓴 뒤 os.replace()로 원자적 교체한다 - 이러면 압축 도중에
+    # 죽어도 "완성된 이름"의 파일이 실제 라이브러리 경로에 절대 안 생긴다.
+    # (이미지 자체는 temp_root라는 별도 위치에서 압축 전까지 머무른다.)
+    series_dir = title_dir(download_root, title, title_id)
+    count = len(files)
+    archive_name = "%s#%d.zip" % (_archive_prefix(title, episode_no, folder_zero_fill), count)
+    # 1.34.0: zip은 로컬 임시 폴더(_outbox)에서 만들고 라이브러리로는 백그라운드로 옮긴다
+    # (라이브러리가 원격 마운트여도 다음 회차 다운로드가 기다리지 않게). 옮기는 동안에도
+    # find_existing_episode_archive()가 _outbox를 보므로 중복으로 받지 않는다.
+    _ACTIVE_TEMP_ROOTS.add(temp_root)
+    box = os.path.join(_outbox_dir(temp_root), str(title_id))
+    os.makedirs(box, exist_ok=True)
+    local_zip = os.path.join(box, archive_name)
+    archive_path = os.path.join(series_dir, archive_name)
+    tmp_path = local_zip + ".tmp"
+    try:
+        cover = fetch_cover_bytes(session, cover_url, log=log) if cover_url else None
+        with zipfile.ZipFile(tmp_path, "w",
+                              zipfile.ZIP_STORED if zip_stored else zipfile.ZIP_DEFLATED) as zf:
+            if cover:
+                cover_bytes, cover_ext = cover
+                # 파일명이 "0000_cover" < "0001.jpg" 순으로 정렬되어 리더가
+                # 파일명 순으로 페이지를 넘길 때 항상 맨 앞(1페이지)이 된다.
+                zf.writestr("0000_cover" + cover_ext, cover_bytes)
+            for fname in files:
+                zf.write(os.path.join(target_dir, fname), arcname=fname)
+            if comicinfo_meta:
+                try:
+                    xml_str = build_comicinfo_xml(
+                        series=comicinfo_meta.get("series") or title,
+                        number=episode_no,
+                        sub_title=comicinfo_meta.get("sub_title"),
+                        summary=comicinfo_meta.get("summary"),
+                        writer=comicinfo_meta.get("writer"),
+                        genre=comicinfo_meta.get("genre"),
+                        web=comicinfo_meta.get("web"),
+                        age_rating=comicinfo_meta.get("age_rating"),
+                        page_count=count + (1 if cover else 0),
+                        notes=comicinfo_meta.get("notes"),
+                    )
+                    zf.writestr("ComicInfo.xml", xml_str)
+                except Exception as e:  # noqa: BLE001
+                    if log:
+                        log("titleId=%s no=%s: ComicInfo.xml 생성 실패(이미지 압축은 정상 진행) - %s" %
+                            (title_id, episode_no, e))
+        os.replace(tmp_path, local_zip)
+        if async_move:
+            _queue_move(local_zip, series_dir, archive_name, log=log)
+        else:
+            _queue_move(local_zip, series_dir, archive_name, log=log, wait=True)
+        shutil.rmtree(target_dir, ignore_errors=True)
+        # 임시 폴더 구조는 temp_root/titleId/회차번호/ 였으니, 회차 폴더를
+        # 지운 뒤 상위 titleId 폴더가 비어있으면(그 작품 회차가 지금 이거
+        # 하나만 처리 중이었다면 보통 비게 됨) 같이 정리해서 빈 폴더가
+        # 안 쌓이게 한다. 다른 회차가 아직 처리 중이면 안 비어있을 테니
+        # 그냥 둔다(실패해도 무해하므로 조용히 무시).
+        try:
+            parent_dir = os.path.dirname(target_dir)
+            if os.path.isdir(parent_dir) and not os.listdir(parent_dir):
+                os.rmdir(parent_dir)
+        except OSError:
+            pass
+        return True, archive_path, "압축 완료(%d장%s)" % (
+            count, "+표지" if cover else "")
+    except Exception as e:  # noqa: BLE001
+        if log:
+            log("압축 실패 titleId=%s no=%s: %s (낱장 폴더는 그대로 둠)" % (title_id, episode_no, e))
+        return False, None, "압축 실패: %s" % e

@@ -36,9 +36,18 @@ def _tail_logs(lines=12):
     return "\n".join(out) or "(로그 없음)"
 
 
-def loop(svc, stop_event):
+def loop(svc, stop_event, wtm=False):
     backoff, next_try, was_alive = CHECK_SECONDS, 0.0, False
     while not stop_event.is_set():
+        if wtm:  # 웹툰 다운로더: 스케줄러·작업 프로세스 (플러그인 시절에는 화면을 열 때만 확인)
+            try:
+                from wtm import service as wtm_service
+                wtm_service.tick()
+            except Exception as error:
+                log.warning("웹툰 다운로더 확인 실패: %s: %s", type(error).__name__, error)
+        if svc is None:
+            stop_event.wait(CHECK_SECONDS)
+            continue
         try:
             runtime = svc._sync_runtime()
             alive = service._worker_alive()
@@ -58,15 +67,29 @@ def loop(svc, stop_event):
         stop_event.wait(CHECK_SECONDS)
 
 
-def start(svc, stop_event):
-    thread = threading.Thread(target=loop, args=(svc, stop_event), daemon=True, name="gdw-supervisor")
+def start(svc, stop_event, wtm=False):
+    thread = threading.Thread(target=loop, args=(svc, stop_event, wtm), daemon=True, name="gdw-supervisor")
     thread.start()
     return thread
 
 
-def shutdown(wait=40):
-    """서비스 종료 시: 워커도 정상 종료시킨다 (disabled.flag는 남기지 않음 → 다음 시작 때 자동 시작)."""
-    if service._worker_alive():
+def shutdown(wait=40, gdw=True, wtm=False):
+    """서비스 종료 시: 워커도 정상 종료시킨다 (disabled.flag는 남기지 않음 → 다음 시작 때 자동 시작).
+    두 모듈의 작업 프로세스를 동시에 멈춘다 (각자 진행 중인 작업을 마무리할 시간이 필요)."""
+    threads = []
+    if wtm:
+        def _wtm():
+            try:
+                from wtm import service as wtm_service
+                log.info("웹툰 작업 프로세스 종료 중…")
+                wtm_service.shutdown(wait=wait)
+            except Exception as error:
+                log.warning("웹툰 작업 프로세스 종료 실패: %s", error)
+        threads.append(threading.Thread(target=_wtm, daemon=True))
+        threads[-1].start()
+    if gdw and service._worker_alive():
         log.info("워커 종료 중…")
         if not service._stop_worker(disable=False, wait=wait):
             log.warning("워커가 %d초 안에 끝나지 않았습니다.", wait)
+    for thread in threads:
+        thread.join(wait + 5)

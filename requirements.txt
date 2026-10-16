@@ -1,3 +1,5 @@
-# 워커와 웹 화면은 표준 라이브러리만 쓴다 (Python 3.9+).
-# BookOasis DB(MariaDB/MySQL)에 직접 붙을 때만 필요:
+# 드라이브 변경 감시(워커·웹 화면)는 표준 라이브러리만 쓴다 (Python 3.9+).
+# BookOasis DB(MariaDB/MySQL)에 직접 붙을 때:
 PyMySQL>=1.1
+# 웹툰 다운로더:
+requests>=2.28

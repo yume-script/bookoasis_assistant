@@ -8,8 +8,8 @@
   BOOKOASIS_DB_URL_ADULT=mysql://…                         (세션별로 따로 지정할 때)
   sqlite:////abs/path/{db_type}.db                          (SQLite 파일)
 
-MySQL/MariaDB는 PyMySQL(requirements.txt)이 필요하다. 쿼리는 %s 자리표시자로 쓰고,
-SQLite에서는 ?로 바꿔 실행한다.
+MySQL/MariaDB는 PyMySQL(requirements.txt)이 필요하다. 쿼리는 %s 또는 ? 자리표시자로 쓰고,
+DB 종류에 맞게 바꿔 실행한다 (쿼리 문자열 안에 ? 글자를 직접 쓰지 말 것).
 """
 import datetime
 import decimal
@@ -76,7 +76,10 @@ class Gateway:
                                write_timeout=30, autocommit=True, cursorclass=pymysql.cursors.DictCursor)
 
     def _sql(self, sql):
-        return sql.replace("%s", "?") if self.scheme == "sqlite" else sql
+        """자리표시자 통일: %s(gdrive_watch)와 ?(웹툰 다운로더) 어느 쪽으로 써도 된다."""
+        if self.scheme == "sqlite":
+            return sql.replace("%s", "?")
+        return sql.replace("?", "%s") if "%s" not in sql else sql
 
     def _run(self, sql, params, fetch):
         conn = self._connect()
