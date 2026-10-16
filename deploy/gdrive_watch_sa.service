@@ -1,0 +1,20 @@
+# /etc/systemd/system/gdrive_watch_sa.service
+# 경로·User는 환경에 맞게 바꾼다. rclone 마운트와 BookOasis 보관함 경로가 이 서버에서 같은 경로로 보여야 한다.
+[Unit]
+Description=Drive change watcher (gdrive_watch standalone)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/gdrive_watch_sa
+ExecStart=/opt/gdrive_watch_sa/venv/bin/python /opt/gdrive_watch_sa/app.py
+Restart=on-failure
+RestartSec=10
+# 워커가 진행 중인 스캔 요청을 마칠 시간
+TimeoutStopSec=60
+KillMode=mixed
+
+[Install]
+WantedBy=multi-user.target

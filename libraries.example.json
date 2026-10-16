@@ -1,0 +1,18 @@
+[
+  {
+    "db_type": "general",
+    "id": 1,
+    "name": "만화",
+    "roots": ["/mnt/gds2/GDRIVE/READING/만화"],
+    "rclone_rc_url": "http://127.0.0.1:5572",
+    "cron_schedule": "0 4 * * *"
+  },
+  {
+    "db_type": "audiobook",
+    "id": 3,
+    "name": "오디오북",
+    "roots": ["/mnt/gds2/GDRIVE/AUDIO"],
+    "rclone_rc_url": "",
+    "cron_schedule": ""
+  }
+]

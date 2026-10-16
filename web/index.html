@@ -1,0 +1,486 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>드라이브 변경 감시</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css" crossorigin="anonymous" referrerpolicy="no-referrer">
+<style>
+  /* 플러그인일 때 BookOasis 테마가 주던 전역 변수. 기본은 어두운 테마, 시스템이 밝은 테마면 밝게. */
+  :root {
+    color-scheme: dark;
+    --app-bg-main: #14161a;
+    --app-bg-card: #1d2026;
+    --app-bg-card-hover: #252931;
+    --app-bg-sidebar: #181a1f;
+    --app-input-bg: #15171b;
+    --app-border: rgba(255, 255, 255, 0.12);
+    --app-border-light: rgba(255, 255, 255, 0.07);
+    --app-text-primary: #e6e8eb;
+    --app-text-secondary: #b4b9c2;
+    --app-text-muted: #8a909b;
+    --app-accent: #5b9cf5;
+    --app-primary: #5b9cf5;
+    --app-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+  }
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) {
+      color-scheme: light;
+      --app-bg-main: #f4f5f7;
+      --app-bg-card: #ffffff;
+      --app-bg-card-hover: #f0f2f5;
+      --app-bg-sidebar: #eceef2;
+      --app-input-bg: #ffffff;
+      --app-border: rgba(0, 0, 0, 0.13);
+      --app-border-light: rgba(0, 0, 0, 0.07);
+      --app-text-primary: #1d2127;
+      --app-text-secondary: #464c57;
+      --app-text-muted: #6b717c;
+      --app-accent: #2f6fd6;
+      --app-primary: #2f6fd6;
+      --app-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+    }
+  }
+  html, body { margin: 0; background: var(--app-bg-main); color: var(--app-text-primary); }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans KR", "Malgun Gothic", sans-serif; }
+  .gdw-page { max-width: 1280px; margin: 0 auto; padding: 16px; box-sizing: border-box; }
+  input, select, textarea, button { font-family: inherit; }
+  input, select, textarea { background: var(--app-input-bg); color: var(--app-text-primary); border: 1px solid var(--app-border); }
+</style>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main class="gdw-page">
+<div id="gdw-app" class="gdw">
+
+  <header class="gdw-header">
+    <div class="gdw-header-actions">
+      <button type="button" class="gdw-pill-btn" data-act="poll_now" title="Drive 변경을 지금 확인">
+        <span class="gdw-pill-icon"><svg viewBox="0 0 16 16"><path d="M13.65 2.35a7.958 7.958 0 0 0-11.3 0L1 3.7V1H0v4h4V4H1.7l1-1a6.965 6.965 0 0 1 9.9 0 6.965 6.965 0 0 1 0 9.9 6.965 6.965 0 0 1-9.9 0 6.93 6.93 0 0 1-1.7-2.86l-.96.29a7.94 7.94 0 0 0 1.95 3.27 7.958 7.958 0 0 0 11.3 0 7.958 7.958 0 0 0 0-11.3Z"/></svg></span>
+        지금 확인
+      </button>
+      <button type="button" class="gdw-pill-btn" data-act="toggle" title="감시 시작/중지">
+        <span class="gdw-pill-icon"><svg viewBox="0 0 16 16"><path d="M7.5 1v7h1V1h-1z"/><path d="M3 8.812a4.999 4.999 0 0 1 2.578-4.375l-.485-.874A6 6 0 1 0 11 3.616l-.501.865A5 5 0 1 1 3 8.812z"/></svg></span>
+        <span data-bind="toggle">시작</span>
+      </button>
+      <button type="button" class="gdw-pill-btn" data-act="restart" title="워커를 다시 시작">
+        <span class="gdw-pill-icon"><svg viewBox="0 0 16 16"><path d="M11.534 7h3.932a.25.25 0 0 1 .192.41l-1.966 2.36a.25.25 0 0 1-.384 0l-1.966-2.36a.25.25 0 0 1 .192-.41zm-11 2h3.932a.25.25 0 0 0 .192-.41L2.692 6.23a.25.25 0 0 0-.384 0L.342 8.59A.25.25 0 0 0 .534 9z"/><path d="M8 3c-1.552 0-2.94.707-3.857 1.818a.5.5 0 1 1-.771-.636A6.002 6.002 0 0 1 13.917 7H12.9A5.002 5.002 0 0 0 8 3zM3.1 9a5.002 5.002 0 0 0 8.757 2.182.5.5 0 1 1 .771.636A6.002 6.002 0 0 1 2.083 9H3.1z"/></svg></span>
+        재시작
+      </button>
+    </div>
+    <h1 class="gdw-title">
+      <span class="gdw-title-icon"><svg viewBox="0 0 16 16"><path d="M4.406 3.342A5.53 5.53 0 0 1 8 2c2.69 0 4.923 2 5.166 4.579C14.758 6.804 16 8.137 16 9.773 16 11.569 14.502 13 12.687 13H3.781C1.708 13 0 11.366 0 9.318c0-1.763 1.266-3.223 2.942-3.593.143-.863.698-1.723 1.464-2.383zm.653.757c-.757.653-1.153 1.44-1.153 2.056v.448l-.445.049C2.064 6.805 1 7.952 1 9.318 1 10.785 2.23 12 3.781 12h8.906C13.98 12 15 10.988 15 9.773c0-1.216-1.02-2.228-2.313-2.228h-.5v-.5C12.188 4.825 10.328 3 8 3a4.53 4.53 0 0 0-2.941 1.1z"/><path d="M10.854 7.146a.5.5 0 0 1 0 .708l-3 3a.5.5 0 0 1-.708 0l-1.5-1.5a.5.5 0 1 1 .708-.708L7.5 9.793l2.646-2.647a.5.5 0 0 1 .708 0z"/></svg></span>
+      드라이브 변경 감시
+      <span class="gdw-title-version" data-bind="version" hidden></span>
+    </h1>
+    <p class="gdw-desc">Google Drive·로컬 폴더의 변경을 감지해 rclone VFS를 새로고침하고, 바뀐 폴더만 BookOasis에 부분 스캔을 요청합니다.</p>
+    <p class="gdw-state"><span class="gdw-pulse" data-bind="pulse"></span><span data-bind="activity">상태를 불러오는 중…</span></p>
+    <p class="gdw-load" data-bind="load" hidden title="이 워커가 최근 1시간 동안 보낸 요청 수와 워커 프로세스 자원 사용량 (BookOasis 스캔 자체의 부하는 포함하지 않음)"></p>
+    <div class="gdw-tally">
+      <button type="button" class="gdw-flow-seg" data-filter="pending"><span>대기</span><strong data-count="pending">0</strong></button>
+      <button type="button" class="gdw-flow-seg is-done" data-filter="done"><span>반영됨</span><strong data-count="done">0</strong></button>
+      <button type="button" class="gdw-flow-seg is-skip" data-filter="skipped"><span title="보관함 밖 경로, 이미 등록된 파일(중복), 다음 전체 스캔 때 반영">건너뜀</span><strong data-count="skipped">0</strong></button>
+      <button type="button" class="gdw-flow-seg is-fail" data-filter="failed"><span>실패</span><strong data-count="failed">0</strong></button>
+    </div>
+    <p class="gdw-meta" data-bind="meta"></p>
+  </header>
+
+  <ul class="gdw-warn" data-bind="warnings" hidden></ul>
+
+  <section class="gdw-panel" data-bind="roots-panel">
+    <div class="gdw-panel-head gdw-collapse-head" data-act="toggle_roots" role="button" tabindex="0" aria-expanded="true" title="눌러서 접기/펼치기">
+      <div class="gdw-panel-title">
+        <span class="gdw-panel-icon"><svg viewBox="0 0 16 16"><path d="M.54 3.87.5 3a2 2 0 0 1 2-2h3.672a2 2 0 0 1 1.414.586l.828.828A2 2 0 0 0 9.828 3h3.982a2 2 0 0 1 1.992 2.181l-.637 7A2 2 0 0 1 13.174 14H2.826a2 2 0 0 1-1.991-1.819l-.637-7a1.99 1.99 0 0 1 .342-1.31zM2.19 4a1 1 0 0 0-.996 1.09l.637 7a1 1 0 0 0 .995.91h10.348a1 1 0 0 0 .995-.91l.637-7A1 1 0 0 0 13.81 4H2.19zm4.69-1.707A1 1 0 0 0 6.172 2H2.5a1 1 0 0 0-1 .981l.006.139C1.72 3.042 1.95 3 2.19 3h5.396l-.707-.707z"/></svg></span>
+        <h2>감시 폴더</h2>
+      </div>
+      <div class="gdw-collapse-right">
+        <span class="gdw-badge" data-bind="roots-badge">0개</span>
+        <span class="gdw-chevron" aria-hidden="true"></span>
+      </div>
+    </div>
+    <div class="gdw-table-wrap">
+      <table class="gdw-roots">
+        <thead><tr><th>감시 폴더</th><th>방식</th><th>상태</th><th>추적 항목</th><th>마지막 변경</th><th></th></tr></thead>
+        <tbody data-bind="roots"><tr><td colspan="6" class="gdw-empty">불러오는 중…</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+
+  <nav class="gdw-tabs" role="tablist">
+    <button type="button" role="tab" class="gdw-chip is-on" data-tab="events">변경 기록</button>
+    <button type="button" role="tab" class="gdw-chip" data-tab="setup">감시 설정</button>
+    <button type="button" role="tab" class="gdw-chip" data-tab="schedule">스캔 일정</button>
+    <button type="button" role="tab" class="gdw-chip" data-tab="log">로그</button>
+  </nav>
+
+  <!-- 변경 기록 -->
+  <section class="gdw-pane" data-pane="events">
+    <div class="gdw-panel gdw-panel-tight">
+      <div class="gdw-panel-head">
+        <div class="gdw-panel-title">
+          <span class="gdw-panel-icon"><svg viewBox="0 0 16 16"><path d="M14 1a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1h12zM2 0a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V2a2 2 0 0 0-2-2H2z"/><path d="M8 4a.5.5 0 0 1 .5.5v3h3a.5.5 0 0 1 0 1h-3v3a.5.5 0 0 1-1 0v-3h-3a.5.5 0 0 1 0-1h3v-3A.5.5 0 0 1 8 4z"/></svg></span>
+          <h2>경로 직접 반영</h2>
+        </div>
+        <span class="gdw-badge">수동 요청</span>
+      </div>
+      <div class="gdw-form">
+        <input type="text" data-bind="manual-path" placeholder="직접 반영할 경로 (이 프로그램 기준 경로, 예: /mnt/gds2/GDRIVE/READING/잡지/월간A)" autocomplete="off">
+        <button type="button" class="gdw-btn" data-act="manual_create">추가로 반영</button>
+        <button type="button" class="gdw-btn gdw-btn-quiet" data-act="manual_delete">삭제로 반영</button>
+      </div>
+      <p class="gdw-tip">감시와 같은 처리(VFS 새로고침 → 파일 확인 → 스캔)를 거칩니다. 감시 폴더 밖이거나 놓친 변경을 손으로 반영할 때 씁니다.</p>
+    </div>
+
+    <div class="gdw-toolbar">
+      <select data-bind="f-status" aria-label="상태">
+        <option value="">전체 상태</option>
+        <option value="pending">대기 (잠시 대기 포함)</option>
+        <option value="waiting">잠시 대기 (파일 확인·전체 스캔 회피)</option>
+        <option value="done">반영됨</option>
+        <option value="skipped">건너뜀 (보관함 밖·중복)</option>
+        <option value="failed">실패 (시간 초과 포함)</option>
+        <option value="timeout">시간 초과</option>
+        <option value="db_missing">반영됨 · DB에 없음</option>
+      </select>
+      <input type="search" data-bind="f-q" placeholder="경로나 메시지 검색" aria-label="검색">
+      <span class="gdw-grow"></span>
+      <button type="button" class="gdw-pill-btn" data-act="retry_selected" title="선택한 기록을 지금 바로 처리합니다 (전체 스캔 회피도 건너뜀)">선택 지금 처리</button>
+      <button type="button" class="gdw-pill-btn" data-act="retry_failed">실패 전부 재시도</button>
+      <button type="button" class="gdw-pill-btn" data-act="delete_selected">선택 삭제</button>
+      <button type="button" class="gdw-pill-btn" data-act="clear_done">반영된 기록 정리</button>
+    </div>
+    <ol class="gdw-events" data-bind="events"></ol>
+    <div class="gdw-pager">
+      <button type="button" class="gdw-pill-btn" data-act="prev">이전</button>
+      <span data-bind="page"></span>
+      <button type="button" class="gdw-pill-btn" data-act="next">다음</button>
+    </div>
+  </section>
+
+  <!-- 감시 설정 -->
+  <section class="gdw-pane" data-pane="setup" hidden>
+    <div class="gdw-panel">
+      <div class="gdw-panel-head">
+        <div class="gdw-panel-title">
+          <span class="gdw-panel-icon"><svg viewBox="0 0 16 16"><path d="M8 4.754a3.246 3.246 0 1 0 0 6.492 3.246 3.246 0 0 0 0-6.492zM5.754 8a2.246 2.246 0 1 1 4.492 0 2.246 2.246 0 0 1-4.492 0z"/><path d="M9.796 1.343c-.527-1.79-3.065-1.79-3.592 0l-.094.319a.873.873 0 0 1-1.255.52l-.292-.16c-1.64-.892-3.433.902-2.54 2.541l.159.292a.873.873 0 0 1-.52 1.255l-.319.094c-1.79.527-1.79 3.065 0 3.592l.319.094a.873.873 0 0 1 .52 1.255l-.16.292c-.892 1.64.901 3.434 2.541 2.54l.292-.159a.873.873 0 0 1 1.255.52l.094.319c.527 1.79 3.065 1.79 3.592 0l.094-.319a.873.873 0 0 1 1.255-.52l.292.16c1.64.893 3.434-.902 2.54-2.541l-.159-.292a.873.873 0 0 1 .52-1.255l.319-.094c1.79-.527 1.79-3.065 0-3.592l-.319-.094a.873.873 0 0 1-.52-1.255l.16-.292c.893-1.64-.902-3.433-2.541-2.54l-.292.159a.873.873 0 0 1-1.255-.52l-.094-.319z"/></svg></span>
+          <h2>실행 환경</h2>
+        </div>
+        <span class="gdw-badge">RCLONE</span>
+      </div>
+      <p class="gdw-tip gdw-tip-top">이 프로그램이 실행되는 곳(호스트 또는 이 컨테이너) 기준 경로입니다. 저장하면 <code data-bind="env-file">.env</code>의 해당 줄만 바뀝니다.</p>
+      <p class="gdw-tip" data-bind="env-info"></p>
+      <div class="gdw-opts gdw-env">
+        <label class="gdw-wide">rclone 실행 파일<input type="text" data-env="rclone_path" placeholder="/usr/bin/rclone"></label>
+        <label class="gdw-wide">rclone.conf 경로 <small>(비우면 rclone 기본 위치)</small><input type="text" data-env="rclone_config" placeholder="/config/rclone/rclone.conf"></label>
+        <label class="gdw-wide">BookOasis 주소 <small>(이 프로그램에서 접속할 수 있는 주소)</small><input type="text" data-env="bookoasis_url" placeholder="http://127.0.0.1:5930"></label>
+        <label class="gdw-wide">WEBHOOK_TOKEN <small>(BookOasis .env의 값과 같게 · 바꿀 때만 입력)</small><input type="password" data-env="webhook_token" autocomplete="new-password" readonly onfocus="this.removeAttribute('readonly')"></label>
+        <label class="gdw-check"><input type="checkbox" data-env="auto_start"> 이 프로그램이 시작될 때 감시도 자동으로 시작 (워커가 죽으면 다시 시작)</label>
+      </div>
+      <div class="gdw-actions-row">
+        <button type="button" class="gdw-pill-btn" data-act="check_rclone">rclone 확인</button>
+        <button type="button" class="gdw-pill-btn" data-act="check_token">토큰 확인</button>
+        <button type="button" class="gdw-btn" data-act="save_env">실행 환경 저장</button>
+        <span class="gdw-save-msg" data-bind="env-msg"></span>
+      </div>
+      <div class="gdw-rclone" data-bind="rclone-out" hidden></div>
+    </div>
+
+    <div class="gdw-panel">
+      <div class="gdw-panel-head">
+        <div class="gdw-panel-title">
+          <span class="gdw-panel-icon"><svg viewBox="0 0 16 16"><path d="M.54 3.87.5 3a2 2 0 0 1 2-2h3.672a2 2 0 0 1 1.414.586l.828.828A2 2 0 0 0 9.828 3h3.982a2 2 0 0 1 1.992 2.181l-.637 7A2 2 0 0 1 13.174 14H2.826a2 2 0 0 1-1.991-1.819l-.637-7a1.99 1.99 0 0 1 .342-1.31zM2.19 4a1 1 0 0 0-.996 1.09l.637 7a1 1 0 0 0 .995.91h10.348a1 1 0 0 0 .995-.91l.637-7A1 1 0 0 0 13.81 4H2.19z"/></svg></span>
+          <h2>감시할 폴더</h2>
+        </div>
+        <span class="gdw-badge">DRIVE · 로컬</span>
+      </div>
+      <p class="gdw-tip gdw-tip-top">Drive 폴더는 주소의 <code>folders/</code> 뒤 값을 폴더 ID로 넣고, 로컬 경로에는 BookOasis 보관함 경로와 같은 경로(이 프로그램에서도 같은 경로로 보이게 마운트)를 넣습니다. 로컬 디스크·NAS 폴더는 방식을 <b>로컬 폴더</b>로 고르세요.</p>
+      <div class="gdw-rows" data-bind="root-rows"></div>
+      <div class="gdw-actions-row"><button type="button" class="gdw-pill-btn" data-act="add_root">+ 폴더 추가</button></div>
+    </div>
+
+    <div class="gdw-panel">
+      <div class="gdw-panel-head">
+        <div class="gdw-panel-title">
+          <span class="gdw-panel-icon"><svg viewBox="0 0 16 16"><path d="M13.65 2.35a7.958 7.958 0 0 0-11.3 0L1 3.7V1H0v4h4V4H1.7l1-1a6.965 6.965 0 0 1 9.9 0 6.965 6.965 0 0 1 0 9.9 6.965 6.965 0 0 1-9.9 0 6.93 6.93 0 0 1-1.7-2.86l-.96.29a7.94 7.94 0 0 0 1.95 3.27 7.958 7.958 0 0 0 11.3 0 7.958 7.958 0 0 0 0-11.3Z"/></svg></span>
+          <h2>rclone VFS 새로고침</h2>
+        </div>
+        <span class="gdw-badge">자동 감지</span>
+      </div>
+      <p class="gdw-tip gdw-tip-top">보관함에 설정된 RC 주소로 자동으로 새로고침합니다. 각 보관함 폴더가 마운트 안 어디에 있는지는 처음 변경이 생길 때 찾아서 기억합니다.</p>
+      <div class="gdw-toolbar">
+        <span class="gdw-grow gdw-muted" data-bind="vfs-summary"></span>
+        <button type="button" class="gdw-pill-btn" data-act="detect_all">지금 모두 감지</button>
+      </div>
+      <div class="gdw-vfsmap"><table>
+        <thead><tr><th>보관함</th><th>폴더</th><th>RC</th><th>마운트 안 경로</th><th></th></tr></thead>
+        <tbody data-bind="vfs-map"></tbody>
+      </table></div>
+      <details class="gdw-details" data-bind="manual-box">
+        <summary>직접 지정 <small>(RC가 없는 보관함, 여러 마운트에 동시에 새로고침할 때)</small></summary>
+        <div class="gdw-details-body">
+          <p class="gdw-tip">여기 규칙이 있는 경로는 자동 감지 대신 이 규칙을 씁니다. 마운트 경로는 rclone 마운트의 루트(예: /mnt/gds2)이고, RC 주소에 <code>http://아이디:비밀번호@호스트:포트</code> 형식도 쓸 수 있습니다.</p>
+          <div class="gdw-rows" data-bind="vfs-rows"></div>
+          <div class="gdw-actions-row"><button type="button" class="gdw-pill-btn" data-act="add_vfs">+ 규칙 추가</button></div>
+        </div>
+      </details>
+    </div>
+
+    <div class="gdw-panel">
+      <div class="gdw-panel-head">
+        <div class="gdw-panel-title">
+          <span class="gdw-panel-icon"><svg viewBox="0 0 16 16"><path d="M1.5 1.5A.5.5 0 0 1 2 1h12a.5.5 0 0 1 .5.5v2a.5.5 0 0 1-.128.334L10 8.692V13.5a.5.5 0 0 1-.342.474l-3 1A.5.5 0 0 1 6 14.5V8.692L1.628 3.834A.5.5 0 0 1 1.5 3.5v-2z"/></svg></span>
+          <h2>처리 옵션</h2>
+        </div>
+        <span class="gdw-badge">옵션</span>
+      </div>
+      <div class="gdw-opts">
+        <label>확인 주기(초)<input type="number" min="15" data-opt="poll_seconds"></label>
+        <label title="같은 폴더에 새 변경이 이 시간 동안 더 없으면 그 폴더를 한 번에 처리합니다 (회차가 연달아 올라오는 동안은 기다림). 0이면 바로 처리">폴더가 조용해질 때까지(초)<input type="number" min="0" data-opt="buffer_seconds"></label>
+        <label title="폴더에 변경이 계속 이어져도 첫 변경 뒤 이 시간이 지나면 더 기다리지 않고 처리합니다">최대 대기(분)<input type="number" min="1" max="120" data-opt="buffer_max_minutes"></label>
+        <label>최대 재시도<input type="number" min="1" data-opt="max_attempts"></label>
+        <label title="변경 기록 탭의 반영됨·건너뜀·시간 초과 기록을 이 기간만큼 남깁니다 (실패 기록은 2배)">기록 보관(일)<input type="number" min="1" data-opt="keep_days"></label>
+        <label title="로그 탭의 worker.log를 하루 단위로 나눠 이 기간만큼만 남기고 지난 것은 지웁니다 (1~90)">로그 보관(일)<input type="number" min="1" max="90" data-opt="log_keep_days"></label>
+        <label title="VFS 새로고침 뒤 마운트에 파일이 실제로 보일 때까지 기다리는 최대 시간. 0이면 확인하지 않음">파일 확인 대기(분)<input type="number" min="0" data-opt="file_wait_minutes"></label>
+        <label title="같은 리모트(같은 토큰)로 보내는 Drive API 요청을 초당 몇 개까지 허용할지. gds처럼 여러 사람이 함께 쓰는 토큰은 낮게(1~3) 두세요. 호출 제한에 걸리면 자동으로 쉬었다가 다시 시도합니다">Drive 초당 요청 수<input type="number" min="0.5" max="50" step="0.5" data-opt="drive_rps"></label>
+        <label class="gdw-wide gdw-subhead">폴더 비교 · 다시 읽는 간격 <small>(폴더 바로 아래가 마지막으로 바뀐 뒤 지난 기간 기준 — 일반: 1시간 안 10분 · 6시간 안 30분 · 24시간 안 1시간 · 1~2일 하루 2번 · 2~7일 하루 1번 · 7~15일 2일 · 16~30일 7일 · 31일 이상 30일 / 분류 폴더: 1일 안 매 주기, 그 뒤는 같음 · 폴더별 규칙은 감시 폴더 ▸ 펼치기에서)</small></label>
+        <label title="감시 폴더에서 이 단계까지의 폴더는 새 작품 폴더가 생기는 분류 폴더로 봅니다 (1일 안에 바뀌었으면 매 주기 확인). 0이면 감시 폴더 자체만">분류 폴더 단계(0~5)<input type="number" min="0" max="5" data-opt="poll_skeleton_depth"></label>
+        <label title="Drive 폴더 비교 방식에서 폴더 묶음(50개)을 동시에 몇 개씩 조회할지. 늘리면 빨라지지만 Drive API 호출이 몰립니다 (1~16)">폴더 비교 동시 조회<input type="number" min="1" max="16" data-opt="drive_workers"></label>
+        <label title="보관함 전체 스캔(cron)이 시작된 뒤 이 시간 동안은 그 보관함의 부분 스캔을 미룹니다. 2시간보다 자주 도는 일정은 회피하지 않습니다. 0이면 끔">전체 스캔 회피(분)<input type="number" min="0" data-opt="full_scan_guard_minutes"></label>
+        <label class="gdw-check" title="새 파일이 감지되면 먼저 BookOasis DB에서 같은 경로의 도서를 찾아, 이미 등록돼 있으면 rclone VFS 새로고침과 스캔을 하지 않고 '이미 등록됨'으로 끝냅니다. (최근 1시간 안에 같은 경로가 지워졌던 다시 올림은 제외)"><input type="checkbox" data-opt="db_dedupe"> 이미 등록된 파일은 건너뛰기 (BookOasis DB 확인)</label>
+        <label class="gdw-check" title="보관함 맨 위 폴더에서 바뀐 것(맨 위 작품 폴더 삭제 등)은 부분 스캔으로 처리하면 보관함 전체 스캔이 됩니다. 끄면 다음 예약 전체 스캔 때 반영합니다."><input type="checkbox" data-opt="allow_root_scan"> 보관함 맨 위 변경 때 전체 스캔 허용</label>
+        <label class="gdw-check"><input type="checkbox" data-opt="verbose_log"> 자세한 로그 (변경 하나하나를 어떻게 처리했는지 로그에 남김)</label>
+        <label class="gdw-wide">감지할 확장자 <small>(비우면 책·오디오·영상·자막 기본값, all이면 전부)</small><input type="text" data-opt="extensions" placeholder=".zip .cbz .epub .pdf"></label>
+      </div>
+      <details class="gdw-details">
+        <summary>무시할 경로 <small>(정규식, 한 줄에 하나)</small></summary>
+        <div class="gdw-details-body">
+          <p class="gdw-tip">대소문자를 구분하지 않고, <code>#</code>으로 시작하면 주석입니다. 경로가 하나라도 맞으면 기록하지 않습니다. 업로드 중인 <code>[업로드]</code> 폴더를 제외해 두면 올리는 도중에 일부 권만 등록되는 일을 막을 수 있습니다.</p>
+          <textarea class="gdw-textarea" rows="5" data-opt="ignore_patterns" spellcheck="false"></textarea>
+          <div class="gdw-actions-row"><button type="button" class="gdw-pill-btn" data-act="default_patterns">기본값으로</button></div>
+        </div>
+      </details>
+      <details class="gdw-details">
+        <summary>디스코드 알림 <small>(처리 결과·감시 오류)</small></summary>
+        <div class="gdw-details-body">
+          <p class="gdw-tip">스캔까지 끝난 결과(반영됨·실패)를 모아 두었다가, <b>주기(분)가 지나거나 모인 건수가 기준에 닿으면</b> 둘 중 먼저 오는 때에 한 번에 보냅니다. 둘 다 0이면 처리 묶음마다 바로 보냅니다. 감시 오류·복구는 바로 보냅니다.</p>
+          <div class="gdw-opts gdw-env">
+            <label class="gdw-wide">웹훅 주소<input type="text" data-opt="discord_webhook" placeholder="https://discord.com/api/webhooks/… 또는 https://script.google.com/macros/s/…/exec?…"></label>
+            <label title="가장 먼저 모인 결과가 이 시간만큼 기다리면 보냅니다. 0이면 시간 조건 없음">보내는 주기(분)<input type="number" min="0" max="1440" data-opt="notify_interval_minutes"></label>
+            <label title="모인 결과(반영됨+실패)가 이 건수 이상이면 주기를 기다리지 않고 보냅니다. 0이면 건수 조건 없음">모인 건수(건)<input type="number" min="0" max="10000" data-opt="notify_batch_count"></label>
+            <label class="gdw-check"><input type="checkbox" data-opt="notify_done"> 반영됨</label>
+            <label class="gdw-check"><input type="checkbox" data-opt="notify_failed"> 실패</label>
+            <label class="gdw-check"><input type="checkbox" data-opt="notify_error"> 감시 오류·복구</label>
+          </div>
+          <div class="gdw-actions-row"><button type="button" class="gdw-pill-btn" data-act="test_discord">시험 전송</button></div>
+        </div>
+      </details>
+      <div class="gdw-actions-row gdw-save">
+        <button type="button" class="gdw-btn" data-act="save">설정 저장</button>
+        <span class="gdw-save-msg" data-bind="save-msg"></span>
+      </div>
+    </div>
+
+    <div class="gdw-panel">
+      <div class="gdw-panel-head">
+        <div class="gdw-panel-title">
+          <span class="gdw-panel-icon"><svg viewBox="0 0 16 16"><path d="M11.742 10.344a6.5 6.5 0 1 0-1.397 1.398h-.001c.03.04.062.078.098.115l3.85 3.85a1 1 0 0 0 1.415-1.414l-3.85-3.85a1.007 1.007 0 0 0-.115-.1zM12 6.5a5.5 5.5 0 1 1-11 0 5.5 5.5 0 0 1 11 0z"/></svg></span>
+          <h2>경로 확인</h2>
+        </div>
+        <span class="gdw-badge">미리보기</span>
+      </div>
+      <div class="gdw-form">
+        <input type="text" data-bind="preview-path" placeholder="/mnt/gds/책/시리즈/01권.cbz" autocomplete="off">
+        <button type="button" class="gdw-btn" data-act="preview">확인</button>
+      </div>
+      <pre class="gdw-pre" data-bind="preview-out" hidden></pre>
+    </div>
+  </section>
+
+  <!-- 스캔 일정 (구 scan_scheduler) -->
+  <section class="gdw-pane" data-pane="schedule" hidden>
+    <div class="gdw-panel gdw-panel-tight">
+      <div class="gdw-panel-head">
+        <div class="gdw-panel-title">
+          <span class="gdw-panel-icon"><svg viewBox="0 0 16 16"><path d="M0 2a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2V2zm15 2h-4v3h4V4zm0 4h-4v3h4V8zm0 4h-4v3h3a1 1 0 0 0 1-1v-2zm-5 3v-3H6v3h4zm-5 0v-3H1v2a1 1 0 0 0 1 1h3zm-4-4h4V8H1v3zm0-4h4V4H1v3zm5-3v3h4V4H6zm4 4H6v3h4V8z"/></svg></span>
+          <h2>보관함 전체 스캔 일정</h2>
+        </div>
+        <span class="gdw-badge">CRON</span>
+      </div>
+      <p class="gdw-tip gdw-tip-top">보관함별 전체 스캔(cron) 일정을 타임테이블로 보고, 겹치는 시간대를 찾아 조정합니다. <i class="fa-solid fa-bolt rm-live-icon"></i> 표시는 이 프로그램이 실시간으로 반영 중인 보관함으로, 전체 스캔은 누락 보정용이라 하루 1회 정도면 충분합니다.</p>
+      <div class="gdw-tally gdw-tally-inline">
+        <div class="gdw-flow-seg gdw-static"><span>전체 보관함</span><strong id="rm-stat-total">0</strong></div>
+        <div class="gdw-flow-seg gdw-static is-fail"><span>겹치는 시간대</span><strong id="rm-stat-overlap">0</strong></div>
+        <div class="gdw-flow-seg gdw-static is-done"><span>실시간 반영 중</span><strong id="rm-stat-live">0</strong></div>
+      </div>
+    </div>
+    <div class="rm-root">
+  <div class="rm-toolbar">
+    <div class="rm-toolbar-left">
+      <div class="rm-view-toggle" role="group">
+        <button id="rm-view-grid-btn" type="button" class="rm-view-btn active">
+          <i class="fa-solid fa-border-all"></i> 요일×시간
+        </button>
+        <button id="rm-view-timeline-btn" type="button" class="rm-view-btn">
+          <i class="fa-solid fa-list"></i> 라이브러리별
+        </button>
+      </div>
+    </div>
+    <div class="rm-toolbar-right">
+      <input id="rm-search-input" type="text" placeholder="라이브러리 이름 검색..." />
+      <button id="rm-refresh-btn" type="button" title="새로고침">
+        <i class="fa-solid fa-rotate"></i>
+      </button>
+    </div>
+  </div>
+
+  <div id="rm-grid-legend" class="rm-legend">
+    <span class="rm-legend-item"><i class="rm-dot" style="background:#3b82f6"></i> 일반(general)</span>
+    <span class="rm-legend-item"><i class="rm-dot" style="background:#ec4899"></i> 성인(adult)</span>
+    <span class="rm-legend-item"><i class="rm-dot" style="background:#22c55e"></i> 오디오북(audiobook)</span>
+    <span class="rm-legend-item"><i class="rm-dot" style="background:#f97316"></i> 비디오(video)</span>
+    <span class="rm-legend-item rm-legend-sep"><i class="rm-dot rm-dot-overlap"></i> 같은 칸에 2개 이상 겹침</span>
+    <span class="rm-legend-item"><i class="fa-solid fa-calendar-day"></i> [매주] 실제 실행 요일 그대로 표시 · [월별] 매월 특정 일 일정을 요일 칸 전체에 참고용으로 표시</span>
+  </div>
+  <div id="rm-timeline-legend" class="rm-legend" hidden>
+    <span class="rm-legend-item"><i class="rm-dot" style="background:#94a3b8"></i> 매일</span>
+    <span class="rm-legend-item"><i class="rm-dot" style="background:#ef4444"></i> 일</span>
+    <span class="rm-legend-item"><i class="rm-dot" style="background:#f97316"></i> 월</span>
+    <span class="rm-legend-item"><i class="rm-dot" style="background:#eab308"></i> 화</span>
+    <span class="rm-legend-item"><i class="rm-dot" style="background:#22c55e"></i> 수</span>
+    <span class="rm-legend-item"><i class="rm-dot" style="background:#06b6d4"></i> 목</span>
+    <span class="rm-legend-item"><i class="rm-dot" style="background:#3b82f6"></i> 금</span>
+    <span class="rm-legend-item"><i class="rm-dot" style="background:#a855f7"></i> 토</span>
+    <span class="rm-legend-item"><i class="rm-dot" style="background:#6366f1;border-radius:2px"></i> 매월 특정 일</span>
+    <span class="rm-legend-item rm-legend-sep"><i class="rm-dot rm-dot-overlap"></i> 겹치는 시간대(빨간 테두리)</span>
+    <span class="rm-legend-item"><i class="fa-solid fa-cloud"></i> 원격(rclone) 마운트</span>
+    <span class="rm-legend-item"><i class="fa-solid fa-arrows-rotate"></i> 스캔 전 VFS refresh</span>
+  </div>
+
+  <div id="rm-status" class="rm-status">불러오는 중...</div>
+
+  <div id="rm-timetable" class="rm-timetable"></div>
+
+  <!-- 스케줄 편집 패널 (연필 아이콘 클릭 시 오픈, 기본 숨김) -->
+  <div id="rm-edit-overlay" class="rm-edit-overlay" hidden>
+    <div class="rm-edit-panel">
+      <div class="rm-edit-topbar">
+        <div class="rm-edit-title">
+          <i class="fa-solid fa-pen"></i>
+          <span id="rm-edit-libname">라이브러리</span>
+        </div>
+        <div class="rm-edit-actions">
+          <button id="rm-edit-save-btn" type="button" class="rm-btn-primary">
+            <i class="fa-solid fa-floppy-disk"></i> 저장
+          </button>
+          <button id="rm-edit-close-btn" type="button" class="rm-btn-ghost" title="닫기">
+            <i class="fa-solid fa-xmark"></i>
+          </button>
+        </div>
+      </div>
+
+      <div class="rm-edit-body">
+        <div class="rm-helper-title">
+          <i class="fa-solid fa-wand-magic-sparkles"></i> 스케줄 도우미
+          <span class="rm-helper-hint">쉬운 설정을 Cron식으로 자동 변환</span>
+        </div>
+
+        <div class="rm-helper-grid">
+          <div class="rm-field">
+            <label>반복 유형</label>
+            <select id="rm-repeat-type">
+              <option value="daily">매일</option>
+              <option value="weekly">매주 특정 요일</option>
+              <option value="monthly">매월 특정 일</option>
+              <option value="manual">직접 입력 (Cron)</option>
+            </select>
+          </div>
+          <div class="rm-field" id="rm-time-field">
+            <label>실행 시간</label>
+            <input type="time" id="rm-repeat-time" value="03:00" />
+          </div>
+        </div>
+
+        <div class="rm-field" id="rm-dow-field">
+          <label>요일 (여러 개 선택 가능)</label>
+          <div class="rm-dow-checks" id="rm-repeat-dow-checks">
+            <label class="rm-dow-check"><input type="checkbox" value="1" /> 월</label>
+            <label class="rm-dow-check"><input type="checkbox" value="2" /> 화</label>
+            <label class="rm-dow-check"><input type="checkbox" value="3" /> 수</label>
+            <label class="rm-dow-check"><input type="checkbox" value="4" /> 목</label>
+            <label class="rm-dow-check"><input type="checkbox" value="5" /> 금</label>
+            <label class="rm-dow-check"><input type="checkbox" value="6" /> 토</label>
+            <label class="rm-dow-check"><input type="checkbox" value="0" /> 일</label>
+          </div>
+        </div>
+
+        <div class="rm-field" id="rm-dom-field">
+          <label>일 (1~31, 말일이 없는 달은 자동으로 건너뜁니다)</label>
+          <select id="rm-repeat-dom">
+            <option value="1">1일</option>
+            <option value="2">2일</option>
+            <option value="3">3일</option>
+            <option value="4">4일</option>
+            <option value="5">5일</option>
+            <option value="6">6일</option>
+            <option value="7">7일</option>
+            <option value="8">8일</option>
+            <option value="9">9일</option>
+            <option value="10">10일</option>
+            <option value="11">11일</option>
+            <option value="12">12일</option>
+            <option value="13">13일</option>
+            <option value="14">14일</option>
+            <option value="15">15일</option>
+            <option value="16">16일</option>
+            <option value="17">17일</option>
+            <option value="18">18일</option>
+            <option value="19">19일</option>
+            <option value="20">20일</option>
+            <option value="21">21일</option>
+            <option value="22">22일</option>
+            <option value="23">23일</option>
+            <option value="24">24일</option>
+            <option value="25">25일</option>
+            <option value="26">26일</option>
+            <option value="27">27일</option>
+            <option value="28">28일</option>
+            <option value="29">29일</option>
+            <option value="30">30일</option>
+            <option value="31">31일</option>
+          </select>
+        </div>
+
+        <div class="rm-summary-line" id="rm-helper-summary"></div>
+
+        <div class="rm-field">
+          <label>Cron식</label>
+          <input type="text" id="rm-cron-text" spellcheck="false" />
+        </div>
+
+        <div id="rm-save-error" class="rm-save-error" hidden></div>
+
+        <div class="rm-edit-preview-label">
+          <i class="fa-solid fa-eye"></i> 미리보기 (저장 전 · 타임테이블에 바로 반영됨)
+        </div>
+      </div>
+    </div>
+  </div>
+    </div>
+  </section>
+
+  <!-- 로그 -->
+  <section class="gdw-pane" data-pane="log" hidden>
+    <div class="gdw-toolbar">
+      <span class="gdw-grow"></span>
+      <button type="button" class="gdw-pill-btn" data-act="clear_log">로그 비우기</button>
+      <button type="button" class="gdw-pill-btn" data-act="log">새로고침</button>
+    </div>
+    <pre class="gdw-pre gdw-log" data-bind="log"></pre>
+  </section>
+
+  <div class="gdw-toast" data-bind="toast" role="status" hidden></div>
+</div>
+</main>
+<script src="script.js"></script>
+</body>
+</html>
