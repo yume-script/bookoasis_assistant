@@ -1,4 +1,4 @@
-/* web/theme.css - 두 화면(드라이브 변경 감시 / 웹툰 다운로더)이 함께 쓰는 색 변수와 상단 메뉴.
+/* web/theme.css - 두 화면(드라이브 변경 감시 / 웹툰 다운로더)이 함께 쓰는 색 변수와 좌측 메뉴 레이아웃.
    플러그인일 때 BookOasis 테마가 주던 var(--app-*) 변수를 여기서 정의한다. */
 /* 플러그인일 때 BookOasis 테마가 주던 전역 변수. 기본은 어두운 테마, 시스템이 밝은 테마면 밝게. */
 :root {
@@ -37,16 +37,80 @@
 }
 html, body { margin: 0; background: var(--app-bg-main); color: var(--app-text-primary); }
 body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans KR", "Malgun Gothic", sans-serif; }
-.gdw-page { max-width: 1280px; margin: 0 auto; padding: 16px; box-sizing: border-box; }
+.gdw-page { padding: 16px; box-sizing: border-box; }
 input, select, textarea, button { font-family: inherit; }
 input, select, textarea { background: var(--app-input-bg); color: var(--app-text-primary); border: 1px solid var(--app-border); }
-.app-nav { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; max-width: 1280px; margin: 0 auto;
-  padding: 12px 16px 0; box-sizing: border-box; }
-.app-nav a { padding: 6px 14px; border-radius: 999px; border: 1px solid var(--app-border); color: var(--app-text-secondary);
-  text-decoration: none; font-size: 13px; font-weight: 600; background: var(--app-bg-card); }
-.app-nav a:hover { background: var(--app-bg-card-hover); color: var(--app-text-primary); }
-.app-nav a.is-active { color: var(--app-accent); border-color: var(--app-accent); }
-.app-nav a[hidden] { display: none; }
+/* ───────── 좌측 메뉴 레이아웃 (Plex 스타일, shell.js가 그림) ───────── */
+:root { --app-side-w: 248px; --app-side-w-mini: 64px; --app-side-bg: #101214; --app-side-hover: rgba(255, 255, 255, 0.06);
+  --app-side-text: #b8bcc4; --app-side-muted: #7d838d; --app-nav-accent: #e5a00d; }
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) { --app-side-bg: #e9ebef; --app-side-hover: rgba(0, 0, 0, 0.06);
+    --app-side-text: #3a3f47; --app-side-muted: #6b717c; --app-nav-accent: #b37a00; }
+}
+.app-side { position: fixed; inset: 0 auto 0 0; width: var(--app-side-w); background: var(--app-side-bg); z-index: 40;
+  display: flex; flex-direction: column; border-right: 1px solid var(--app-border-light); transition: width .18s ease, transform .2s ease; }
+.app-side-head { display: flex; align-items: center; gap: 8px; height: 56px; padding: 0 10px 0 16px; flex: none; }
+.app-side-brand { display: flex; align-items: center; gap: 10px; min-width: 0; flex: 1; color: var(--app-text-primary); text-decoration: none; }
+.app-side-logo { width: 30px; height: 30px; border-radius: 8px; flex: none; display: grid; place-items: center;
+  background: var(--app-nav-accent); color: #111; font-weight: 800; font-size: 16px; }
+.app-side-brand-text { font-weight: 700; font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.app-side-collapse, .app-topbar-menu { border: 0; background: transparent; color: var(--app-side-muted); width: 32px; height: 32px;
+  border-radius: 8px; cursor: pointer; display: grid; place-items: center; flex: none; }
+.app-side-collapse:hover, .app-topbar-menu:hover { background: var(--app-side-hover); color: var(--app-text-primary); }
+.app-side-nav { flex: 1; overflow-y: auto; padding: 6px 0 16px; }
+.app-side-group { margin: 6px 0 10px; }
+.app-side-group[hidden] { display: none; }
+.app-side-mod { display: flex; align-items: center; gap: 12px; padding: 9px 18px; color: var(--app-side-text); text-decoration: none;
+  font-size: 12px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
+.app-side-mod:hover { color: var(--app-text-primary); }
+.app-side-group.is-current > .app-side-mod { color: var(--app-text-primary); }
+.app-side-sub { list-style: none; margin: 0; padding: 0; }
+.app-side-item { position: relative; display: flex; align-items: center; gap: 12px; padding: 8px 18px 8px 22px; margin: 1px 8px;
+  border-radius: 8px; color: var(--app-side-text); text-decoration: none; font-size: 13.5px; white-space: nowrap; }
+.app-side-item:hover { background: var(--app-side-hover); color: var(--app-text-primary); }
+.app-side-item.is-active { background: var(--app-side-hover); color: var(--app-nav-accent); font-weight: 600; }
+.app-side-item.is-active::before { content: ""; position: absolute; left: -8px; top: 6px; bottom: 6px; width: 3px;
+  border-radius: 0 3px 3px 0; background: var(--app-nav-accent); }
+.app-side-group:not(.is-current) .app-side-item { color: var(--app-side-muted); }
+.app-side-group:not(.is-current) .app-side-item:hover { color: var(--app-text-primary); }
+.app-side-ico { width: 18px; height: 18px; flex: none; display: inline-grid; place-items: center; }
+.app-side-ico svg { width: 17px; height: 17px; }
+.app-side-label { overflow: hidden; text-overflow: ellipsis; }
+.app-side-foot { padding: 10px 18px; font-size: 11px; color: var(--app-side-muted); border-top: 1px solid var(--app-border-light); flex: none; }
+.app-side a:focus-visible, .app-side button:focus-visible, .app-topbar button:focus-visible { outline: 2px solid var(--app-nav-accent); outline-offset: -2px; }
+
+/* 접힌 메뉴: 아이콘만 */
+body.app-side-collapsed .app-side { width: var(--app-side-w-mini); }
+body.app-side-collapsed .app-side-brand-text, body.app-side-collapsed .app-side-label { display: none; }
+body.app-side-collapsed .app-side-head { padding: 0 8px; flex-direction: column; justify-content: center; height: auto; gap: 6px; padding-top: 12px; }
+body.app-side-collapsed .app-side-brand { flex: none; }
+body.app-side-collapsed .app-side-collapse .app-side-ico { transform: rotate(180deg); }
+body.app-side-collapsed .app-side-mod { justify-content: center; padding: 10px 0; }
+body.app-side-collapsed .app-side-item { justify-content: center; padding: 9px 0; margin: 1px 8px; }
+body.app-side-collapsed .app-main { margin-left: var(--app-side-w-mini); }
+
+/* 본문: 남은 화면 전체 */
+.app-main { margin-left: var(--app-side-w); min-height: 100vh; min-width: 0; transition: margin-left .18s ease; }
+.app-main > .gdw-page { max-width: none; margin: 0; padding: 20px 28px 32px; }
+/* 원래 상단 탭 막대는 좌측 서브 메뉴로 대체 (탭 버튼은 숨긴 채 메뉴가 눌러 줌) */
+.app-main .gdw-tabs, .app-main .wtm-tabs { display: none !important; }
+
+/* 좁은 화면: 메뉴는 서랍으로 */
+.app-topbar { display: none; }
+.app-scrim { display: none; }
+@media (max-width: 900px) {
+  .app-side { transform: translateX(-100%); width: min(82vw, var(--app-side-w)); box-shadow: var(--app-shadow); }
+  body.app-drawer-open .app-side { transform: none; }
+  body.app-drawer-open .app-scrim { display: block; position: fixed; inset: 0; background: rgba(0, 0, 0, .45); z-index: 35; }
+  .app-side-collapse { display: none; }
+  .app-topbar { display: flex; align-items: center; gap: 8px; position: sticky; top: 0; z-index: 30; height: 52px; padding: 0 12px;
+    background: var(--app-side-bg); border-bottom: 1px solid var(--app-border-light); }
+  .app-topbar-title { font-weight: 700; font-size: 15px; }
+  .app-main, body.app-side-collapsed .app-main { margin-left: 0; min-height: calc(100vh - 52px); }
+  .app-main > .gdw-page { padding: 14px 16px 28px; }
+  body.app-side-collapsed .app-side { width: min(82vw, var(--app-side-w)); }
+  body.app-side-collapsed .app-side-brand-text, body.app-side-collapsed .app-side-label { display: inline; }
+}
 .app-off { max-width: 720px; margin: 40px auto; padding: 24px; border: 1px solid var(--app-border); border-radius: 12px;
   background: var(--app-bg-card); line-height: 1.7; }
 .app-off code { background: var(--app-bg-main); padding: 1px 6px; border-radius: 4px; }

@@ -26,12 +26,12 @@ from . import config, service
 log = logging.getLogger("gdw.web")
 WEB_DIR = os.path.join(config.ROOT, "web")
 STATIC = {"/": "index.html", "/index.html": "index.html", "/style.css": "style.css", "/script.js": "script.js",
-          "/theme.css": "theme.css", "/webtoon": "webtoon/index.html", "/webtoon/": "webtoon/index.html",
+          "/theme.css": "theme.css", "/shell.js": "shell.js", "/webtoon": "webtoon/index.html", "/webtoon/": "webtoon/index.html",
           "/webtoon/style.css": "webtoon/style.css", "/webtoon/script.js": "webtoon/script.js"}
 OFF_PAGE = """<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{title}</title><link rel="stylesheet" href="theme.css"></head><body><nav class="app-nav"><a href="./">드라이브 변경 감시</a>
-<a href="webtoon">웹툰 다운로더</a></nav><div class="app-off"><h2>{title}: 꺼져 있음</h2>
-<p>.env에 <code>{key}=true</code>를 넣고 다시 시작하세요.</p></div></body></html>"""
+<title>{title}</title><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
+<link rel="stylesheet" href="theme.css"></head><body data-module=""><main class="gdw-page"><div class="app-off"><h2>{title}: 꺼져 있음</h2>
+<p>.env에 <code>{key}=true</code>를 넣고 다시 시작하세요.</p></div></main><script src="shell.js"></script></body></html>"""
 MAX_BODY = 2 * 1024 * 1024
 
 

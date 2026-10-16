@@ -222,3 +222,4 @@ select.wtm-input option { color: #111; background: #fff; }
 .wtm-set-subhead { grid-column: 1 / -1; font-weight: 700; font-size: 12.5px; margin-top: 4px; padding: 6px 0 2px;
   border-top: 1px dashed var(--app-border, rgba(127,127,127,.25)); color: var(--app-text-primary, inherit); }
 .wtm-set-grid > .wtm-set-subhead:first-child { border-top: none; margin-top: 0; padding-top: 0; }
+.wtm-card-grid > .wtm-hint { grid-column: 1 / -1; }  /* 넓은 화면에서 빈 목록 안내가 첫 칸에 좁게 갇히지 않게 */

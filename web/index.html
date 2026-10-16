@@ -8,11 +8,7 @@
 <link rel="stylesheet" href="theme.css">
 <link rel="stylesheet" href="style.css">
 </head>
-<body>
-<nav class="app-nav">
-  <a href="./" data-module="gdw" class="is-active">드라이브 변경 감시</a>
-  <a href="webtoon" data-module="wtm">웹툰 다운로더</a>
-</nav>
+<body data-module="gdw">
 <main class="gdw-page">
 <div id="gdw-app" class="gdw">
 
@@ -445,11 +441,6 @@
 </div>
 </main>
 <script src="script.js"></script>
-<script>
-  // 꺼 둔 모듈(.env의 GDW_ENABLED / WTM_ENABLED)은 메뉴에서 숨긴다
-  fetch('api/modules', { credentials: 'same-origin' }).then(function (r) { return r.json(); }).then(function (m) {
-    document.querySelectorAll('.app-nav [data-module]').forEach(function (a) { a.hidden = !m[a.getAttribute('data-module')]; });
-  }).catch(function () {});
-</script>
+<script src="shell.js"></script>
 </body>
 </html>
