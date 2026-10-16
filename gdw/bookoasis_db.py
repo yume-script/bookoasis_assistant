@@ -11,6 +11,8 @@
 MySQL/MariaDB는 PyMySQL(requirements.txt)이 필요하다. 쿼리는 %s 자리표시자로 쓰고,
 SQLite에서는 ?로 바꿔 실행한다.
 """
+import datetime
+import decimal
 import sqlite3
 import threading
 from urllib.parse import parse_qs, unquote, urlparse
@@ -20,6 +22,25 @@ from . import config
 
 class DBError(RuntimeError):
     pass
+
+
+def _plain(value):
+    """PyMySQL이 돌려주는 datetime·Decimal·bytes를 JSON으로 보낼 수 있는 값으로 (BookOasis 게이트웨이와 같게 문자열·숫자)."""
+    if isinstance(value, datetime.datetime):
+        return value.isoformat(sep=" ", timespec="seconds")
+    if isinstance(value, (datetime.date, datetime.time)):
+        return value.isoformat()
+    if isinstance(value, datetime.timedelta):
+        return value.total_seconds()
+    if isinstance(value, decimal.Decimal):
+        return int(value) if value == value.to_integral_value() else float(value)
+    if isinstance(value, (bytes, bytearray)):
+        return bytes(value).decode("utf-8", "replace")
+    return value
+
+
+def _row(row):
+    return {k: _plain(v) for k, v in dict(row).items()}
 
 
 class Gateway:
@@ -64,9 +85,9 @@ class Gateway:
             cur.execute(self._sql(sql), tuple(params or ()))
             if fetch == "one":
                 row = cur.fetchone()
-                return dict(row) if row is not None else None
+                return _row(row) if row is not None else None
             if fetch == "all":
-                return [dict(r) for r in cur.fetchall()]
+                return [_row(r) for r in cur.fetchall()]
             if self.scheme == "sqlite":
                 conn.commit()
             return cur.rowcount

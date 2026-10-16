@@ -19,6 +19,23 @@ log = logging.getLogger("gdw.supervisor")
 CHECK_SECONDS = 30
 
 
+def _tail_logs(lines=12):
+    """워커가 죽었을 때 원인을 바로 보이게: worker.log 끝부분 + worker.out(예외 흔적) 끝부분."""
+    out = []
+    for name, count in (("worker.log", lines), ("worker.out", lines)):
+        try:
+            with open(service._path(name), "rb") as handle:
+                handle.seek(0, 2)
+                handle.seek(max(0, handle.tell() - 32 * 1024))
+                tail = handle.read().decode("utf-8", "replace").splitlines()[-count:]
+        except OSError:
+            continue
+        if tail:
+            out.append(f"── {name} ──")
+            out.extend("  " + line for line in tail)
+    return "\n".join(out) or "(로그 없음)"
+
+
 def loop(svc, stop_event):
     backoff, next_try, was_alive = CHECK_SECONDS, 0.0, False
     while not stop_event.is_set():
@@ -26,7 +43,7 @@ def loop(svc, stop_event):
             runtime = svc._sync_runtime()
             alive = service._worker_alive()
             if was_alive and not alive and not os.path.exists(service._path("disabled.flag")):
-                log.warning("워커가 종료됐습니다. worker.log / worker.out을 확인하세요.")
+                log.warning("워커가 종료됐습니다. 마지막 로그:\n%s", _tail_logs())
             was_alive = alive
             wanted = runtime.get("auto_start") and runtime.get("roots") and not os.path.exists(service._path("disabled.flag"))
             if alive:
