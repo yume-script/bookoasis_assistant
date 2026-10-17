@@ -28,6 +28,7 @@
     'circle-question': '<circle cx="12" cy="12" r="10"/><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3"/><path d="M12 17h.01"/>',
     'angles-left': '<path d="m11 17-5-5 5-5"/><path d="m18 17-5-5 5-5"/>',
     'bars': '<path d="M4 6h16"/><path d="M4 12h16"/><path d="M4 18h16"/>',
+    'gamepad': '<path d="M6 11h4"/><path d="M8 9v4"/><path d="M15 12h.01"/><path d="M18 10h.01"/><path d="M17.3 5H6.7a4 4 0 0 0-3.98 3.59l-.6 5.98A3 3 0 0 0 5.1 18c1 0 1.96-.5 2.5-1.34L8.7 15h6.6l1.1 1.66A3 3 0 0 0 18.9 18a3 3 0 0 0 2.98-3.43l-.6-5.98A4 4 0 0 0 17.3 5z"/>',
     'chevron-down': '<path d="m6 9 6 6 6-6"/>',
     'palette': '<circle cx="13.5" cy="6.5" r="1.2" fill="currentColor"/><circle cx="17.5" cy="10.5" r="1.2" fill="currentColor"/><circle cx="8.5" cy="7.5" r="1.2" fill="currentColor"/><circle cx="6.5" cy="12.5" r="1.2" fill="currentColor"/><path d="M12 2a10 10 0 0 0 0 20 2 2 0 0 0 2-2c0-.5-.2-1-.5-1.3-.3-.4-.5-.8-.5-1.3a2 2 0 0 1 2-2h2.4A5.6 5.6 0 0 0 22 9.8C22 5.5 17.5 2 12 2z"/>'
   };
@@ -51,7 +52,9 @@
         { tab: 'history', label: '다운로드 이력', icon: 'clock-rotate-left' },
         { tab: 'settings', label: '설정', icon: 'gear' },
         { tab: 'help', label: '도움말', icon: 'circle-question' }
-      ] }
+      ] },
+    // 미니게임: 게임 목록은 서버(/api/modules의 games)에서 받아 채운다. 탭 막대 대신 주소의 #게임id로 고른다
+    { id: 'mini', title: '미니게임', icon: 'gamepad', href: 'games', hashNav: true, items: [] }
   ];
   var THEMES = [
     { id: 'dark', label: '다크', colors: ['#141517', '#1d1f22', '#ececec'] },
@@ -110,13 +113,22 @@
   applyTheme();
 
   // ── 원래 탭 막대와 연결 ──
-  function tabBar() { return mod ? document.querySelector(mod.tabsSel) : null; }
+  function tabBar() { return mod && mod.tabsSel ? document.querySelector(mod.tabsSel) : null; }
   function tabButton(tab) { var bar = tabBar(); return bar ? bar.querySelector('[data-tab="' + tab + '"]') : null; }
   function activeTab() {
+    if (mod && mod.hashNav) {  // 미니게임: 화면이 지금 띄운 게임
+      var hub = window.YmMiniGameHub;
+      return (hub && hub.current) || decodeURIComponent((location.hash || '').slice(1));
+    }
     var bar = tabBar(), on = bar && bar.querySelector('.is-on, .active');
     return on ? on.getAttribute('data-tab') : '';
   }
   function openTab(tab, push) {
+    if (mod && mod.hashNav) {  // 화면이 #게임id 변화를 보고 게임을 바꾼다
+      if (location.hash !== '#' + tab) location.hash = tab;
+      document.body.classList.remove('nav-open');
+      return true;
+    }
     var btn = tabButton(tab);
     if (!btn) return false;
     btn.click();
@@ -152,23 +164,30 @@
     });
     storeSet(OPEN_KEY, id || '');
   }
+  function faIcon(cls) {  // 게임 manifest의 Font Awesome 아이콘
+    var span = h('span', { class: 'app-icon', 'aria-hidden': 'true' });
+    span.appendChild(h('i', { class: cls }));
+    return span;
+  }
+  function addItem(m, it) {
+    var link = h('a', { class: 'nav-link', href: m.href + '#' + it.tab, 'data-tab': it.tab, 'data-module': m.id },
+      [it.fa ? faIcon(it.fa) : icon(it.icon), h('span', { text: it.label })]);
+    if (m.id === current) {
+      link.addEventListener('click', function (ev) {
+        if (ev.button !== 0 || ev.metaKey || ev.ctrlKey || ev.shiftKey) return;  // 새 탭으로 열기는 그대로
+        if (openTab(it.tab)) ev.preventDefault();
+      });
+    }
+    m.itemsEl.appendChild(link);
+  }
   MENU.forEach(function (m) {
     var group = h('div', { class: 'nav-group', 'data-module': m.id });
     var head = h('button', { type: 'button', class: 'nav-head nav-toggle', title: m.title + ' 메뉴 펼치기/접기',
       onclick: function () { openGroup(group.classList.contains('collapsed') ? m.id : null); } },
       [h('span', { text: m.title }), icon('chevron-down', 'nav-chevron')]);
     var items = h('div', { class: 'nav-items' });
-    m.items.forEach(function (it) {
-      var link = h('a', { class: 'nav-link', href: m.href + '#' + it.tab, 'data-tab': it.tab, 'data-module': m.id },
-        [icon(it.icon), h('span', { text: it.label })]);
-      if (m.id === current) {
-        link.addEventListener('click', function (ev) {
-          if (ev.button !== 0 || ev.metaKey || ev.ctrlKey || ev.shiftKey) return;  // 새 탭으로 열기는 그대로
-          if (openTab(it.tab)) ev.preventDefault();
-        });
-      }
-      items.appendChild(link);
-    });
+    m.itemsEl = items;
+    m.items.forEach(function (it) { addItem(m, it); });
     group.appendChild(head);
     group.appendChild(items);
     groups.push(group);
@@ -243,11 +262,19 @@
     syncActive();
   }
   window.addEventListener('hashchange', fromHash);
+  document.addEventListener('mini:mounted', syncActive);  // 미니게임 화면이 게임을 바꿨을 때
   fromHash();
 
   // 켜진 모듈·버전·로그인 이름 (서버의 /api/modules)
   fetch('api/modules', { credentials: 'same-origin' }).then(function (r) { return r.json(); }).then(function (m) {
     groups.forEach(function (g) { g.hidden = !m[g.getAttribute('data-module')]; });
+    var miniMenu = MENU.filter(function (x) { return x.id === 'mini'; })[0];
+    (m.games || []).forEach(function (g) {
+      var it = { tab: g.id, label: g.name, fa: g.icon };
+      miniMenu.items.push(it);
+      addItem(miniMenu, it);
+    });
+    syncActive();
     if (m.version) { verEl.textContent = m.version; document.title = document.title + ' · v' + m.version; }
     var name = m.user || '관리자';
     who.firstChild.textContent = name;

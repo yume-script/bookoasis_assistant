@@ -1,0 +1,67 @@
+<div class="othello-game-root">
+    <div class="game-sub-bar">
+        <span class="game-view-name"><i class="fa-solid fa-circle"></i> OTHELLO</span>
+        <div class="sub-actions">
+            <button id="othello-btn-start" class="btn-banner primary"><i class="fa-solid fa-play"></i> 새 게임</button>
+            <button id="othello-btn-surrender" class="btn-banner danger" disabled><i class="fa-solid fa-flag"></i> 기권</button>
+        </div>
+    </div>
+
+    <div class="othello-stage-grid">
+        <div class="stage-col left-col" id="othello-left-col">
+            <button class="panel-toggle-btn" id="othello-toggle-left" title="패널 접기/펼치기"><i class="fa-solid fa-chevron-left"></i></button>
+            <div class="panel-content">
+            <div class="mini-panel-card">
+                <div class="panel-header"><i class="fa-solid fa-chart-simple"></i> STATISTICS</div>
+                <div class="stat-grid">
+                    <div class="stat-box"><span class="stat-lbl">현재 차례</span><span id="othello-turn" class="stat-val highlight">-</span></div>
+                    <div class="stat-box"><span class="stat-lbl">흑돌(나)</span><span id="othello-black-count" class="stat-val">2</span></div>
+                    <div class="stat-box"><span class="stat-lbl">백돌(AI)</span><span id="othello-white-count" class="stat-val">2</span></div>
+                    <div class="stat-box"><span class="stat-lbl">승</span><span id="othello-wins" class="stat-val">0</span></div>
+                    <div class="stat-box"><span class="stat-lbl">패</span><span id="othello-losses" class="stat-val">0</span></div>
+                    <div class="stat-box"><span class="stat-lbl">무</span><span id="othello-draws" class="stat-val">0</span></div>
+                </div>
+            </div>
+            <div class="mini-panel-card">
+                <div class="panel-header"><i class="fa-regular fa-lightbulb"></i> 게임 방법</div>
+                <p class="tip-text">
+                    • 당신은 흑돌, AI는 백돌입니다. 흑돌이 먼저 둡니다.<br>
+                    • 상대 돌을 자신의 돌 두 개 사이에 가두면 전부 뒤집힙니다.<br>
+                    • 둘 수 있는 곳이 없으면 자동으로 차례가 넘어갑니다(패스).<br>
+                    • 둘 다 둘 곳이 없으면 게임이 끝나고, 돌이 더 많은 쪽이 승리합니다.
+                </p>
+            </div>
+        
+            </div></div>
+
+        <div class="stage-col center-col">
+            <div class="othello-board-frame">
+                <canvas id="othello-board" width="400" height="400"></canvas>
+                <div id="othello-overlay" class="game-overlay hidden">
+                    <h2 id="othello-overlay-title">GAME OVER</h2>
+                    <p id="othello-overlay-msg"></p>
+                    <button id="othello-btn-overlay-action" class="btn-banner primary">다시 시작</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="stage-col right-col" id="othello-right-col">
+            <button class="panel-toggle-btn" id="othello-toggle-right" title="패널 접기/펼치기"><i class="fa-solid fa-chevron-right"></i></button>
+            <div class="panel-content">
+            <div class="mini-panel-card">
+                <div class="panel-header"><i class="fa-regular fa-keyboard"></i> 조작 가이드</div>
+                <ul class="key-guide-list">
+                    <li><span>착수</span> <kbd>보드 클릭/탭</kbd></li>
+                </ul>
+            </div>
+            <div class="mini-panel-card">
+                <div class="panel-header"><i class="fa-solid fa-circle-half-stroke"></i> 돌 색상</div>
+                <ul class="key-guide-list">
+                    <li><span><i class="fa-solid fa-circle" style="color:#111827;"></i> 나 (흑돌)</span></li>
+                    <li><span><i class="fa-regular fa-circle" style="color:#f8fafc;"></i> AI (백돌)</span></li>
+                </ul>
+            </div>
+        
+            </div></div>
+    </div>
+</div>

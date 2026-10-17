@@ -1,0 +1,68 @@
+<div class="galaga-game-root">
+    <div class="game-sub-bar">
+        <span class="game-view-name"><i class="fa-solid fa-rocket"></i> GALAGA</span>
+        <div class="sub-actions">
+            <button id="gal-btn-start" class="btn-banner primary"><i class="fa-solid fa-play"></i> 게임 시작</button>
+            <button id="gal-btn-pause" class="btn-banner secondary" disabled><i class="fa-solid fa-pause"></i> 일시 정지</button>
+            <button id="gal-btn-reset" class="btn-banner danger"><i class="fa-solid fa-rotate-left"></i> 초기화</button>
+        </div>
+    </div>
+
+    <div class="galaga-stage-grid">
+        <div class="stage-col left-col" id="gal-left-col">
+            <button class="panel-toggle-btn" id="gal-toggle-left" title="패널 접기/펼치기"><i class="fa-solid fa-chevron-left"></i></button>
+            <div class="panel-content">
+            <div class="mini-panel-card">
+                <div class="panel-header"><i class="fa-solid fa-chart-simple"></i> STATISTICS</div>
+                <div class="stat-grid">
+                    <div class="stat-box"><span class="stat-lbl">SCORE</span><span id="gal-score" class="stat-val highlight">0</span></div>
+                    <div class="stat-box"><span class="stat-lbl">HIGH SCORE</span><span id="gal-high-score" class="stat-val">0</span></div>
+                    <div class="stat-box"><span class="stat-lbl">WAVE</span><span id="gal-wave" class="stat-val">1</span></div>
+                    <div class="stat-box"><span class="stat-lbl">생명</span><span id="gal-lives" class="stat-val">🚀🚀🚀</span></div>
+                </div>
+            </div>
+            <div class="mini-panel-card">
+                <div class="panel-header"><i class="fa-regular fa-keyboard"></i> 조작 가이드</div>
+                <ul class="key-guide-list">
+                    <li><span>이동</span> <div class="key-group"><kbd>←</kbd><kbd>→</kbd></div></li>
+                    <li><span>발사</span> <kbd>Space</kbd></li>
+                    <li><span>일시 정지</span> <kbd>P</kbd></li>
+                </ul>
+            </div>
+        
+            </div></div>
+
+        <div class="stage-col center-col">
+            <div class="galaga-board-frame">
+                <canvas id="gal-board" width="380" height="540"></canvas>
+                <div id="gal-overlay" class="game-overlay hidden">
+                    <h2 id="gal-overlay-title">GAME OVER</h2>
+                    <p id="gal-overlay-msg">다시 도전해보세요!</p>
+                    <button id="gal-btn-overlay-action" class="btn-banner primary">다시 시작</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="stage-col right-col" id="gal-right-col">
+            <button class="panel-toggle-btn" id="gal-toggle-right" title="패널 접기/펼치기"><i class="fa-solid fa-chevron-right"></i></button>
+            <div class="panel-content">
+            <div class="mini-panel-card">
+                <div class="panel-header"><i class="fa-regular fa-lightbulb"></i> 게임 방법</div>
+                <p class="tip-text">
+                    • 편대를 이루어 좌우로 움직이며 서서히 내려오는 적을 격추하세요.<br>
+                    • 가끔 대열에서 이탈해 급강하 공격하는 적을 조심하세요(충돌 시 생명 감소).<br>
+                    • 적탄에 맞거나 급강하 적과 충돌하면 생명을 잃습니다.<br>
+                    • 웨이브를 모두 격추하면 다음 웨이브(적 증가·속도 상승)로 진행합니다.
+                </p>
+            </div>
+            <div class="galaga-touch-controls">
+                <div class="touch-row">
+                    <button class="touch-btn" data-action="left"><i class="fa-solid fa-arrow-left"></i></button>
+                    <button class="touch-btn fire-btn" data-action="fire"><i class="fa-solid fa-bolt"></i> FIRE</button>
+                    <button class="touch-btn" data-action="right"><i class="fa-solid fa-arrow-right"></i></button>
+                </div>
+            </div>
+        
+            </div></div>
+    </div>
+</div>

@@ -1,0 +1,75 @@
+<div class="sudoku-game-root">
+    <div class="game-sub-bar">
+        <span class="game-view-name"><i class="fa-solid fa-table-cells"></i> SUDOKU</span>
+        <div class="sub-actions">
+            <div class="diff-select-wrapper">
+                <button class="diff-pill active" data-diff="easy">쉬움</button>
+                <button class="diff-pill" data-diff="medium">보통</button>
+                <button class="diff-pill" data-diff="hard">어려움</button>
+            </div>
+            <button id="sudoku-btn-new" class="btn-banner primary"><i class="fa-solid fa-plus"></i> 새 게임</button>
+        </div>
+    </div>
+
+    <div class="sudoku-stage-grid">
+        <div class="stage-col left-col" id="sudoku-left-col">
+            <button class="panel-toggle-btn" id="sudoku-toggle-left" title="패널 접기/펼치기"><i class="fa-solid fa-chevron-left"></i></button>
+            <div class="panel-content">
+            <div class="mini-panel-card">
+                <div class="panel-header"><i class="fa-solid fa-chart-simple"></i> STATISTICS</div>
+                <div class="stat-grid">
+                    <div class="stat-box"><span class="stat-lbl">시간</span><span id="sudoku-timer" class="stat-val highlight">00:00</span></div>
+                    <div class="stat-box"><span class="stat-lbl">실수</span><span id="sudoku-mistakes" class="stat-val">0</span></div>
+                    <div class="stat-box"><span class="stat-lbl">힌트 남음</span><span id="sudoku-hints" class="stat-val">3</span></div>
+                    <div class="stat-box"><span class="stat-lbl">최고 기록</span><span id="sudoku-best" class="stat-val">-</span></div>
+                </div>
+            </div>
+            <div class="mini-panel-card">
+                <div class="panel-header"><i class="fa-regular fa-lightbulb"></i> 게임 방법</div>
+                <p class="tip-text">
+                    • 각 가로줄·세로줄·3×3 박스에 1~9 숫자가 겹치지 않게 채우세요.<br>
+                    • 셀을 선택하고 숫자 버튼(또는 키보드 1~9)으로 입력합니다.<br>
+                    • 메모 모드를 켜면 후보 숫자를 작게 적어둘 수 있습니다.<br>
+                    • 충돌하는 숫자는 빨간색으로 표시됩니다.
+                </p>
+            </div>
+        
+            </div></div>
+
+        <div class="stage-col center-col">
+            <div class="sudoku-board-frame">
+                <canvas id="sudoku-board" width="450" height="450"></canvas>
+                <div id="sudoku-overlay" class="game-overlay hidden">
+                    <h2 id="sudoku-overlay-title">CLEAR!</h2>
+                    <p id="sudoku-overlay-msg"></p>
+                    <button id="sudoku-btn-overlay-action" class="btn-banner primary">새 게임</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="stage-col right-col" id="sudoku-right-col">
+            <button class="panel-toggle-btn" id="sudoku-toggle-right" title="패널 접기/펼치기"><i class="fa-solid fa-chevron-right"></i></button>
+            <div class="panel-content">
+            <div class="mini-panel-card">
+                <div class="panel-header"><i class="fa-solid fa-keyboard"></i> 숫자 입력</div>
+                <div class="number-pad">
+                    <button class="num-btn" data-num="1">1</button>
+                    <button class="num-btn" data-num="2">2</button>
+                    <button class="num-btn" data-num="3">3</button>
+                    <button class="num-btn" data-num="4">4</button>
+                    <button class="num-btn" data-num="5">5</button>
+                    <button class="num-btn" data-num="6">6</button>
+                    <button class="num-btn" data-num="7">7</button>
+                    <button class="num-btn" data-num="8">8</button>
+                    <button class="num-btn" data-num="9">9</button>
+                </div>
+                <div class="pad-actions">
+                    <button id="sudoku-btn-erase" class="btn-banner secondary"><i class="fa-solid fa-eraser"></i> 지우기</button>
+                    <button id="sudoku-btn-note" class="btn-banner secondary"><i class="fa-solid fa-pencil"></i> 메모 모드: <span id="sudoku-note-status">OFF</span></button>
+                    <button id="sudoku-btn-hint" class="btn-banner primary"><i class="fa-solid fa-wand-magic-sparkles"></i> 힌트</button>
+                </div>
+            </div>
+        
+            </div></div>
+    </div>
+</div>

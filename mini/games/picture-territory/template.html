@@ -1,0 +1,81 @@
+<div class="picture-game-root">
+    <div class="game-sub-bar">
+        <span class="game-view-name"><i class="fa-solid fa-image"></i> 그림 땅따먹기</span>
+        <div class="sub-actions">
+            <button id="pic-btn-start" class="btn-banner primary"><i class="fa-solid fa-play"></i> 게임 시작</button>
+            <button id="pic-btn-pause" class="btn-banner secondary" disabled><i class="fa-solid fa-pause"></i> 일시 정지</button>
+            <button id="pic-btn-reset" class="btn-banner danger"><i class="fa-solid fa-rotate-left"></i> 초기화</button>
+        </div>
+    </div>
+
+    <div class="picture-stage-grid">
+        <div class="stage-col left-col" id="pic-left-col">
+            <button class="panel-toggle-btn" id="pic-toggle-left" title="패널 접기/펼치기"><i class="fa-solid fa-chevron-left"></i></button>
+            <div class="panel-content">
+            <div class="mini-panel-card">
+                <div class="panel-header"><i class="fa-solid fa-chart-simple"></i> STATISTICS</div>
+                <div class="stat-grid">
+                    <div class="stat-box"><span class="stat-lbl">공개율</span><span id="pic-percent" class="stat-val highlight">0%</span></div>
+                    <div class="stat-box"><span class="stat-lbl">목표</span><span id="pic-target" class="stat-val">75%</span></div>
+                    <div class="stat-box"><span class="stat-lbl">레벨</span><span id="pic-level" class="stat-val">1</span></div>
+                    <div class="stat-box"><span class="stat-lbl">생명</span><span id="pic-lives" class="stat-val">❤️❤️❤️</span></div>
+                    <div class="stat-box"><span class="stat-lbl">점수</span><span id="pic-score" class="stat-val">0</span></div>
+                </div>
+            </div>
+            <div class="mini-panel-card">
+                <div class="panel-header"><i class="fa-solid fa-book"></i> 표지 이미지</div>
+                <input id="pic-cover-url" type="text" class="cover-url-input" placeholder="책 표지 이미지 URL 입력 (예: /covers/123.jpg)">
+                <div class="cover-btn-row">
+                    <button id="pic-btn-apply-cover" class="btn-banner primary">적용</button>
+                    <button id="pic-btn-default-cover" class="btn-banner secondary">기본 이미지</button>
+                </div>
+                <p class="tip-text">URL을 직접 넣거나, 이 폴더의 covers/ 안에 이미지와 list.json(파일명 목록)을 넣어두면 게임마다 무작위로 표지가 바뀝니다.</p>
+            </div>
+            <div class="mini-panel-card">
+                <div class="panel-header"><i class="fa-regular fa-lightbulb"></i> 게임 방법</div>
+                <p class="tip-text">
+                    • 테두리(안전지대)에서 나가 선을 그은 뒤 다시 돌아오면, 감싼 영역의 표지 그림이 드러납니다.<br>
+                    • 선을 긋는 도중 쥐가 닿으면 목숨을 하나 잃고 처음 위치로 돌아갑니다.<br>
+                    • 그리던 선을 스스로 다시 밟아도 목숨을 잃습니다.<br>
+                    • 목표 공개율에 도달하면 다음 레벨로 넘어갑니다.
+                </p>
+            </div>
+        
+            </div></div>
+
+        <div class="stage-col center-col">
+            <div class="picture-board-frame">
+                <canvas id="pic-board" width="360" height="540"></canvas>
+                <div id="pic-overlay" class="game-overlay hidden">
+                    <h2 id="pic-overlay-title">GAME OVER</h2>
+                    <p id="pic-overlay-msg">다시 도전해보세요!</p>
+                    <button id="pic-btn-overlay-action" class="btn-banner primary">다시 시작</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="stage-col right-col" id="pic-right-col">
+            <button class="panel-toggle-btn" id="pic-toggle-right" title="패널 접기/펼치기"><i class="fa-solid fa-chevron-right"></i></button>
+            <div class="panel-content">
+            <div class="mini-panel-card">
+                <div class="panel-header"><i class="fa-regular fa-keyboard"></i> 조작 가이드</div>
+                <ul class="key-guide-list">
+                    <li><span>이동</span> <div class="key-group"><kbd>↑</kbd><kbd>↓</kbd><kbd>←</kbd><kbd>→</kbd></div></li>
+                    <li><span>일시 정지</span> <kbd>P</kbd></li>
+                    <li><span>모바일</span> <kbd>방향 버튼</kbd></li>
+                </ul>
+            </div>
+            <div class="picture-touch-controls">
+                <div class="touch-row">
+                    <button class="touch-btn" data-dir="up"><i class="fa-solid fa-arrow-up"></i></button>
+                </div>
+                <div class="touch-row middle">
+                    <button class="touch-btn" data-dir="left"><i class="fa-solid fa-arrow-left"></i></button>
+                    <button class="touch-btn" data-dir="down"><i class="fa-solid fa-arrow-down"></i></button>
+                    <button class="touch-btn" data-dir="right"><i class="fa-solid fa-arrow-right"></i></button>
+                </div>
+            </div>
+        
+            </div></div>
+    </div>
+</div>

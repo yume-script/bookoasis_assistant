@@ -1,0 +1,71 @@
+<div class="mine-game-root">
+    <div class="game-sub-bar">
+        <span class="game-view-name"><i class="fa-solid fa-bomb"></i> MINESWEEPER</span>
+        <div class="sub-actions">
+            <button id="mine-btn-restart" class="btn-banner primary"><i class="fa-solid fa-rotate-left"></i> 새 게임</button>
+            <button id="mine-btn-flag-toggle" class="btn-banner secondary"><i class="fa-solid fa-flag"></i> 깃발 모드: <span id="mine-flag-mode-text">OFF</span></button>
+        </div>
+    </div>
+
+    <div class="mine-stage-grid">
+        <div class="stage-col left-col">
+            <div class="mini-panel-card">
+                <div class="panel-header"><i class="fa-solid fa-sliders"></i> 난이도 선택</div>
+                <div class="diff-btn-group">
+                    <button class="diff-btn active" data-level="beginner">
+                        <span class="diff-title">초급 (Easy)</span>
+                        <span class="diff-spec">9 × 9 · 지뢰 10</span>
+                    </button>
+                    <button class="diff-btn" data-level="intermediate">
+                        <span class="diff-title">중급 (Medium)</span>
+                        <span class="diff-spec">16 × 16 · 지뢰 40</span>
+                    </button>
+                    <button class="diff-btn" data-level="expert">
+                        <span class="diff-title">고급 (Hard)</span>
+                        <span class="diff-spec">30 × 16 · 지뢰 99</span>
+                    </button>
+                </div>
+            </div>
+            <div class="mini-panel-card">
+                <div class="panel-header"><i class="fa-solid fa-trophy"></i> 최단 시간 기록</div>
+                <div class="stat-grid">
+                    <div class="stat-box"><span class="stat-lbl">초급</span><span id="best-beginner" class="stat-val">-</span></div>
+                    <div class="stat-box"><span class="stat-lbl">중급</span><span id="best-intermediate" class="stat-val">-</span></div>
+                    <div class="stat-box"><span class="stat-lbl">고급</span><span id="best-expert" class="stat-val">-</span></div>
+                </div>
+            </div>
+        </div>
+
+        <div class="stage-col center-col">
+            <div class="mine-board-frame">
+                <div class="board-hud">
+                    <div class="hud-box"><i class="fa-solid fa-bomb hud-icon"></i><span id="hud-mines-left" class="hud-num">010</span></div>
+                    <button id="btn-hud-face" class="hud-face-btn" title="새 게임"><span id="hud-face-icon">😊</span></button>
+                    <div class="hud-box"><i class="fa-solid fa-stopwatch hud-icon"></i><span id="hud-timer" class="hud-num">000</span></div>
+                </div>
+                <div id="mine-grid" class="mine-grid-wrapper"></div>
+                <div id="mine-overlay" class="game-overlay hidden">
+                    <h2 id="mine-overlay-title">GAME OVER</h2>
+                    <p id="mine-overlay-msg">지뢰를 밟았습니다!</p>
+                    <button id="mine-btn-overlay-retry" class="btn-banner primary">다시 도전</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="stage-col right-col">
+            <div class="mini-panel-card">
+                <div class="panel-header"><i class="fa-regular fa-keyboard"></i> 조작 가이드</div>
+                <ul class="key-guide-list">
+                    <li><span>셀 열기</span> <kbd>좌클릭</kbd></li>
+                    <li><span>깃발</span> <kbd>우클릭</kbd></li>
+                    <li><span>주변 동시 오픈</span> <kbd>더블클릭</kbd></li>
+                    <li><span>모바일</span> <kbd>깃발 모드 버튼</kbd></li>
+                </ul>
+            </div>
+            <div class="mini-panel-card">
+                <div class="panel-header"><i class="fa-regular fa-lightbulb"></i> 첫 클릭 보장</div>
+                <p class="tip-text">• 첫 번째 클릭은 100% 안전하며 넓은 빈 공간이 먼저 열립니다.</p>
+            </div>
+        </div>
+    </div>
+</div>

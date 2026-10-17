@@ -1,0 +1,67 @@
+<div class="tetris-game-root">
+    <div class="game-sub-bar">
+        <span class="game-view-name"><i class="fa-solid fa-shapes"></i> TETRIS</span>
+        <div class="sub-actions">
+            <button id="tetris-btn-start" class="btn-banner primary"><i class="fa-solid fa-play"></i> 게임 시작</button>
+            <button id="tetris-btn-pause" class="btn-banner secondary" disabled><i class="fa-solid fa-pause"></i> 일시 정지</button>
+            <button id="tetris-btn-reset" class="btn-banner danger"><i class="fa-solid fa-rotate-left"></i> 초기화</button>
+        </div>
+    </div>
+
+    <div class="tetris-stage-grid">
+        <div class="stage-col left-col">
+            <div class="mini-panel-card">
+                <div class="panel-header"><i class="fa-solid fa-chart-simple"></i> STATISTICS</div>
+                <div class="stat-grid">
+                    <div class="stat-box"><span class="stat-lbl">SCORE</span><span id="tetris-score" class="stat-val highlight">0</span></div>
+                    <div class="stat-box"><span class="stat-lbl">HIGH SCORE</span><span id="tetris-high-score" class="stat-val">0</span></div>
+                    <div class="stat-box"><span class="stat-lbl">LEVEL</span><span id="tetris-level" class="stat-val">1</span></div>
+                    <div class="stat-box"><span class="stat-lbl">LINES</span><span id="tetris-lines" class="stat-val">0</span></div>
+                </div>
+            </div>
+            <div class="mini-panel-card">
+                <div class="panel-header"><i class="fa-regular fa-keyboard"></i> 조작 가이드</div>
+                <ul class="key-guide-list">
+                    <li><span>이동</span> <div class="key-group"><kbd>←</kbd> <kbd>→</kbd></div></li>
+                    <li><span>회전</span> <kbd>↑</kbd></li>
+                    <li><span>소프트 드롭</span> <kbd>↓</kbd></li>
+                    <li><span>하드 드롭</span> <kbd>Space</kbd></li>
+                    <li><span>일시 정지</span> <kbd>P</kbd></li>
+                </ul>
+            </div>
+        </div>
+
+        <div class="stage-col center-col">
+            <div class="tetris-board-frame">
+                <canvas id="tetris-board" width="360" height="720"></canvas>
+                <div id="tetris-overlay" class="game-overlay hidden">
+                    <h2 id="tetris-overlay-title">GAME OVER</h2>
+                    <p id="tetris-overlay-msg">다시 도전해보세요!</p>
+                    <button id="tetris-btn-overlay-action" class="btn-banner primary">다시 시작</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="stage-col right-col">
+            <div class="mini-panel-card next-panel">
+                <div class="panel-header"><i class="fa-solid fa-forward"></i> NEXT BLOCK</div>
+                <div class="next-canvas-wrapper">
+                    <canvas id="tetris-next" width="140" height="140"></canvas>
+                </div>
+            </div>
+            <div class="tetris-touch-controls">
+                <div class="touch-row">
+                    <button class="touch-btn" data-action="rotate"><i class="fa-solid fa-rotate-right"></i> 회전</button>
+                </div>
+                <div class="touch-row middle">
+                    <button class="touch-btn" data-action="left"><i class="fa-solid fa-arrow-left"></i></button>
+                    <button class="touch-btn" data-action="down"><i class="fa-solid fa-arrow-down"></i></button>
+                    <button class="touch-btn" data-action="right"><i class="fa-solid fa-arrow-right"></i></button>
+                </div>
+                <div class="touch-row">
+                    <button class="touch-btn hard-drop" data-action="drop"><i class="fa-solid fa-angles-down"></i> HARD DROP</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>

@@ -127,6 +127,23 @@ class HandoffTest(unittest.TestCase):
         self.assertEqual(tuple(row), ("웹툰 다운로더", "create", "file", "pending"))
 
 
+class MiniGameTest(unittest.TestCase):
+    def test_bundle_and_covers(self):
+        from mini import bundle
+        games = bundle.menu()
+        self.assertGreaterEqual(len(games), 12)
+        self.assertTrue(all(g["id"] and g["name"] and not g["name"].startswith("🕹") for g in games))
+        page = bundle.page()
+        self.assertIn('data-module="mini"', page)
+        self.assertIn("YmMiniGameHub", page)
+        self.assertNotIn("/plugins/metadata/ym_mini_game/", page)  # 표지 경로는 이 서버의 games/covers/
+        self.assertEqual(page.lower().count("</script>"), page.lower().count("<script"))
+        self.assertIsNone(bundle.cover_path("../bundle.py"))
+        covers = bundle.list_covers()
+        if covers:
+            self.assertTrue(os.path.isfile(bundle.cover_path(covers[0])))
+
+
 class DispatchTest(unittest.TestCase):
     def test_unknown_and_bad_names(self):
         svc = service.Service()

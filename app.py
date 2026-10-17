@@ -68,7 +68,8 @@ def check(svc):
     """설정 점검 결과를 출력한다. 문제가 있으면 종료 코드 1."""
     problems = 0
     mods = modules()
-    print(f"모듈            : 드라이브 변경 감시 {'켬' if mods['gdw'] else '끔'} · 웹툰 다운로더 {'켬' if mods['wtm'] else '끔'}")
+    print(f"모듈            : 드라이브 변경 감시 {'켬' if mods['gdw'] else '끔'} · 웹툰 다운로더 {'켬' if mods['wtm'] else '끔'}"
+          f" · 미니게임 {'켬' if mods['mini'] else '끔'}")
     settings = config.settings()
     print(f".env            : {config.ENV_PATH}" + ("" if os.path.exists(config.ENV_PATH) else "  (없음 - env.example을 복사하세요)"))
     print(f"DATA_DIR        : {service.DATA_DIR}")
@@ -142,7 +143,8 @@ def main():
     signal.signal(signal.SIGINT, on_signal)
     log.info("관리 화면: http://%s:%d/  (데이터: %s, 보관함: %s, 모듈: %s)", host, port, service.DATA_DIR,
              "BookOasis DB" if bookoasis_db.configured() else config.libraries_file(),
-             ", ".join(name for name, on in (("드라이브 변경 감시", mods["gdw"]), ("웹툰 다운로더", mods["wtm"])) if on))
+             ", ".join(name for name, on in (("드라이브 변경 감시", mods["gdw"]), ("웹툰 다운로더", mods["wtm"]),
+                                             ("미니게임", mods["mini"])) if on))
     try:
         server.serve_forever()
     finally:

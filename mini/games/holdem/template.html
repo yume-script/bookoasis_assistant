@@ -1,0 +1,84 @@
+<div class="holdem-game-root">
+    <div class="game-sub-bar">
+        <span class="game-view-name"><i class="fa-solid fa-heart"></i> TEXAS HOLD'EM</span>
+        <div class="sub-actions">
+            <button id="holdem-btn-start" class="btn-banner primary"><i class="fa-solid fa-play"></i> 게임 시작</button>
+            <button id="holdem-btn-reset" class="btn-banner danger"><i class="fa-solid fa-rotate-left"></i> 세션 초기화</button>
+        </div>
+    </div>
+
+    <div class="holdem-stage-grid">
+        <div class="stage-col left-col" id="holdem-left-col">
+            <button class="panel-toggle-btn" id="holdem-toggle-left" title="패널 접기/펼치기"><i class="fa-solid fa-chevron-left"></i></button>
+            <div class="panel-content">
+            <div class="mini-panel-card">
+                <div class="panel-header"><i class="fa-solid fa-chart-simple"></i> STATISTICS</div>
+                <div class="stat-grid">
+                    <div class="stat-box"><span class="stat-lbl">핸드 수</span><span id="holdem-hand-count" class="stat-val highlight">0</span></div>
+                    <div class="stat-box"><span class="stat-lbl">내 스택</span><span id="holdem-my-stack" class="stat-val">1000</span></div>
+                    <div class="stat-box"><span class="stat-lbl">AI 1 스택</span><span id="holdem-ai1-stack" class="stat-val">1000</span></div>
+                    <div class="stat-box"><span class="stat-lbl">AI 2 스택</span><span id="holdem-ai2-stack" class="stat-val">1000</span></div>
+                </div>
+            </div>
+            <div class="mini-panel-card">
+                <div class="panel-header"><i class="fa-regular fa-lightbulb"></i> 게임 방법</div>
+                <p class="tip-text">
+                    • 3인 홀덤(나 + AI 2명), 시작 스택 1000, 블라인드 10/20 고정입니다.<br>
+                    • 홀카드 2장 + 커뮤니티 카드 5장 중 최고의 5장으로 승부합니다.<br>
+                    • 상대가 전부 폴드하면 카드를 공개하지 않고 팟을 가져갑니다.<br>
+                    • 스택이 0이 되면 탈락하며, 최후의 1인이 남으면 세션이 종료됩니다.
+                </p>
+            </div>
+            <div class="mini-panel-card">
+                <div class="panel-header"><i class="fa-solid fa-list"></i> 핸드 기록</div>
+                <div id="holdem-log" class="holdem-log"></div>
+            </div>
+        
+            </div></div>
+
+        <div class="stage-col center-col">
+            <div class="holdem-board-frame">
+                <canvas id="holdem-board" width="480" height="380"></canvas>
+                <div id="holdem-overlay" class="game-overlay hidden">
+                    <h2 id="holdem-overlay-title">핸드 종료</h2>
+                    <p id="holdem-overlay-msg"></p>
+                    <button id="holdem-btn-overlay-action" class="btn-banner primary">다음 핸드</button>
+                </div>
+            </div>
+            <div id="holdem-action-bar" class="holdem-action-bar">
+                <button id="holdem-btn-fold" class="btn-banner danger">폴드</button>
+                <button id="holdem-btn-checkcall" class="btn-banner secondary">체크</button>
+                <div class="raise-controls">
+                    <input id="holdem-raise-slider" type="range" min="20" max="1000" step="10" value="20">
+                    <span id="holdem-raise-amount" class="raise-amount-label">20</span>
+                    <button id="holdem-btn-raise" class="btn-banner primary">베팅</button>
+                </div>
+                <div class="raise-presets">
+                    <button class="btn-banner secondary preset-btn" data-preset="half">1/2 팟</button>
+                    <button class="btn-banner secondary preset-btn" data-preset="pot">팟</button>
+                    <button class="btn-banner secondary preset-btn" data-preset="allin">올인</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="stage-col right-col" id="holdem-right-col">
+            <button class="panel-toggle-btn" id="holdem-toggle-right" title="패널 접기/펼치기"><i class="fa-solid fa-chevron-right"></i></button>
+            <div class="panel-content">
+            <div class="mini-panel-card">
+                <div class="panel-header"><i class="fa-solid fa-ranking-star"></i> 족보 순위 (낮음 → 높음)</div>
+                <ul class="key-guide-list">
+                    <li><span>하이카드</span></li>
+                    <li><span>원페어</span></li>
+                    <li><span>투페어</span></li>
+                    <li><span>트리플</span></li>
+                    <li><span>스트레이트</span></li>
+                    <li><span>플러시</span></li>
+                    <li><span>풀하우스</span></li>
+                    <li><span>포카드</span></li>
+                    <li><span>스트레이트 플러시</span></li>
+                </ul>
+            </div>
+        
+            </div></div>
+    </div>
+</div>

@@ -1,0 +1,56 @@
+/* plugins/metadata/ym_mini_game/games/minesweeper/style.css */
+.mine-game-root { display: flex; flex-direction: column; gap: 1.25rem; width: 100%; }
+.mine-stage-grid {
+    display: grid; grid-template-columns: 240px 1fr 240px; gap: 1.5rem;
+    width: 100%; max-width: 1350px; margin: 0 auto; align-items: start;
+}
+.stage-col { position: relative; transition: flex-basis 0.25s ease, width 0.25s ease, min-width 0.25s ease; }
+.stage-col.collapsed { flex: 0 0 40px; width: 40px; min-width: 40px; overflow: hidden; }
+.stage-col.collapsed .panel-content { display: none; }
+.panel-content { display: flex; flex-direction: column; gap: 1.25rem; }
+.panel-toggle-btn {
+    align-self: flex-start; width: 32px; height: 32px; border-radius: 8px; border: 1px solid var(--app-border);
+    background: var(--app-bg-card); color: var(--app-text-primary); cursor: pointer;
+    display: flex; align-items: center; justify-content: center; flex-shrink: 0; margin-bottom: 1.25rem;
+}
+.panel-toggle-btn:hover { background: var(--app-bg-card-hover); }
+.mine-board-frame {
+    position: relative; background: #090d16; border: 2px solid var(--app-border);
+    border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,0.35); padding: 12px;
+    display: flex; flex-direction: column; align-items: center; max-width: 100%; overflow-x: auto;
+}
+.board-hud {
+    display: flex; justify-content: space-between; align-items: center; width: 100%;
+    background: #000000; border: 2px solid var(--app-border); border-radius: 8px;
+    padding: 0.5rem 1rem; box-sizing: border-box; margin-bottom: 12px;
+}
+.hud-box { display: flex; align-items: center; gap: 0.5rem; background: #111827; padding: 0.3rem 0.65rem; border-radius: 6px; }
+.hud-num { font-family: monospace; font-size: 1.3rem; font-weight: 900; color: #ef4444; letter-spacing: 2px; }
+.hud-face-btn { background: transparent; border: none; font-size: 1.7rem; cursor: pointer; line-height: 1; }
+.mine-grid-wrapper { display: inline-grid; background: #1e293b; gap: 2px; padding: 4px; border-radius: 6px; user-select: none; }
+.mine-cell {
+    width: 32px; height: 32px; background: #334155; border: 2px outset #475569;
+    border-radius: 4px; display: flex; justify-content: center; align-items: center;
+    font-size: 1.05rem; font-weight: 800; cursor: pointer; box-sizing: border-box;
+}
+.mine-cell.revealed { background: #0f172a; border: 1px solid #1e293b; cursor: default; }
+.mine-cell.mine { background: #7f1d1d; color: #fca5a5; }
+.mine-cell.flagged { color: #ef4444; }
+.mine-cell.c-1 { color: #38bdf8; } .mine-cell.c-2 { color: #4ade80; } .mine-cell.c-3 { color: #f87171; }
+.mine-cell.c-4 { color: #818cf8; } .mine-cell.c-5 { color: #fb923c; }
+.diff-btn-group { display: flex; flex-direction: column; gap: 0.5rem; }
+.diff-btn {
+    display: flex; flex-direction: column; padding: 0.65rem 0.9rem;
+    border: 1px solid var(--app-border); background: var(--app-bg-main);
+    color: var(--app-text-primary); border-radius: 8px; cursor: pointer; text-align: left;
+}
+.diff-btn.active { background: var(--app-accent); color: #ffffff; border-color: var(--app-accent); }
+.diff-title { font-size: 0.88rem; font-weight: 700; }
+.diff-spec { font-size: 0.72rem; opacity: 0.8; }
+.tip-text { font-size: 0.82rem; color: var(--app-text-muted); line-height: 1.4; margin: 0; }
+@media (max-width: 1100px) {
+    .mine-stage-grid { grid-template-columns: 1fr; }
+    .stage-col.left-col { order: 2; }
+    .stage-col.center-col { order: 1; }
+    .stage-col.right-col { order: 3; }
+}

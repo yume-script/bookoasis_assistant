@@ -1,0 +1,67 @@
+<div class="omok-game-root">
+    <div class="game-sub-bar">
+        <span class="game-view-name"><i class="fa-solid fa-circle-dot"></i> OMOK</span>
+        <div class="sub-actions">
+            <button id="omok-btn-start" class="btn-banner primary"><i class="fa-solid fa-play"></i> 새 게임</button>
+            <button id="omok-btn-undo" class="btn-banner secondary" disabled><i class="fa-solid fa-rotate-left"></i> 무르기</button>
+            <button id="omok-btn-surrender" class="btn-banner danger" disabled><i class="fa-solid fa-flag"></i> 기권</button>
+        </div>
+    </div>
+
+    <div class="omok-stage-grid">
+        <div class="stage-col left-col" id="omok-left-col">
+            <button class="panel-toggle-btn" id="omok-toggle-left" title="패널 접기/펼치기"><i class="fa-solid fa-chevron-left"></i></button>
+            <div class="panel-content">
+            <div class="mini-panel-card">
+                <div class="panel-header"><i class="fa-solid fa-chart-simple"></i> STATISTICS</div>
+                <div class="stat-grid">
+                    <div class="stat-box"><span class="stat-lbl">현재 차례</span><span id="omok-turn" class="stat-val highlight">-</span></div>
+                    <div class="stat-box"><span class="stat-lbl">수(手)</span><span id="omok-move-count" class="stat-val">0</span></div>
+                    <div class="stat-box"><span class="stat-lbl">승</span><span id="omok-wins" class="stat-val">0</span></div>
+                    <div class="stat-box"><span class="stat-lbl">패</span><span id="omok-losses" class="stat-val">0</span></div>
+                    <div class="stat-box"><span class="stat-lbl">무</span><span id="omok-draws" class="stat-val">0</span></div>
+                </div>
+            </div>
+            <div class="mini-panel-card">
+                <div class="panel-header"><i class="fa-regular fa-lightbulb"></i> 게임 방법</div>
+                <p class="tip-text">
+                    • 당신은 흑돌, AI는 백돌입니다. 흑돌이 먼저 둡니다.<br>
+                    • 가로·세로·대각선 중 한 방향으로 5개를 먼저 연결하면 승리합니다.<br>
+                    • 실수했다면 "무르기"로 직전 한 수(내 돌+AI 돌)를 되돌릴 수 있습니다.
+                </p>
+            </div>
+            </div>
+        </div>
+
+        <div class="stage-col center-col">
+            <div class="omok-board-frame">
+                <canvas id="omok-board" width="440" height="440"></canvas>
+                <div id="omok-overlay" class="game-overlay hidden">
+                    <h2 id="omok-overlay-title">GAME OVER</h2>
+                    <p id="omok-overlay-msg">다시 도전해보세요!</p>
+                    <button id="omok-btn-overlay-action" class="btn-banner primary">다시 시작</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="stage-col right-col" id="omok-right-col">
+            <button class="panel-toggle-btn" id="omok-toggle-right" title="패널 접기/펼치기"><i class="fa-solid fa-chevron-right"></i></button>
+            <div class="panel-content">
+            <div class="mini-panel-card">
+                <div class="panel-header"><i class="fa-regular fa-keyboard"></i> 조작 가이드</div>
+                <ul class="key-guide-list">
+                    <li><span>착수</span> <kbd>보드 클릭/탭</kbd></li>
+                    <li><span>무르기</span> <kbd>버튼 클릭</kbd></li>
+                </ul>
+            </div>
+            <div class="mini-panel-card">
+                <div class="panel-header"><i class="fa-solid fa-circle-half-stroke"></i> 돌 색상</div>
+                <ul class="key-guide-list">
+                    <li><span><i class="fa-solid fa-circle" style="color:#111827;"></i> 나 (흑돌)</span></li>
+                    <li><span><i class="fa-regular fa-circle" style="color:#f8fafc;"></i> AI (백돌)</span></li>
+                </ul>
+            </div>
+            </div>
+        </div>
+    </div>
+</div>

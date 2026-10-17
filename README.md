@@ -1,12 +1,13 @@
 # BookOasis 보조 프로그램 · 독립형 (gdrive_watch_sa)
 
-BookOasis 플러그인으로 쓰던 두 가지를 **BookOasis 밖에서 따로 도는 프로그램 하나**로 옮겼습니다. 관리 화면·포트·비밀번호·`.env`는 하나이고,
+BookOasis 플러그인으로 쓰던 세 가지를 **BookOasis 밖에서 따로 도는 프로그램 하나**로 옮겼습니다. 관리 화면·포트·비밀번호·`.env`는 하나이고,
 각 모듈의 무거운 일은 모듈마다 따로 도는 작업 프로세스가 합니다(한쪽이 느려지거나 죽어도 다른 쪽은 영향 없음).
 
 | 모듈 | 원본 | 하는 일 | 켜기 |
 |---|---|---|---|
 | **드라이브 변경 감시** | [gdrive_watch](https://github.com/yume-script/gdrive_watch) v1.18.8 | Google Drive·로컬 폴더 변경 감지 → rclone VFS 새로고침 → 바뀐 폴더만 BookOasis 부분 스캔 | `GDW_ENABLED=true` (기본) |
 | **웹툰 다운로더** | [webtoon_manager](https://github.com/yume-script/webtoon_manager) v1.39.3 | 네이버웹툰·카카오웹툰·카카오웹소설 구독/다운로드, kavita.yaml 등 | `WTM_ENABLED=true` |
+| **미니게임** | [ym_mini_game](https://github.com/yume-script/ym_mini_game) v2.0.2 | 테트리스·지뢰찾기·오목·홀덤 등 12종 (브라우저에서만 돔, 서버 부하 없음) | `MINI_ENABLED=true` (기본) |
 
 감지·다운로드 로직과 화면은 플러그인과 같고, 플러그인이라서 생기던 제약만 걷어냈습니다.
 두 모듈을 함께 켜면 **웹툰 회차가 라이브러리에 들어가는 즉시 드라이브 변경 감시가 VFS 새로고침 → BookOasis 부분 스캔**을 합니다(Drive 변경 감지를 기다리지 않음).
@@ -76,7 +77,8 @@ docker compose up -d --build
 | `BOOKOASIS_DB_TYPES` | `general,adult,audiobook,video` | 읽을 세션 |
 | `BOOKOASIS_DB_URL_<TYPE>` | (없음) | 세션별로 따로 지정 (예: `BOOKOASIS_DB_URL_ADULT`) |
 | `LIBRARIES_FILE` | `DATA_DIR/libraries.manual.json` | DB 없이 쓸 때 보관함 정의 파일 |
-| `GDW_ENABLED` / `WTM_ENABLED` | `true` / `false` | 모듈 켜기/끄기. 드라이브 변경 감시를 끄면 `/`는 웹툰 화면으로 넘어감 |
+| `GDW_ENABLED` / `WTM_ENABLED` / `MINI_ENABLED` | `true` / `false` / `true` | 모듈 켜기/끄기. 드라이브 변경 감시를 끄면 `/`는 웹툰(또는 미니게임) 화면으로 넘어감 |
+| `MINI_COVERS_DIR` | `mini/games/picture-territory/covers` | 그림 땅따먹기 표지 그림 폴더 |
 | `WTM_DATA_DIR` | `DATA_DIR/webtoon` | 웹툰 데이터(titles.json, 이력, 로그, settings.json) |
 | `WTM_HANDOFF_GDW` | `true` | 받은 회차를 드라이브 변경 감시에 바로 넘김 |
 | `WTM_DOWNLOAD_ROOT` 등 `WTM_…` | | 웹툰 저장 경로·임시 폴더·쿠키·알림 주소/토큰 (아래 "웹툰 다운로더" 참고) |
@@ -132,8 +134,17 @@ docker compose up -d --build
 - `venv/bin/python -m wtm.backfill_all --dry-run` : 구독 작품의 빠진 과거 회차 일괄 받기 (먼저 `--dry-run`)
 - `venv/bin/python wtm/migrate_filenames.py --dry-run <폴더>` : 예전 파일 이름 형식 정리
 
+## 미니게임
+`/games` (사이드바 **미니게임**). 게임 12종이 사이드바 서브 메뉴로 나오고, 주소의 `#게임id`(예: `/games#tetris`)로 바로 열 수 있습니다.
+- 게임은 `mini/games/<id>/`(manifest.json · template.html · style.css · game.js) 그대로이고, 서버가 읽어서 화면 하나로 묶어 줍니다.
+  플러그인처럼 index.html/style.css/script.js를 파일로 다시 쓰지 않고 메모리에서 묶으며, 게임 파일이 바뀌면 다음 요청 때 다시 묶습니다.
+  게임을 추가하려면 같은 구성의 폴더를 `mini/games/` 아래에 넣으면 됩니다.
+- **그림 땅따먹기 표지**: `MINI_COVERS_DIR`(기본 `mini/games/picture-territory/covers`)의 그림(jpg/png/gif/webp) 중 하나를 게임마다 무작위로 씁니다.
+  플러그인 때는 `covers/list.json`을 직접 만들어야 했지만(저장소에 없어서 실제로는 쓰이지 않았음), 이제 서버가 폴더를 보고 목록을 만듭니다.
+- 최고 점수 등은 게임마다 브라우저(localStorage)에 저장됩니다(플러그인과 같음).
+
 ## 관리 화면 / API
-- `GET /` 드라이브 변경 감시 (현황, 변경 기록, 감시 설정, 스캔 일정, 로그) · `GET /webtoon` 웹툰 다운로더
+- `GET /` 드라이브 변경 감시 (현황, 변경 기록, 감시 설정, 스캔 일정, 로그) · `GET /webtoon` 웹툰 다운로더 · `GET /games` 미니게임
 - `POST /api/rpc/<동작>` 드라이브 변경 감시 RPC, `GET /api/wtm/data`·`POST /api/wtm/action` 웹툰 다운로더.
   `Content-Type: application/json`만 받습니다(다른 사이트 폼 전송 차단).
 - `GET /api/modules` 켜진 모듈, `GET /healthz` 인증 없이 `{"ok": true, "worker": true|false}` (모니터링용)
@@ -150,6 +161,7 @@ docker compose up -d --build
 | `gdw/web.py` | 관리 화면 웹 서버 (두 모듈 공용) |
 | `gdw/handoff.py` | 다른 모듈이 라이브러리에 넣은 파일을 드라이브 변경 감시 대기열로 |
 | `worker.py` | 드라이브 변경 감시 워커: 변경 감지, VFS 새로고침, 스캔 요청 (플러그인과 같은 코드) |
+| `mini/` | 미니게임 (`games/` 게임 폴더 그대로 + `bundle.py`: /games 화면 만들기) |
 | `wtm/` | 웹툰 다운로더 (플러그인 코드 그대로 + `host.py`: 설정·DB·데이터 폴더, `service.py`: 화면 연결) |
 | `web/` | 관리 화면 (`theme.css` 공용, `index.html`·`style.css`·`script.js` 드라이브 감시, `webtoon/` 웹툰) |
 | `docs/webtoon_manager_CHANGELOG.md` | 웹툰 다운로더 플러그인 시절 변경 기록 |

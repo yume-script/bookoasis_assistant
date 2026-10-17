@@ -1,0 +1,70 @@
+<div class="sokoban-game-root">
+    <div class="game-sub-bar">
+        <span class="game-view-name"><i class="fa-solid fa-dolly"></i> SOKOBAN</span>
+        <div class="sub-actions">
+            <button id="soko-btn-restart" class="btn-banner primary"><i class="fa-solid fa-rotate-left"></i> 레벨 재시작</button>
+            <button id="soko-btn-undo" class="btn-banner secondary"><i class="fa-solid fa-arrow-rotate-left"></i> 실행 취소</button>
+            <button id="soko-btn-reset-all" class="btn-banner danger"><i class="fa-solid fa-house"></i> 처음부터</button>
+        </div>
+    </div>
+
+    <div class="sokoban-stage-grid">
+        <div class="stage-col left-col" id="soko-left-col">
+            <button class="panel-toggle-btn" id="soko-toggle-left" title="패널 접기/펼치기"><i class="fa-solid fa-chevron-left"></i></button>
+            <div class="panel-content">
+            <div class="mini-panel-card">
+                <div class="panel-header"><i class="fa-solid fa-chart-simple"></i> STATISTICS</div>
+                <div class="stat-grid">
+                    <div class="stat-box"><span class="stat-lbl">레벨</span><span id="soko-level" class="stat-val highlight">1 / 6</span></div>
+                    <div class="stat-box"><span class="stat-lbl">이동 수</span><span id="soko-moves" class="stat-val">0</span></div>
+                    <div class="stat-box"><span class="stat-lbl">민 횟수</span><span id="soko-pushes" class="stat-val">0</span></div>
+                    <div class="stat-box"><span class="stat-lbl">최고 기록(이 레벨)</span><span id="soko-best" class="stat-val">-</span></div>
+                </div>
+            </div>
+            <div class="mini-panel-card">
+                <div class="panel-header"><i class="fa-regular fa-lightbulb"></i> 게임 방법</div>
+                <p class="tip-text">
+                    • 방향키(또는 버튼)로 캐릭터를 움직여 박스(📦)를 목표 지점(◎)까지 밀어 넣으세요.<br>
+                    • 박스는 밀 수만 있고 당길 수는 없습니다. 벽이나 다른 박스가 있으면 밀 수 없습니다.<br>
+                    • 모든 박스를 목표 지점에 올리면 레벨 클리어!
+                </p>
+            </div>
+        
+            </div></div>
+
+        <div class="stage-col center-col">
+            <div class="sokoban-board-frame">
+                <canvas id="soko-board" width="440" height="380"></canvas>
+                <div id="soko-overlay" class="game-overlay hidden">
+                    <h2 id="soko-overlay-title">LEVEL CLEAR</h2>
+                    <p id="soko-overlay-msg"></p>
+                    <button id="soko-btn-overlay-action" class="btn-banner primary">다음 레벨</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="stage-col right-col" id="soko-right-col">
+            <button class="panel-toggle-btn" id="soko-toggle-right" title="패널 접기/펼치기"><i class="fa-solid fa-chevron-right"></i></button>
+            <div class="panel-content">
+            <div class="mini-panel-card">
+                <div class="panel-header"><i class="fa-regular fa-keyboard"></i> 조작 가이드</div>
+                <ul class="key-guide-list">
+                    <li><span>이동/밀기</span> <div class="key-group"><kbd>↑</kbd><kbd>↓</kbd><kbd>←</kbd><kbd>→</kbd></div></li>
+                    <li><span>실행 취소</span> <kbd>Z</kbd></li>
+                    <li><span>레벨 재시작</span> <kbd>R</kbd></li>
+                </ul>
+            </div>
+            <div class="sokoban-touch-controls">
+                <div class="touch-row">
+                    <button class="touch-btn" data-dir="up"><i class="fa-solid fa-arrow-up"></i></button>
+                </div>
+                <div class="touch-row middle">
+                    <button class="touch-btn" data-dir="left"><i class="fa-solid fa-arrow-left"></i></button>
+                    <button class="touch-btn" data-dir="down"><i class="fa-solid fa-arrow-down"></i></button>
+                    <button class="touch-btn" data-dir="right"><i class="fa-solid fa-arrow-right"></i></button>
+                </div>
+            </div>
+        
+            </div></div>
+    </div>
+</div>

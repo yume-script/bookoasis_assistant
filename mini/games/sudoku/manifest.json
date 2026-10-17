@@ -1,0 +1,6 @@
+{
+  "id": "sudoku",
+  "name": "🔢 스도쿠 (Sudoku)",
+  "icon": "fa-solid fa-table-cells",
+  "order": 7
+}

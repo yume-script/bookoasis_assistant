@@ -4,7 +4,8 @@
   GET  /                 드라이브 변경 감시 화면 (web/index.html)
   GET  /webtoon          웹툰 다운로더 화면 (web/webtoon/index.html)
   GET  /<정적 파일>       web/ 아래 theme.css, style.css, script.js, webtoon/…
-  GET  /api/modules      켜진 모듈 {"gdw": bool, "wtm": bool}
+  GET  /games            미니게임 화면 (mini/bundle.py가 games/ 폴더로 만듦), /games/covers/… 그림 땅따먹기 표지
+  GET  /api/modules      켜진 모듈 {"gdw", "wtm", "mini", "games", "version", "user"}
   POST /api/rpc/<동작>    드라이브 변경 감시 RPC (본문: JSON 컨텍스트)
   GET  /api/wtm/data     웹툰 다운로더 화면 데이터
   POST /api/wtm/action   웹툰 다운로더 동작 (본문: {"action_id", "context"})
@@ -36,7 +37,8 @@ MAX_BODY = 2 * 1024 * 1024
 
 
 def modules():
-    return {"gdw": config.env_bool("GDW_ENABLED", True), "wtm": config.env_bool("WTM_ENABLED", False)}
+    return {"gdw": config.env_bool("GDW_ENABLED", True), "wtm": config.env_bool("WTM_ENABLED", False),
+            "mini": config.env_bool("MINI_ENABLED", True)}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -51,7 +53,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(data)))
-        self.send_header("Cache-Control", "no-store")
+        if "Cache-Control" not in (extra or {}):
+            self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("X-Frame-Options", "DENY")
         self.send_header("Referrer-Policy", "no-referrer")
@@ -93,15 +96,20 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/modules":
             info = dict(mods, version=service._plugin_version(),
                         user=(config.env("WEB_USER", "admin") or "admin") if config.env("WEB_PASSWORD") else "")
+            if mods["mini"]:
+                from mini import bundle
+                info["games"] = bundle.menu()
             return self._send(200, info)
+        if path == "/games" or path.startswith("/games/"):
+            return self._games(path, mods)
         if path == "/api/wtm/data":
             if not mods["wtm"]:
                 return self._send(404, {"success": False, "error": "웹툰 다운로더가 꺼져 있습니다 (WTM_ENABLED)."})
             from wtm import service as wtm_service
             return self._send(200, wtm_service.dashboard())
         if path in ("/", "/index.html") and not mods["gdw"]:
-            if mods["wtm"]:
-                return self._send(302, b"", extra={"Location": "webtoon"})
+            if mods["wtm"] or mods["mini"]:
+                return self._send(302, b"", extra={"Location": "webtoon" if mods["wtm"] else "games"})
             return self._send(200, OFF_PAGE.format(title="드라이브 변경 감시", key="GDW_ENABLED").encode(), "text/html; charset=utf-8")
         if path in ("/webtoon", "/webtoon/") and not mods["wtm"]:
             return self._send(200, OFF_PAGE.format(title="웹툰 다운로더", key="WTM_ENABLED").encode(), "text/html; charset=utf-8")
@@ -119,6 +127,30 @@ class Handler(BaseHTTPRequestHandler):
         if ctype.startswith("text/") or ctype.endswith("javascript"):
             ctype += "; charset=utf-8"
         self._send(200, data, ctype)
+
+    def _games(self, path, mods):
+        if not mods["mini"]:
+            return self._send(200, OFF_PAGE.format(title="미니게임", key="MINI_ENABLED").encode(), "text/html; charset=utf-8")
+        from mini import bundle
+        if path in ("/games", "/games/"):
+            if path == "/games/":
+                return self._send(302, b"", extra={"Location": "/games"})
+            return self._send(200, bundle.page().encode("utf-8"), "text/html; charset=utf-8")
+        if path == "/games/covers/list.json":  # 그림 땅따먹기: covers 폴더의 그림 목록
+            return self._send(200, bundle.list_covers())
+        if path.startswith("/games/covers/"):
+            from urllib.parse import unquote
+            real = bundle.cover_path(unquote(path[len("/games/covers/"):]))
+            if not real:
+                return self._send(404, {"success": False, "error": "없는 그림입니다."})
+            try:
+                with open(real, "rb") as handle:
+                    data = handle.read()
+            except OSError:
+                return self._send(404, {"success": False, "error": "그림을 읽을 수 없습니다."})
+            ctype = mimetypes.guess_type(real)[0] or "application/octet-stream"
+            return self._send(200, data, ctype, extra={"Cache-Control": "max-age=3600"})
+        return self._send(404, {"success": False, "error": "없는 주소입니다."})
 
     def do_POST(self):
         path = self.path.split("?", 1)[0]
