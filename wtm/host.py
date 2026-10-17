@@ -41,6 +41,7 @@ ENV_KEYS = (
     "DISCORD_WEBHOOK_URL", "DISCORD_BOT_TOKEN", "DISCORD_CHANNEL_ID",
     "NOTIFY_TELEGRAM_BOT_TOKEN", "NOTIFY_TELEGRAM_CHAT_ID", "NOTIFY_SLACK_WEBHOOK_URL",
     "NOTIFY_NTFY_URL", "NOTIFY_NTFY_TOKEN",
+    "TELEGRAM_UPLOAD_CHAT_ID", "TELEGRAM_UPLOAD_BOT_TOKEN", "TELEGRAM_UPLOAD_API_URL",
 )
 _LOCK = threading.RLock()
 _ENV_CACHE = {"mtime": None, "values": {}}
@@ -146,12 +147,18 @@ def migrate_plugin_data():
 
 # ── 드라이브 변경 감시로 넘기기 ──
 def file_ready(path):
-    """회차 파일이 라이브러리에 들어간 직후: 드라이브 변경 감시에 바로 반영(VFS 새로고침 → 스캔)을 맡긴다.
-    Drive 변경 감지를 기다리지 않아도 된다. 같은 파일을 나중에 감지해도 '이미 등록된 파일'로 건너뛴다."""
-    if not config.env_bool("WTM_HANDOFF_GDW", True) or not config.env_bool("GDW_ENABLED", True):
-        return
+    """회차 파일이 라이브러리에 들어간 직후 (둘 다 대기열에 넣기만 하므로 다운로드를 늦추지 않는다)
+      - 드라이브 변경 감시에 바로 반영(VFS 새로고침 → 스캔)을 맡긴다. Drive 변경 감지를 기다리지 않아도 되고,
+        같은 파일을 나중에 감지해도 '이미 등록된 파일'로 건너뛴다.
+      - 텔레그램 채널 업로드를 켰으면 업로드 대기열에 넣는다 (telegram_upload.py)."""
+    if config.env_bool("WTM_HANDOFF_GDW", True) and config.env_bool("GDW_ENABLED", True):
+        try:
+            from gdw import handoff
+            handoff.enqueue(path, source="웹툰 다운로더")
+        except Exception:  # noqa: BLE001 - 넘기기 실패가 다운로드를 막으면 안 된다
+            pass
     try:
-        from gdw import handoff
-        handoff.enqueue(path, source="웹툰 다운로더")
-    except Exception:  # noqa: BLE001 - 넘기기 실패가 다운로드를 막으면 안 된다
+        from . import telegram_upload
+        telegram_upload.enqueue(path)
+    except Exception:  # noqa: BLE001
         pass

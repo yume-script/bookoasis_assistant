@@ -127,6 +127,23 @@ class HandoffTest(unittest.TestCase):
         self.assertEqual(tuple(row), ("웹툰 다운로더", "create", "file", "pending"))
 
 
+class TelegramUploadTest(unittest.TestCase):
+    def test_queue_caption_and_settings(self):
+        from wtm import host, telegram_upload as tu
+        host.save_settings({"TELEGRAM_UPLOAD_ENABLE": False})
+        self.assertFalse(tu.enqueue("/mnt/w/작품/1화.zip"))  # 꺼져 있으면 넣지 않음
+        host.save_settings({"TELEGRAM_UPLOAD_ENABLE": True, "TELEGRAM_UPLOAD_CHAT_ID": "-1001",
+                            "NOTIFY_TELEGRAM_BOT_TOKEN": "tok", "TELEGRAM_UPLOAD_BOT_TOKEN": "",
+                            "TELEGRAM_UPLOAD_MAX_MB": 9999})
+        s = tu.settings()
+        self.assertEqual((s["token"], s["api"], s["max_bytes"]), ("tok", tu.DEFAULT_API, 2000 * 1024 * 1024))
+        self.assertTrue(tu.enqueue("/mnt/w/작품 이름/작품 이름 0001화.zip"))
+        self.assertFalse(tu.enqueue("/mnt/w/작품 이름/kavita.yaml"))     # 회차 파일만
+        self.assertEqual(tu.counts().get("pending"), 1)
+        self.assertEqual(tu.caption_for("/mnt/w/작품 이름 (1부)/작품 0001화.zip"), "#작품_이름_1부\n작품 0001화")
+        host.save_settings({"TELEGRAM_UPLOAD_ENABLE": False})
+
+
 class MiniGameTest(unittest.TestCase):
     def test_bundle_and_covers(self):
         from mini import bundle

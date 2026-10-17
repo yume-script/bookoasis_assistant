@@ -129,8 +129,9 @@ def main():
         svc._sync_runtime(force_libraries=True)
         screener.start(stop_event)
     if mods["wtm"]:
-        from wtm import service as wtm_service
+        from wtm import service as wtm_service, telegram_upload
         wtm_service.provider()  # 설정 이전(플러그인 데이터) + 스케줄러·작업 프로세스 시작
+        telegram_upload.start(stop_event)  # 받은 회차 → 텔레그램 채널 (켰을 때만 실제로 올림)
     supervisor.start(svc, stop_event, wtm=mods["wtm"])
     server = make_server(svc, host, port)
 

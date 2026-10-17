@@ -116,6 +116,8 @@ DEFAULTS = {
     "NAVER_DOWNLOAD_OWNED": False,
     "KAKAO_DOWNLOAD_OWNED": False,
     "KAKAO_NOVEL_DOWNLOAD_OWNED": False,
+    "TELEGRAM_UPLOAD_ENABLE": False,
+    "TELEGRAM_UPLOAD_MAX_MB": 50,
 }
 
 
@@ -213,6 +215,16 @@ class WebtoonManagerMetadataProvider(BaseMetadataProvider):
          "hint": "예) https://ntfy.sh/내토픽이름 (자체 서버 주소도 가능). 토픽 이름은 길고 추측하기 어렵게."},
         {"key": "NOTIFY_NTFY_TOKEN", "label": "접근 토큰", "type": "password",
          "hint": "비공개 토픽/자체 서버에서 토큰을 쓰는 경우만."},
+        {"key": "TELEGRAM_UPLOAD_ENABLE", "label": "받은 회차 파일을 텔레그램 채널에 올리기", "type": "checkbox",
+         "default": False, "hint": "새로 받은 회차(zip·epub)를 아래 채널에 파일로 올립니다. 다운로드와 따로 대기열로 하나씩 올립니다."},
+        {"key": "TELEGRAM_UPLOAD_CHAT_ID", "label": "채널 ID", "type": "text",
+         "hint": "-100으로 시작하는 채널 ID 또는 @채널이름. 봇을 그 채널의 관리자로 추가해야 합니다. 개인 소장용 비공개 채널만 쓰세요."},
+        {"key": "TELEGRAM_UPLOAD_BOT_TOKEN", "label": "봇 토큰", "type": "password",
+         "hint": "비우면 위 알림용 텔레그램 봇 토큰을 씁니다."},
+        {"key": "TELEGRAM_UPLOAD_MAX_MB", "label": "올릴 최대 크기(MB)", "type": "number", "default": 50,
+         "hint": "공식 Bot API는 50MB까지. 넘는 파일은 건너뜁니다. 로컬 Bot API 서버를 쓰면 2000까지."},
+        {"key": "TELEGRAM_UPLOAD_API_URL", "label": "Bot API 주소", "type": "text",
+         "hint": "비우면 https://api.telegram.org. 로컬 Bot API 서버(telegram-bot-api)를 쓸 때만 그 주소."},
 
         # ---------------- 네이버웹툰 ----------------
         {"key": "NAVER_COOKIE_JSON", "label": "네이버 로그인 쿠키", "type": "password", "required": False},
@@ -708,6 +720,12 @@ class WebtoonManagerMetadataProvider(BaseMetadataProvider):
         from . import ratelimit
         info = ss.download_rate(3600)
         info["fast"] = bool(pipeline._truthy(cfg.get("FAST_MODE")))
+        try:  # 독립형: 텔레그램 채널 업로드 대기열
+            from . import telegram_upload
+            if telegram_upload.settings(cfg)["enabled"]:
+                info["telegram"] = telegram_upload.counts()
+        except Exception:  # noqa: BLE001
+            pass
         info["parallel"] = cfg.get("PARALLEL_TITLES")
         if worker_ctl.enabled(cfg):
             # 다운로드는 작업 프로세스에서 돌므로 서버 제한 상태도 그쪽 값을 보여준다
@@ -1461,7 +1479,17 @@ class WebtoonManagerMetadataProvider(BaseMetadataProvider):
         cfg = self._get_cfg(db_type)
         ok, msg = discord_notify.notify(cfg, "🔔 웹툰 다운로더 알림 테스트",
                                          "이 메시지가 보이면 알림 설정이 정상입니다.", detail=True)
-        return ok, msg
+        try:  # 독립형: 텔레그램 채널 업로드도 함께 확인
+            from . import telegram_upload
+            up_ok, up_msg = telegram_upload.test(cfg)
+        except Exception as e:  # noqa: BLE001
+            up_ok, up_msg = False, str(e)
+        if up_ok is None:
+            return ok, msg
+        line = "텔레그램 채널 업로드 %s" % ("✅" if up_ok else "❌ " + up_msg)
+        if msg.startswith("알림 채널이 설정되지 않음"):
+            return up_ok, line
+        return ok or up_ok, msg + " / " + line
 
     # ------------------------------------------------------------------
     # 특정 라이브러리와 비교해서 "이미 라이브러리에 있는 웹툰"인지 알려주는 기능
@@ -1520,6 +1548,10 @@ class WebtoonManagerMetadataProvider(BaseMetadataProvider):
                                    "#ntfy (휴대폰 푸시)", "NOTIFY_NTFY_URL", "NOTIFY_NTFY_TOKEN"),
          "채워 넣은 곳 전부로 같은 알림(새 회차, 완결, 쿠키 만료, 다운로드 실패 요약)을 보냅니다. "
          "저장 후 아래 '알림 테스트 보내기'로 곳마다 성공 여부를 확인하세요."),
+        ("common", "텔레그램 채널 업로드", ("TELEGRAM_UPLOAD_ENABLE", "TELEGRAM_UPLOAD_CHAT_ID", "TELEGRAM_UPLOAD_BOT_TOKEN",
+                                        "TELEGRAM_UPLOAD_MAX_MB", "TELEGRAM_UPLOAD_API_URL"),
+         "받은 회차 파일을 채널에 #작품명 해시태그와 함께 올립니다. 채널 ID·토큰·주소는 .env의 WTM_TELEGRAM_UPLOAD_…에 저장됩니다. "
+         "저장 후 '알림 테스트 보내기'로 채널에 글이 올라가는지 확인하세요."),
         ("common", "알림 종류 / 쿠키 유지", ("NOTIFY_NEW_EPISODES_ALL", "COOKIE_KEEPALIVE_HOURS"),
          "새 회차 알림은 작품 카드의 🔔 버튼으로 작품마다 켜고 끕니다."),
 
@@ -1633,7 +1665,16 @@ class WebtoonManagerMetadataProvider(BaseMetadataProvider):
             worker_ctl.write_cfg(self.get_plugin_config(db_type, default={}) or {})
         except Exception:  # noqa: BLE001
             pass
-        return True, "설정을 저장했습니다(%d개 항목)" % len(patch)
+        retried = 0
+        if any(k.startswith("TELEGRAM_UPLOAD_") for k in patch):
+            try:  # 독립형: 채널·토큰을 고쳤으면 실패했던 업로드를 다시 대기열로
+                from . import telegram_upload
+                # 최대 크기를 바꿨으면 크기 때문에 건너뛴 파일도 다시
+                retried = telegram_upload.retry_failed(include_skipped="TELEGRAM_UPLOAD_MAX_MB" in patch)
+            except Exception:  # noqa: BLE001
+                pass
+        return True, "설정을 저장했습니다(%d개 항목)" % len(patch) + (
+            " · 실패하거나 건너뛴 텔레그램 업로드 %d개를 다시 올립니다" % retried if retried else "")
 
     def _save_cfg_patch(self, db_type, patch):
         cfg = self.get_plugin_config(db_type, default={}) or {}

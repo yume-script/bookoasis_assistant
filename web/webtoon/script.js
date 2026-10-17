@@ -455,6 +455,11 @@
     if (!sp) return '';
     var txt = '최근 1시간 ' + (sp.total || 0) + '화 (네이버 ' + (sp.naver || 0) + ' · 카카오 ' + (sp.kakao || 0) + ')';
     txt += sp.fast ? ' · 고속 모드' : '';
+    if (sp.telegram) {  // 텔레그램 채널 업로드 대기열
+      var tg = sp.telegram;
+      txt += ' · 텔레그램 업로드 ' + (tg.done || 0) + '개 완료' + (tg.pending ? ', 대기 ' + tg.pending : '') +
+        (tg.failed ? ', 실패 ' + tg.failed : '') + (tg.skipped ? ', 건너뜀 ' + tg.skipped : '');
+    }
     if (sp.worker) txt += sp.worker.pid ? (' · 별도 작업 프로세스(' + (typeof sp.worker.nice === 'number' ? 'nice ' + sp.worker.nice : 'CPU 우선순위 ' + sp.worker.nice) + ')') : ' · 작업 프로세스 시작 중';
     var th = sp.throttle || {};
     Object.keys(th).forEach(function (k) {
