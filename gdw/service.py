@@ -436,6 +436,9 @@ class Service:
             warnings.append("감시 루트가 없습니다. [감시 설정] 탭에서 추가하세요.")
         if oldest and not alive:
             warnings.append("워커가 멈춰 있어 대기 중인 기록이 처리되지 않습니다. [시작]을 누르세요.")
+        if beat.get("bookoasis_down") and alive:
+            warnings.append(f"BookOasis({runtime.get('bookoasis_url')})에 연결할 수 없어 {beat['bookoasis_down'].replace('T', ' ')}부터 "
+                            "스캔을 미루고 있습니다. BookOasis가 켜지면 자동으로 이어서 보냅니다 (이 동안은 실패로 세지 않음).")
         if not runtime.get("webhook_token"):
             warnings.append("WEBHOOK_TOKEN이 없어 스캔 요청을 보낼 수 없습니다. .env 또는 [감시 설정 > 실행 환경]에서 BookOasis .env와 같은 값을 넣으세요.")
         libinfo = _read_json("libraries.json", {}) or {}

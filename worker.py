@@ -2522,6 +2522,7 @@ class BookOasis:
     def __init__(self, cfg, libraries, vfs_rules, store=None):
         self.url = str(cfg.get("bookoasis_url") or "http://127.0.0.1:5930").rstrip("/")
         self.token = cfg.get("webhook_token") or os.environ.get("WEBHOOK_TOKEN", "")
+        self.down_since, self.down_wait = None, 60  # BookOasis 연결이 끊긴 시각, 다음 재시도까지(초)
         self.timeout = int(cfg.get("scan_timeout", 300))
         self.file_wait = max(0, int(cfg.get("file_wait_minutes", 10)))  # 0이면 확인하지 않음
         self.allow_root_scan = bool(cfg.get("allow_root_scan", False))  # 보관함 맨 위 변경 때 전체 스캔 허용
@@ -2761,9 +2762,14 @@ class BookOasis:
                 kept.append(d)
 
         # 4) 스캔 요청
+        down = None  # BookOasis에 접속이 안 되면(재시작·중지 중) 이 묶음의 나머지 스캔은 시도하지 않고 함께 기다린다
         for d in kept:
             if STOP:
                 break
+            if down:
+                for event_id in wanted[d]["events"]:
+                    results[event_id]["unreachable"] = down
+                continue
             forced = any(ev.get("force") for ev in events if ev["id"] in wanted[d]["events"])
             until = None if forced else self.full_scan_until(self.library_for(d))
             if until:
@@ -2779,6 +2785,17 @@ class BookOasis:
             except Exception as error:
                 ok, message, lib = False, f"{type(error).__name__}: {error}", None
             label = f"{lib['db_type']}#{lib['id']} {lib['name']}" if lib else ""
+            if ok is False and message.startswith("BookOasis 연결 실패"):
+                down = message
+                if not self.down_since:
+                    self.down_since = datetime.now().isoformat(timespec="seconds")
+                    log.warning("BookOasis에 연결할 수 없습니다 (%s). 살아날 때까지 스캔을 미루고 다시 시도합니다.", message)
+                for event_id in wanted[d]["events"]:
+                    results[event_id]["unreachable"] = down
+                continue
+            if ok is True and self.down_since:
+                log.info("BookOasis 연결이 돌아왔습니다 (%s부터 끊김).", self.down_since)
+                self.down_since, self.down_wait = None, 60
             if ok is not None:
                 log.info("스캔 %s %s [%s] %s", "OK" if ok else "실패", d, label, message)
             elif lib:
@@ -2804,6 +2821,12 @@ class BookOasis:
                 status = "timeout"
             elif r.get("waiting") or (r.get("deferred") and r["ok"] and not r["scans"]):
                 status = "waiting"
+            elif r.get("unreachable") and r["ok"]:
+                # BookOasis가 꺼져 있음: 시도 횟수를 올리지 않고 기다렸다가 다시 (1분부터 두 배씩, 최대 10분 간격)
+                status = "waiting"
+                r["wait_retry"] = self.down_wait
+                r["messages"].append(f"BookOasis에 연결할 수 없어 스캔 대기 ({r['unreachable']}) · "
+                                     f"{self.down_wait // 60}분 뒤 다시 시도 (시도 횟수에 넣지 않음)")
             elif not r["ok"]:
                 status = "failed"
             elif r["scans"] and all(s["ok"] is None for s in r["scans"]):
@@ -2816,6 +2839,8 @@ class BookOasis:
             message = "; ".join(r["messages"]) or ("보관함 밖 경로" if status == "skipped" else "")
             final[ev["id"]] = {"status": status, "message": message, "vfs": r["vfs"], "scans": r["scans"],
                                "terminal": bool(r.get("terminal")), "retry_in": r.get("deferred") or r.get("wait_retry")}
+        if down:
+            self.down_wait = min(600, self.down_wait * 2)
         return final
 
 
@@ -3039,9 +3064,11 @@ class Worker:
                     watcher.cfg["folder_rules"] = rules[watcher.name]
             self.notifier = Notifier(cfg, self.data_dir)
             self.rclone.rc_sources = rc_sources(cfg.get("vfs"), cfg.get("libraries"))
-            skip_vfs = self.target.skip_vfs if self.target else set()
+            old = self.target
             self.target = BookOasis(cfg, cfg.get("libraries"), cfg.get("vfs"), self.store)
-            self.target.skip_vfs = skip_vfs
+            if old:  # 설정을 다시 읽어도 VFS 생략 대상과 BookOasis 연결 끊김 상태는 이어 간다
+                self.target.skip_vfs = old.skip_vfs
+                self.target.down_since, self.target.down_wait = old.down_since, old.down_wait
             log.info("설정 적용(감시기 유지): 보관함 경로 %d개, VFS 규칙 %d개",
                      len(self.target.libraries), len(self.target.vfs.rules))
             return False
@@ -3305,6 +3332,7 @@ class Worker:
             elif r["status"] == "waiting" and not ev["message"]:
                 log.info("이벤트 #%d %s: 마운트에 파일이 보일 때까지 대기", ev["id"], ev["path"] or ev["removed_path"])
         self.state["last_process"] = datetime.now().isoformat(timespec="seconds")
+        self.state["bookoasis_down"] = self.target.down_since if self.target else None
         return len(events)
 
     def run(self):
