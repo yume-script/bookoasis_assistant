@@ -1,9 +1,15 @@
 # -*- coding: utf-8 -*-
-"""받은 회차 파일을 텔레그램 채널에 올리기 (독립형 추가 기능)
+"""고른 작품의 회차 파일을 텔레그램 채널에 올리기 (독립형 추가 기능)
+
+작품 카드의 📤 버튼으로 작품마다 켜고 끈다 (작품 정보의 telegram_upload 표시).
+  - 켜면: 그 작품 폴더에 이미 있는 회차를 회차 순서대로 전부 대기열에 넣는다 (이미 올린 회차는 다시 올리지 않음)
+  - 켜 둔 작품의 새 회차가 저장 경로에 들어오면 (downloader._move_into_library / kakao_pipeline 웹소설)
+    host.file_ready() → enqueue()가 대기열에 추가한다. 켜지 않은 작품은 올리지 않는다.
+  - 끄면: 아직 올리지 않은(대기 중인) 회차를 대기열에서 뺀다
+작품 폴더 이름은 '제목 (작품ID)'이고(downloader.title_dir), 이 ID로 파일 → 작품을 찾는다.
 
 흐름
-  회차 zip/epub이 저장 경로에 들어감 (downloader._move_into_library / kakao_pipeline 웹소설)
-    → host.file_ready() → enqueue(): 대기열(telegram_upload.db)에 넣기만 한다 (다운로드를 막지 않음, 어느 프로세스에서든)
+  대기열(telegram_upload.db)에 넣기만 한다 (다운로드를 막지 않음, 어느 프로세스에서든)
     → 관리 화면 프로세스(app.py)의 업로드 스레드가 하나씩 sendDocument로 올린다
        - 재시작해도 대기열이 남아 이어서 올림
        - 429(속도 제한)는 텔레그램이 알려 준 시간만큼 쉬고, 그 밖의 실패는 1분부터 두 배씩(최대 1시간) 8번까지 재시도
@@ -11,7 +17,6 @@
          로컬 Bot API 서버(telegram-bot-api)를 쓰면 TELEGRAM_UPLOAD_API_URL과 최대 크기(최대 2000MB)를 바꾼다.
 
 설정 (화면 [설정] > [공통] > 텔레그램 채널 업로드)
-  TELEGRAM_UPLOAD_ENABLE      켜기 (settings.json)
   TELEGRAM_UPLOAD_CHAT_ID     채널 ID(-100…) 또는 @채널이름 (.env WTM_TELEGRAM_UPLOAD_CHAT_ID)
   TELEGRAM_UPLOAD_BOT_TOKEN   봇 토큰. 비우면 알림용 NOTIFY_TELEGRAM_BOT_TOKEN (.env)
   TELEGRAM_UPLOAD_API_URL     Bot API 주소. 비우면 https://api.telegram.org (.env)
@@ -39,10 +44,6 @@ _LOCK = threading.Lock()
 _STATE = {"thread": None}
 
 
-def _truthy(v):
-    return v if isinstance(v, bool) else str(v or "").strip().lower() in ("1", "true", "on", "yes")
-
-
 def settings(cfg=None):
     cfg = cfg if cfg is not None else host.load_settings()
     try:
@@ -50,7 +51,6 @@ def settings(cfg=None):
     except (TypeError, ValueError):
         max_mb = OFFICIAL_LIMIT_MB
     return {
-        "enabled": _truthy(cfg.get("TELEGRAM_UPLOAD_ENABLE")),
         "chat": str(cfg.get("TELEGRAM_UPLOAD_CHAT_ID") or "").strip(),
         "token": str(cfg.get("TELEGRAM_UPLOAD_BOT_TOKEN") or cfg.get("NOTIFY_TELEGRAM_BOT_TOKEN") or "").strip(),
         "api": (str(cfg.get("TELEGRAM_UPLOAD_API_URL") or "").strip() or DEFAULT_API).rstrip("/"),
@@ -59,7 +59,7 @@ def settings(cfg=None):
 
 
 def ready(s):
-    return s["enabled"] and s["chat"] and s["token"]
+    return bool(s["chat"] and s["token"])
 
 
 def _db():
@@ -75,25 +75,105 @@ def _db():
     return db
 
 
+_ID_RE = re.compile(r"\(([^()]+)\)\s*$")
+
+
+def _is_episode(path):
+    return os.path.splitext(str(path or ""))[1].lower() in UPLOAD_EXTS
+
+
+def title_of(path, cfg=None):
+    """회차 파일 경로 → (platform, title_id, 작품 정보) 또는 None. 폴더 이름 끝의 (작품ID)와 저장 경로로 찾는다."""
+    from . import state_store as ss
+    series_dir = os.path.dirname(os.path.abspath(path))
+    m = _ID_RE.search(os.path.basename(series_dir))
+    if not m:
+        return None
+    tid = m.group(1).strip()
+    parent = os.path.normpath(os.path.dirname(series_dir))
+    cfg = cfg if cfg is not None else host.load_settings()
+    naver_root = os.path.normpath(cfg.get("DOWNLOAD_ROOT") or ss.DOWNLOAD_DEFAULT_DIR)
+    order = (("naver", ss.get_title), ("kakao", ss.get_kakao_title))
+    if parent != naver_root:  # 네이버 저장 경로가 아니면 카카오(웹툰·웹소설)부터
+        order = order[::-1]
+    for platform, getter in order:
+        t = getter(tid)
+        if t:
+            return platform, tid, t
+    return None
+
+
+def _insert(db, paths):
+    now, added = time.time(), 0
+    for path in paths:
+        # 이미 올린 회차는 그대로, 실패·건너뜀이었으면 다시
+        cur = db.execute("INSERT INTO upload(path, created) VALUES(?, ?) ON CONFLICT(path) DO UPDATE SET "
+                         "status='pending', attempts=0, next_at=0, error=NULL WHERE upload.status IN ('failed', 'skipped')",
+                         (path, now))
+        added += cur.rowcount
+    return added
+
+
 def enqueue(path):
-    """회차 파일을 대기열에 넣는다. 반환: 넣었는지. 같은 경로는 한 번만 (다시 받은 경우 다시 올림)."""
+    """새 회차가 저장 경로에 들어왔을 때: 📤를 켠 작품이면 대기열에 넣는다. 반환: 넣었는지."""
     path = str(path or "")
-    if os.path.splitext(path)[1].lower() not in UPLOAD_EXTS:
+    if not _is_episode(path):
         return False
-    if not ready(settings()):
+    found = title_of(path)
+    if not found or not found[2].get("telegram_upload"):
         return False
     db = _db()
     try:
         with db:
-            db.execute("INSERT INTO upload(path, created) VALUES(?, ?) ON CONFLICT(path) DO UPDATE SET "
-                       "status='pending', attempts=0, next_at=0, error=NULL, created=excluded.created "
-                       "WHERE upload.status != 'pending'", (path, time.time()))
+            return _insert(db, [path]) > 0
     except sqlite3.Error as error:
         log.warning("텔레그램 업로드 대기열에 넣지 못함: %s", error)
         return False
     finally:
         db.close()
-    return True
+
+
+def _episode_key(name):
+    """회차 순서: 파일 이름 속 숫자를 숫자로 비교 ('제목 0012화#3.zip' → 12화가 9화 뒤)."""
+    return [int(x) if x.isdigit() else x for x in re.split(r"(\d+)", name)]
+
+
+def series_dir_for(platform, tid, t, cfg=None):
+    from . import downloader, kakao_pipeline, state_store as ss
+    cfg = cfg if cfg is not None else host.load_settings()
+    root = (kakao_pipeline.series_root(cfg, t) if platform == "kakao"
+            else (cfg.get("DOWNLOAD_ROOT") or ss.DOWNLOAD_DEFAULT_DIR))
+    return downloader.title_dir(root, t.get("title") or tid, tid)
+
+
+def add_title(platform, tid, t, cfg=None):
+    """📤를 켰을 때: 작품 폴더의 회차를 회차 순서대로 대기열에 넣는다. 반환 (넣은 수, 폴더 안 회차 수, 폴더)."""
+    series_dir = series_dir_for(platform, tid, t, cfg)
+    try:
+        names = sorted((n for n in os.listdir(series_dir) if _is_episode(n) and not n.startswith(".")), key=_episode_key)
+    except OSError:
+        names = []
+    db = _db()
+    try:
+        with db:
+            added = _insert(db, [os.path.join(series_dir, n) for n in names])
+    finally:
+        db.close()
+    return added, len(names), series_dir
+
+
+def remove_title(platform, tid, t, cfg=None):
+    """📤를 껐을 때: 아직 올리지 않은 회차를 대기열에서 뺀다. 반환: 뺀 수."""
+    if not os.path.exists(DB_PATH):
+        return 0
+    prefix = series_dir_for(platform, tid, t, cfg).rstrip("/") + "/"
+    db = _db()
+    try:
+        with db:
+            return db.execute("DELETE FROM upload WHERE status='pending' AND substr(path, 1, ?) = ?",
+                              (len(prefix), prefix)).rowcount
+    finally:
+        db.close()
 
 
 def _hashtag(text):
@@ -219,10 +299,10 @@ def test(cfg=None):
     """설정 확인: 업로드 채널에 글 하나를 보낸다. 반환 (ok, 메시지)."""
     import requests
     s = settings(cfg)
-    if not s["enabled"]:
-        return None, "꺼짐"
-    if not s["chat"] or not s["token"]:
-        return False, "채널 ID 또는 봇 토큰 없음"
+    if not s["chat"]:
+        return None, "채널 ID 없음"
+    if not s["token"]:
+        return False, "봇 토큰 없음"
     try:
         r = requests.post("%s/bot%s/sendMessage" % (s["api"], s["token"]),
                           data={"chat_id": s["chat"], "text": "📤 웹툰 다운로더: 이 채널로 받은 회차 파일을 올립니다.",

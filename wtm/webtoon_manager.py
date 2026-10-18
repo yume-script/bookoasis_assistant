@@ -116,7 +116,6 @@ DEFAULTS = {
     "NAVER_DOWNLOAD_OWNED": False,
     "KAKAO_DOWNLOAD_OWNED": False,
     "KAKAO_NOVEL_DOWNLOAD_OWNED": False,
-    "TELEGRAM_UPLOAD_ENABLE": False,
     "TELEGRAM_UPLOAD_MAX_MB": 50,
 }
 
@@ -215,8 +214,6 @@ class WebtoonManagerMetadataProvider(BaseMetadataProvider):
          "hint": "예) https://ntfy.sh/내토픽이름 (자체 서버 주소도 가능). 토픽 이름은 길고 추측하기 어렵게."},
         {"key": "NOTIFY_NTFY_TOKEN", "label": "접근 토큰", "type": "password",
          "hint": "비공개 토픽/자체 서버에서 토큰을 쓰는 경우만."},
-        {"key": "TELEGRAM_UPLOAD_ENABLE", "label": "받은 회차 파일을 텔레그램 채널에 올리기", "type": "checkbox",
-         "default": False, "hint": "새로 받은 회차(zip·epub)를 아래 채널에 파일로 올립니다. 다운로드와 따로 대기열로 하나씩 올립니다."},
         {"key": "TELEGRAM_UPLOAD_CHAT_ID", "label": "채널 ID", "type": "text",
          "hint": "-100으로 시작하는 채널 ID 또는 @채널이름. 봇을 그 채널의 관리자로 추가해야 합니다. 개인 소장용 비공개 채널만 쓰세요."},
         {"key": "TELEGRAM_UPLOAD_BOT_TOKEN", "label": "봇 토큰", "type": "password",
@@ -581,6 +578,8 @@ class WebtoonManagerMetadataProvider(BaseMetadataProvider):
                 return self._dispatch_kakao(db_type, action, payload)
             if action == "toggle_notify":
                 return self._act_toggle_notify(payload)
+            if action == "toggle_telegram":
+                return self._act_toggle_telegram(payload)
             if payload.get("platform") == "kakao" and action in (
                     "subscribe", "unsubscribe", "exclude", "restore", "resync_title", "download_title"):
                 return self._kakao_card_action(db_type, action, payload)
@@ -659,7 +658,7 @@ class WebtoonManagerMetadataProvider(BaseMetadataProvider):
     _UI_FIELDS = ("title", "author", "thumbnail", "weekdays", "status", "subscribed",
                   "unsubscribed", "excluded", "new", "rest", "up_flag", "rating", "waitfree",
                   "category", "last_result", "adult", "is_adult", "last_downloaded_no",
-                  "episode_count", "last_seen_at", "purchased", "notify_new")
+                  "episode_count", "last_seen_at", "purchased", "notify_new", "telegram_upload")
 
     def _build_title_items(self, cfg, compare_set):
         """목록 데이터. titles.json/kakao_titles.json이 바뀌지 않았으면 이전 결과를
@@ -722,7 +721,7 @@ class WebtoonManagerMetadataProvider(BaseMetadataProvider):
         info["fast"] = bool(pipeline._truthy(cfg.get("FAST_MODE")))
         try:  # 독립형: 텔레그램 채널 업로드 대기열
             from . import telegram_upload
-            if telegram_upload.settings(cfg)["enabled"]:
+            if telegram_upload.ready(telegram_upload.settings(cfg)):
                 info["telegram"] = telegram_upload.counts()
         except Exception:  # noqa: BLE001
             pass
@@ -972,6 +971,31 @@ class WebtoonManagerMetadataProvider(BaseMetadataProvider):
             else " (알림 받을 곳 설정이 비어 있어 아직 보내지 못합니다 - [설정] > [공통] > 알림 받을 곳)"
         return True, ("'%s' 새 회차 알림을 켰습니다%s" % (t.get("title", tid), warn)) if on \
             else "'%s' 새 회차 알림을 껐습니다" % t.get("title", tid)
+
+    def _act_toggle_telegram(self, payload):
+        """카드의 📤 버튼 (독립형): 이 작품의 회차를 텔레그램 채널에 올릴지 켜고 끈다.
+        켜면 이미 받은 회차를 전부 대기열에 넣고, 그 뒤 새 회차는 받을 때마다 추가된다."""
+        from . import telegram_upload
+        tid = str(payload.get("titleId") or "").strip()
+        kakao = payload.get("platform") == "kakao"
+        t = ss.get_kakao_title(tid) if kakao else ss.get_title(tid)
+        if not t:
+            return False, "목록에 없는 작품입니다"
+        cfg = self._get_cfg("general")
+        on = not t.get("telegram_upload")
+        if on and not telegram_upload.ready(telegram_upload.settings(cfg)):
+            return False, "텔레그램 채널 ID와 봇 토큰을 먼저 넣으세요 ([설정] > [공통] > 텔레그램 채널 업로드)"
+        (ss.upsert_kakao_title if kakao else ss.upsert_title)({tid: {"telegram_upload": on}})
+        platform = "kakao" if kakao else "naver"
+        name = t.get("title", tid)
+        if not on:
+            removed = telegram_upload.remove_title(platform, tid, t, cfg)
+            return True, "'%s' 텔레그램 업로드를 껐습니다" % name + (" (대기 중이던 %d개 취소)" % removed if removed else "")
+        added, total, _ = telegram_upload.add_title(platform, tid, t, cfg)
+        if not total:
+            return True, "'%s' 텔레그램 업로드를 켰습니다. 아직 받은 회차가 없어, 회차를 받는 대로 올립니다" % name
+        return True, ("'%s' 텔레그램 업로드를 켰습니다: 받은 회차 %d개 중 %d개를 회차 순서대로 올립니다 (이미 올린 회차 제외). "
+                      "새 회차는 받을 때마다 올립니다" % (name, total, added))
 
     def _kakao_card_action(self, db_type, action, payload):
         """통합 목록 카드에서 카카오 작품에 대해 누른 버튼(네이버와 같은 액션 이름)."""
@@ -1548,9 +1572,10 @@ class WebtoonManagerMetadataProvider(BaseMetadataProvider):
                                    "#ntfy (휴대폰 푸시)", "NOTIFY_NTFY_URL", "NOTIFY_NTFY_TOKEN"),
          "채워 넣은 곳 전부로 같은 알림(새 회차, 완결, 쿠키 만료, 다운로드 실패 요약)을 보냅니다. "
          "저장 후 아래 '알림 테스트 보내기'로 곳마다 성공 여부를 확인하세요."),
-        ("common", "텔레그램 채널 업로드", ("TELEGRAM_UPLOAD_ENABLE", "TELEGRAM_UPLOAD_CHAT_ID", "TELEGRAM_UPLOAD_BOT_TOKEN",
+        ("common", "텔레그램 채널 업로드", ("TELEGRAM_UPLOAD_CHAT_ID", "TELEGRAM_UPLOAD_BOT_TOKEN",
                                         "TELEGRAM_UPLOAD_MAX_MB", "TELEGRAM_UPLOAD_API_URL"),
-         "받은 회차 파일을 채널에 #작품명 해시태그와 함께 올립니다. 채널 ID·토큰·주소는 .env의 WTM_TELEGRAM_UPLOAD_…에 저장됩니다. "
+         "작품 카드의 📤 버튼을 켠 작품만 올립니다: 켜는 순간 이미 받은 회차를 회차 순서대로 전부, 그 뒤로는 새 회차를 받을 때마다. "
+         "#작품명 해시태그를 붙입니다. 채널 ID·토큰·주소는 .env의 WTM_TELEGRAM_UPLOAD_…에 저장됩니다. "
          "저장 후 '알림 테스트 보내기'로 채널에 글이 올라가는지 확인하세요."),
         ("common", "알림 종류 / 쿠키 유지", ("NOTIFY_NEW_EPISODES_ALL", "COOKIE_KEEPALIVE_HOURS"),
          "새 회차 알림은 작품 카드의 🔔 버튼으로 작품마다 켜고 끕니다."),

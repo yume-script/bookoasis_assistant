@@ -128,20 +128,33 @@ class HandoffTest(unittest.TestCase):
 
 
 class TelegramUploadTest(unittest.TestCase):
-    def test_queue_caption_and_settings(self):
-        from wtm import host, telegram_upload as tu
-        host.save_settings({"TELEGRAM_UPLOAD_ENABLE": False})
-        self.assertFalse(tu.enqueue("/mnt/w/작품/1화.zip"))  # 꺼져 있으면 넣지 않음
-        host.save_settings({"TELEGRAM_UPLOAD_ENABLE": True, "TELEGRAM_UPLOAD_CHAT_ID": "-1001",
-                            "NOTIFY_TELEGRAM_BOT_TOKEN": "tok", "TELEGRAM_UPLOAD_BOT_TOKEN": "",
-                            "TELEGRAM_UPLOAD_MAX_MB": 9999})
+    def test_only_selected_titles_in_episode_order(self):
+        from wtm import host, state_store as ss, telegram_upload as tu
+        root = os.path.join(TMP, "naver_dl")
+        a, b = os.path.join(root, "작품A (111)"), os.path.join(root, "작품B (222)")
+        for d in (a, b):
+            os.makedirs(d, exist_ok=True)
+        for n in ("작품A 0010화.zip", "작품A 0002화.zip", "kavita.yaml"):
+            open(os.path.join(a, n), "w").close()
+        open(os.path.join(b, "작품B 0001화.zip"), "w").close()
+        host.save_settings({"DOWNLOAD_ROOT": root, "TELEGRAM_UPLOAD_CHAT_ID": "-1001", "NOTIFY_TELEGRAM_BOT_TOKEN": "tok",
+                            "TELEGRAM_UPLOAD_BOT_TOKEN": "", "TELEGRAM_UPLOAD_MAX_MB": 9999})
         s = tu.settings()
         self.assertEqual((s["token"], s["api"], s["max_bytes"]), ("tok", tu.DEFAULT_API, 2000 * 1024 * 1024))
-        self.assertTrue(tu.enqueue("/mnt/w/작품 이름/작품 이름 0001화.zip"))
-        self.assertFalse(tu.enqueue("/mnt/w/작품 이름/kavita.yaml"))     # 회차 파일만
-        self.assertEqual(tu.counts().get("pending"), 1)
+        ss.upsert_title({"111": {"title": "작품A"}, "222": {"title": "작품B"}})
+        ss.flush_titles()
+        self.assertFalse(tu.enqueue(os.path.join(b, "작품B 0002화.zip")))       # 📤를 켜지 않은 작품
+        ss.upsert_title({"111": {"telegram_upload": True}})
+        added, total, _ = tu.add_title("naver", "111", ss.get_title("111"))
+        self.assertEqual((added, total), (2, 2))                                   # 회차 파일만
+        self.assertTrue(tu.enqueue(os.path.join(a, "작품A 0011화.zip")))          # 켠 작품의 새 회차
+        self.assertEqual(tu.add_title("naver", "111", ss.get_title("111"))[0], 0)  # 이미 대기열에 있는 것은 다시 안 넣음
+        db = tu._db()
+        order = [os.path.basename(r[0]) for r in db.execute("SELECT path FROM upload ORDER BY id")]
+        db.close()
+        self.assertEqual(order, ["작품A 0002화.zip", "작품A 0010화.zip", "작품A 0011화.zip"])
+        self.assertEqual(tu.remove_title("naver", "111", ss.get_title("111")), 3)  # 끄면 대기 중인 것 취소
         self.assertEqual(tu.caption_for("/mnt/w/작품 이름 (1부)/작품 0001화.zip"), "#작품_이름_1부\n작품 0001화")
-        host.save_settings({"TELEGRAM_UPLOAD_ENABLE": False})
 
 
 class MiniGameTest(unittest.TestCase):
