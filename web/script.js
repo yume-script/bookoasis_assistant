@@ -122,7 +122,7 @@
             if (pd.buffering) parts.push('모으는 중 ' + pd.buffering);
             if (pd.screening) parts.push('DB 중복 확인 차례 ' + pd.screening);
             if (pd.ready) parts.push('처리 차례(폴더가 조용해지길 기다림 포함) ' + pd.ready);
-            if (pd.waiting) parts.push('파일 보이길·BookOasis·전체 스캔 회피 대기 ' + pd.waiting);
+            if (pd.waiting) parts.push('파일 보이길·BookOasis(연결·DB 잠금)·전체 스캔 회피 대기 ' + pd.waiting);
             pdBox.hidden = !parts.length;
             pdBox.textContent = '대기 내역 · ' + parts.join(' · ') + (pd.oldest ? ' · 가장 오래된 기록 ' + shortTime(pd.oldest) : '');
         }

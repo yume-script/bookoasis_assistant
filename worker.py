@@ -59,6 +59,17 @@ def scan_concurrency(cfg):
         return 1
 
 
+LOCK_RETRY = 120  # DB 잠금으로 보류한 스캔을 다시 보낼 때까지(초)
+LOCK_SLOWDOWN = 1800  # 잠금 대기 초과 뒤 동시 스캔을 1개로 줄이는 시간(초)
+LOCK_ERRORS = ("lock wait timeout", "deadlock found", "database is locked", "(1205,", "(1213,")
+
+
+def is_db_lock_error(message):
+    """BookOasis 스캔 응답이 DB 잠금 문제(MySQL 1205·1213, SQLite locked)인지"""
+    text = str(message or "").lower()
+    return any(key in text for key in LOCK_ERRORS)
+
+
 SCAN_TIMES = []  # 최근 스캔 요청 (시각, 걸린 초) - BookOasis가 스캔을 끝내고 응답하므로 폴더 하나 처리 시간이 된다
 
 
@@ -2560,6 +2571,7 @@ class BookOasis:
         self.down_since, self.down_wait = None, 60  # BookOasis 연결이 끊긴 시각, 다음 재시도까지(초)
         self.timeout = int(cfg.get("scan_timeout", 300))
         self.concurrency = scan_concurrency(cfg)  # BookOasis에 동시에 보낼 부분 스캔 수
+        self.lock_until = 0.0  # BookOasis DB 잠금 대기 초과가 나면 이 시각까지 동시 스캔을 1개로 줄인다
         self.file_wait = max(0, int(cfg.get("file_wait_minutes", 10)))  # 0이면 확인하지 않음
         self.allow_root_scan = bool(cfg.get("allow_root_scan", False))  # 보관함 맨 위 변경 때 전체 스캔 허용
         self.guard = max(0, int(cfg.get("full_scan_guard_minutes", 10)))  # 전체 스캔 시간대 회피(분), 0이면 끔
@@ -2825,7 +2837,7 @@ class BookOasis:
 
         def scans():
             """(폴더, 결과) 순서대로. 동시 스캔 1개면 하나씩 보내며 BookOasis가 꺼진 게 보이면 나머지는 보내지 않는다."""
-            if self.concurrency <= 1 or len(todo) <= 1:
+            if self.concurrency <= 1 or len(todo) <= 1 or time.time() < self.lock_until:
                 for d in todo:
                     yield d, (None if down else timed_scan(d))
                 return
@@ -2846,6 +2858,17 @@ class BookOasis:
                 SCAN_TIMES.append((time.time(), took))
                 del SCAN_TIMES[:-500]
             label = f"{lib['db_type']}#{lib['id']} {lib['name']}" if lib else ""
+            if ok is False and is_db_lock_error(message):
+                # BookOasis DB 잠금 대기 초과·교착: 스캔 자체의 문제가 아니라 다른 작업(다른 스캔·전체 스캔·메타데이터 작업)과
+                # 같은 행을 잡으려다 밀린 것. 시도 횟수에 넣지 않고 잠시 뒤 다시, 그동안 동시 스캔은 1개로
+                if self.concurrency > 1 and time.time() >= self.lock_until:
+                    log.warning("BookOasis DB 잠금 대기 초과 → 30분 동안 동시 스캔을 1개로 줄입니다.")
+                self.lock_until = time.time() + LOCK_SLOWDOWN
+                log.info("스캔 보류 %s [%s] DB 잠금 대기 초과 · %d초 뒤 다시 (%.1f초)", d,
+                         f"{lib['db_type']}#{lib['id']} {lib['name']}" if lib else "", LOCK_RETRY, took)
+                for event_id in wanted[d]["events"]:
+                    results[event_id]["locked"] = message
+                continue
             if ok is False and message.startswith("BookOasis 연결 실패"):
                 down = message
                 if not self.down_since:
@@ -2882,6 +2905,11 @@ class BookOasis:
                 status = "timeout"
             elif r.get("waiting") or (r.get("deferred") and r["ok"] and not r["scans"]):
                 status = "waiting"
+            elif r.get("locked") and r["ok"]:
+                status = "waiting"
+                r["wait_retry"] = LOCK_RETRY
+                r["messages"].append(f"BookOasis DB 잠금 대기 초과로 스캔 보류 · {LOCK_RETRY // 60}분 뒤 다시 (시도 횟수에 넣지 않음): "
+                                     f"{r['locked'][:200]}")
             elif r.get("unreachable") and r["ok"]:
                 # BookOasis가 꺼져 있음: 시도 횟수를 올리지 않고 기다렸다가 다시 (1분부터 두 배씩, 최대 10분 간격)
                 status = "waiting"
@@ -3130,6 +3158,7 @@ class Worker:
             if old:  # 설정을 다시 읽어도 VFS 생략 대상과 BookOasis 연결 끊김 상태는 이어 간다
                 self.target.skip_vfs = old.skip_vfs
                 self.target.down_since, self.target.down_wait = old.down_since, old.down_wait
+                self.target.lock_until = old.lock_until
             log.info("설정 적용(감시기 유지): 보관함 경로 %d개, VFS 규칙 %d개",
                      len(self.target.libraries), len(self.target.vfs.rules))
             return False
