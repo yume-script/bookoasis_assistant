@@ -40,8 +40,10 @@ def screen_once(runtime, state):
             return 0
         dups, now = 0, time.strftime("%Y-%m-%dT%H:%M:%S")
         since = time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(time.time() - 3600))
+        # 1) 확인할 기록을 고르고 세션(db_type)별로 모아 2) 한 번의 연결로 일괄 조회한다
+        #    (예전: 기록마다 DB에 새로 접속 - 대기 기록이 수백 건이면 확인에만 수십 초가 걸려 처리 전체가 밀렸다)
+        by_type = {}
         for row in rows:
-            dup = None
             if (row["action"] == "create" and row["item_type"] == "file" and not row["force"]
                     and row["root"] != "수동 요청" and _is_book_file(row["path"])):
                 lib = library_for(row["path"])
@@ -49,11 +51,17 @@ def screen_once(runtime, state):
                 reupload = db.execute("SELECT 1 FROM event WHERE action IN ('delete','rename','move') "
                                       "AND removed_path=? AND created>=? LIMIT 1", (row["path"], since)).fetchone()
                 if lib and not reupload:
-                    found = bookoasis_db.gateway(lib.get("db_type") or "general").fetch_one(
-                        "SELECT id, COALESCE(is_deleted, 0) AS gone FROM books WHERE file_path = %s LIMIT 1", (row["path"],))
-                    if found and not int(found.get("gone") or 0):
-                        dup = found["id"]
-            with db:
+                    by_type.setdefault(lib.get("db_type") or "general", set()).add(row["path"])
+        registered = {}
+        for db_type, paths in by_type.items():
+            for found in bookoasis_db.gateway(db_type).fetch_in(
+                    "SELECT id, file_path, COALESCE(is_deleted, 0) AS gone FROM books WHERE file_path IN ({marks})", sorted(paths)):
+                if not int(found.get("gone") or 0):
+                    registered[found["file_path"]] = found["id"]
+        with db:  # 결과는 한 번에 기록 (기록마다 커밋하지 않음)
+            for row in rows:
+                dup = registered.get(row["path"]) if row["path"] in by_type.get(
+                    (library_for(row["path"]) or {}).get("db_type") or "general", ()) else None
                 if dup:
                     dups += 1
                     message = f"이미 BookOasis에 등록된 파일 (도서 #{dup}) · VFS 새로고침·스캔 생략"

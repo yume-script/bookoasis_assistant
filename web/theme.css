@@ -160,23 +160,59 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
 .nav-account .who span { font-size: 0.72rem; color: var(--muted); white-space: nowrap; }
 .nav-scrim { display: none; }
 
-/* 테마 고르기 */
-.theme-pop {
-  position: fixed; left: 0.75rem; bottom: 4.5rem; width: calc(var(--sidebar-w) + 40px); z-index: 50;
-  background: var(--bg-elev); border: 1px solid var(--border); border-radius: 10px; box-shadow: var(--app-shadow); padding: 0.9rem;
+/* 로고의 'P' (YMPlayer 아이콘에서 재생 표시 대신) */
+.logo-p { font: 900 22px/1 Arial, Helvetica, sans-serif; }
+.brand-mark .logo { width: 100%; height: 100%; display: block; }
+
+/* 버튼 (YMPlayer .btn) */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 0.35rem;
+  padding: 0.5rem 1rem; border-radius: var(--radius); border: 1px solid var(--border);
+  background: var(--bg-elev2); color: var(--text); cursor: pointer; font-weight: 500; white-space: nowrap; font-family: inherit;
 }
-.theme-pop h4 { margin: 0 0 0.5rem; font-size: 0.78rem; color: var(--muted); font-weight: 700; letter-spacing: 0.04em; }
-.theme-pop h4 + .theme-grid { margin-bottom: 0.9rem; }
-.theme-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.4rem; }
-.theme-opt { display: flex; align-items: center; gap: 0.5rem; padding: 0.4rem 0.5rem; border-radius: var(--radius); border: 1px solid var(--border);
-  background: var(--bg); color: var(--text); cursor: pointer; font-size: 0.82rem; text-align: left; }
-.theme-opt:hover { border-color: var(--muted); }
-.theme-opt.on { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
-.theme-sw { display: inline-flex; border-radius: 4px; overflow: hidden; border: 1px solid var(--border); flex: none; }
-.theme-sw i { width: 9px; height: 16px; display: block; }
-.accent-row { display: flex; flex-wrap: wrap; gap: 0.45rem; }
-.accent-dot { width: 26px; height: 26px; border-radius: 50%; border: 2px solid transparent; cursor: pointer; padding: 0; }
-.accent-dot.on { border-color: var(--text); box-shadow: 0 0 0 2px var(--bg-elev) inset; }
+.btn:hover { background: var(--bg-hover); }
+.btn-accent { background: var(--accent); color: var(--accent-ink); border-color: transparent; font-weight: 700; }
+.btn-accent:hover { background: var(--accent-hover); }
+.muted { color: var(--muted); }
+
+/* 창 (YMPlayer .modal) */
+.modal { position: fixed; inset: 0; z-index: 200; background: rgba(0, 0, 0, 0.7); display: flex; align-items: center; justify-content: center; padding: 1rem; }
+.modal-card { background: var(--bg-elev); border: 1px solid var(--border); border-radius: 10px; width: 560px; max-width: 100%; max-height: 85vh;
+  display: flex; flex-direction: column; color: var(--text); }
+.modal-head { display: flex; align-items: center; justify-content: space-between; padding: 0.9rem 1.1rem; border-bottom: 1px solid var(--border); }
+.modal-head h3 { margin: 0; font-size: 1.05rem; }
+.modal-body { padding: 1.1rem; overflow-y: auto; }
+.modal-foot { padding: 0.9rem 1.1rem; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 0.5rem; }
+
+/* 테마 고르기 (YMPlayer theme-pick) */
+.theme-pick { display: flex; flex-direction: column; gap: 1.1rem; min-width: min(460px, 80vw); }
+.theme-pick h4 { margin: 0 0 0.5rem; font-size: 0.85rem; color: var(--muted); font-weight: 700; }
+.theme-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 0.6rem; }
+.theme-opt {
+  border: 2px solid var(--border); border-radius: 10px; padding: 0.45rem; background: var(--bg-elev2);
+  cursor: pointer; display: flex; flex-direction: column; gap: 0.4rem; align-items: stretch; color: var(--text); font-family: inherit;
+}
+.theme-opt.on { border-color: var(--accent); }
+.theme-opt .sw { height: 44px; border-radius: 6px; display: flex; overflow: hidden; border: 1px solid rgba(128, 128, 128, 0.3); }
+.theme-opt .sw i { flex: 1; }
+.theme-opt span { font-size: 0.8rem; text-align: center; }
+.accent-row { display: flex; flex-wrap: wrap; gap: 0.55rem; }
+.accent-opt {
+  width: 34px; height: 34px; border-radius: 50%; border: 3px solid transparent; cursor: pointer;
+  box-shadow: 0 0 0 1px var(--border); display: inline-flex; align-items: center; justify-content: center; color: #fff; padding: 0;
+}
+.accent-opt.on { border-color: var(--text); }
+.accent-opt .app-icon svg { width: 15px; height: 15px; stroke-width: 3; }
+.theme-default { display: flex; align-items: center; gap: 0.5rem; font-size: 0.85rem; color: var(--muted); }
+
+/* 설정 창의 탭 (YMPlayer .tabs) */
+.tabs { display: flex; gap: 0.25rem; background: var(--bg); border-radius: 999px; padding: 4px; margin-bottom: 1rem; width: fit-content; }
+.tab { padding: 0.35rem 1rem; border-radius: 999px; color: var(--muted); font-weight: 500; border: none; background: none; cursor: pointer; font-family: inherit; }
+.tab.active { background: var(--bg-hover); color: var(--text); }
+.settings-pane p { margin: 0 0 1rem; font-size: 0.85rem; }
+.about-list { display: flex; flex-direction: column; gap: 0.35rem; margin-bottom: 1rem; }
+.about-row { display: flex; justify-content: space-between; padding: 0.55rem 0.75rem; border-radius: var(--radius); background: var(--bg-elev2); }
+.nav-account .icon-btn { width: 28px; height: 28px; }
 
 /* 본문: 남은 화면 전체 */
 .main { margin-left: var(--sidebar-w); padding-top: var(--topbar-h); min-height: 100vh; min-width: 0; }
@@ -193,7 +229,6 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
   body.nav-open .nav-scrim { display: block; position: fixed; inset: var(--topbar-h) 0 0 0; z-index: 35; background: rgba(0, 0, 0, 0.5); }
   .main { margin-left: 0; }
   .main > .gdw-page { padding: 1rem 1rem 3rem; }
-  .theme-pop { left: 0.5rem; right: 0.5rem; width: auto; }
 }
 
 .app-off { max-width: 720px; margin: 40px auto; padding: 24px; border: 1px solid var(--border); border-radius: 12px;

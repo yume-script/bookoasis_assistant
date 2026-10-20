@@ -225,8 +225,9 @@ def page():
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700&display=swap">
 <script>
   (function () {{ try {{ var t = JSON.parse(localStorage.getItem('bo_theme') || '{{}}') || {{}};
-    document.documentElement.setAttribute('data-theme', t.theme || 'dark');
-    document.documentElement.setAttribute('data-accent', t.accent || 'amber'); }} catch (e) {{ }} }})();
+    var d = JSON.parse(localStorage.getItem('bo_theme_default') || '{{}}') || {{}};
+    document.documentElement.setAttribute('data-theme', t.theme || d.theme || 'dark');
+    document.documentElement.setAttribute('data-accent', t.accent || d.accent || 'amber'); }} catch (e) {{ }} }})();
 </script>
 <link rel="stylesheet" href="theme.css">
 <style>

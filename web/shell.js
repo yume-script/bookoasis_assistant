@@ -29,6 +29,8 @@
     'angles-left': '<path d="m11 17-5-5 5-5"/><path d="m18 17-5-5 5-5"/>',
     'bars': '<path d="M4 6h16"/><path d="M4 12h16"/><path d="M4 18h16"/>',
     'gamepad': '<path d="M6 11h4"/><path d="M8 9v4"/><path d="M15 12h.01"/><path d="M18 10h.01"/><path d="M17.3 5H6.7a4 4 0 0 0-3.98 3.59l-.6 5.98A3 3 0 0 0 5.1 18c1 0 1.96-.5 2.5-1.34L8.7 15h6.6l1.1 1.66A3 3 0 0 0 18.9 18a3 3 0 0 0 2.98-3.43l-.6-5.98A4 4 0 0 0 17.3 5z"/>',
+    'xmark': '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
+    'check': '<path d="M20 6 9 17l-5-5"/>',
     'chevron-down': '<path d="m6 9 6 6 6-6"/>',
     'palette': '<circle cx="13.5" cy="6.5" r="1.2" fill="currentColor"/><circle cx="17.5" cy="10.5" r="1.2" fill="currentColor"/><circle cx="8.5" cy="7.5" r="1.2" fill="currentColor"/><circle cx="6.5" cy="12.5" r="1.2" fill="currentColor"/><path d="M12 2a10 10 0 0 0 0 20 2 2 0 0 0 2-2c0-.5-.2-1-.5-1.3-.3-.4-.5-.8-.5-1.3a2 2 0 0 1 2-2h2.4A5.6 5.6 0 0 0 22 9.8C22 5.5 17.5 2 12 2z"/>'
   };
@@ -96,21 +98,149 @@
     return span;
   }
 
-  // ── 테마 (YMPlayer theme.js와 같은 값) ──
+  // ── 테마 (YMPlayer theme.js와 같은 구조) ──
+  // 기본 테마는 서버(설정 > 화면, ui_prefs.json)에 두고 모든 브라우저가 따른다. 이 브라우저에서 따로 고른 테마(bo_theme)가 있으면 그게 우선.
+  // 다음에 열 때 깜빡이지 않게 서버 기본값도 브라우저(bo_theme_default)에 적어 두고, 각 화면 머리의 짧은 스크립트가 먼저 읽는다.
+  var DEFAULT_KEY = 'bo_theme_default';
+  function readJSON(key) { try { return JSON.parse(storeGet(key) || 'null') || {}; } catch (e) { return {}; } }
+  var defaults = { theme: readJSON(DEFAULT_KEY).theme || 'dark', accent: readJSON(DEFAULT_KEY).accent || 'amber' };
+  var mine = { theme: readJSON(THEME_KEY).theme || '', accent: readJSON(THEME_KEY).accent || '' };
   function applyTheme() {
-    var t = {};
-    try { t = JSON.parse(storeGet(THEME_KEY) || '{}') || {}; } catch (e) { t = {}; }
-    root.setAttribute('data-theme', t.theme || 'dark');
-    root.setAttribute('data-accent', t.accent || 'amber');
+    root.setAttribute('data-theme', mine.theme || defaults.theme);
+    root.setAttribute('data-accent', mine.accent || defaults.accent);
+    var meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) meta.content = getComputedStyle(root).getPropertyValue('--bg').trim() || '#141517';
+    setFavicon();
   }
-  function saveTheme(patch) {
-    var t = {};
-    try { t = JSON.parse(storeGet(THEME_KEY) || '{}') || {}; } catch (e) { t = {}; }
-    Object.keys(patch).forEach(function (k) { t[k] = patch[k]; });
-    storeSet(THEME_KEY, JSON.stringify(t));
+  function saveMine() {
+    storeSet(THEME_KEY, JSON.stringify(mine.theme || mine.accent ? mine : {}));
     applyTheme();
   }
+  function setDefaults(d) {
+    if (d && d.theme) defaults.theme = d.theme;
+    if (d && d.accent) defaults.accent = d.accent;
+    storeSet(DEFAULT_KEY, JSON.stringify(defaults));
+    applyTheme();
+  }
+
+  // ── 로고 / 파비콘: YMPlayer 아이콘에서 재생(▷) 대신 'P' ──
+  var LOGO_INNER = '<rect class="logo-bg" width="64" height="64" rx="15"/>' +
+    '<circle class="logo-ink" cx="27" cy="33" r="19"/><circle class="logo-bg" cx="37" cy="26" r="15.5"/>' +
+    '<text class="logo-ink logo-p" x="37.6" y="27" text-anchor="middle" dominant-baseline="central">P</text>';
+  var ACCENT_HEX = { amber: ['#e5a00d', '#141517'], blue: ['#3b82f6', '#ffffff'], green: ['#22c55e', '#06200f'],
+    purple: ['#a855f7', '#ffffff'], red: ['#ef4444', '#ffffff'], pink: ['#ec4899', '#ffffff'], teal: ['#14b8a6', '#032420'] };
+  function setFavicon() {  // 브라우저 탭 아이콘도 지금 강조색으로
+    var c = ACCENT_HEX[mine.accent || defaults.accent] || ACCENT_HEX.amber;
+    var svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="15" fill="' + c[0] + '"/>' +
+      '<circle cx="27" cy="33" r="19" fill="' + c[1] + '"/><circle cx="37" cy="26" r="15.5" fill="' + c[0] + '"/>' +
+      '<text x="37.6" y="27" text-anchor="middle" dominant-baseline="central" font-family="Arial,Helvetica,sans-serif" ' +
+      'font-weight="900" font-size="22" fill="' + c[1] + '">P</text></svg>';
+    var link = document.querySelector('link[rel="icon"]');
+    if (!link) { link = document.createElement('link'); link.rel = 'icon'; document.head.appendChild(link); }
+    link.type = 'image/svg+xml';
+    link.href = 'data:image/svg+xml,' + encodeURIComponent(svg);
+  }
   applyTheme();
+
+  // ── 창 (YMPlayer util.js modal과 같은 모양) ──
+  function modal(title, body, actions) {
+    var wrap;
+    function close() { if (wrap) wrap.remove(); document.removeEventListener('keydown', onKey); }
+    function onKey(ev) { if (ev.key === 'Escape') close(); }
+    wrap = h('div', { class: 'modal', onclick: function (e) { if (e.target === wrap) close(); } }, [
+      h('div', { class: 'modal-card', role: 'dialog', 'aria-label': title }, [
+        h('div', { class: 'modal-head' }, [h('h3', { text: title }),
+          h('button', { type: 'button', class: 'icon-btn', title: '닫기', 'aria-label': '닫기', onclick: function () { close(); } }, [icon('xmark')])]),
+        h('div', { class: 'modal-body' }, [body]),
+        actions && actions.length ? h('div', { class: 'modal-foot' }, actions) : null])]);
+    document.body.appendChild(wrap);
+    document.addEventListener('keydown', onKey);
+    return { el: wrap, close: close };
+  }
+  function swatch(t) {
+    var sw = h('div', { class: 'sw' });
+    t.colors.forEach(function (c) { var i = document.createElement('i'); i.style.background = c; sw.appendChild(i); });
+    return sw;
+  }
+  /** 테마 고르기 (YMPlayer themePicker). admin이면 서버 기본값을 고른다. */
+  function themePicker(admin) {
+    var cur = admin ? { theme: defaults.theme, accent: defaults.accent } : { theme: mine.theme, accent: mine.accent };
+    var box = h('div', { class: 'theme-pick' });
+    function pick(key, id) {
+      cur[key] = id;
+      if (admin) {
+        fetch('api/ui-prefs', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(cur) }).then(function (r) { return r.json(); }).then(function (d) { if (d.ui) setDefaults(d.ui); draw(); });
+      } else { mine = { theme: cur.theme, accent: cur.accent }; saveMine(); }
+      draw();
+    }
+    function draw() {
+      var shownTheme = cur.theme || defaults.theme, shownAccent = cur.accent || defaults.accent;
+      while (box.firstChild) box.removeChild(box.firstChild);
+      var grid = h('div', { class: 'theme-grid' });
+      THEMES.forEach(function (t) {
+        grid.appendChild(h('button', { type: 'button', class: 'theme-opt' + (shownTheme === t.id ? ' on' : ''),
+          onclick: function () { pick('theme', t.id); } }, [swatch(t), h('span', { text: t.label })]));
+      });
+      var row = h('div', { class: 'accent-row' });
+      ACCENTS.forEach(function (a) {
+        var b = h('button', { type: 'button', class: 'accent-opt' + (shownAccent === a.id ? ' on' : ''), title: a.label, 'aria-label': a.label,
+          onclick: function () { pick('accent', a.id); } }, [shownAccent === a.id ? icon('check') : null]);
+        b.style.background = a.color;
+        row.appendChild(b);
+      });
+      box.appendChild(h('div', {}, [h('h4', { text: admin ? '기본 테마 (모든 브라우저)' : '테마' }), grid]));
+      box.appendChild(h('div', {}, [h('h4', { text: '강조색' }), row]));
+      if (!admin) {
+        var cb = h('input', { type: 'checkbox' });
+        cb.checked = !cur.theme && !cur.accent;
+        cb.addEventListener('change', function () {
+          if (cb.checked) { cur.theme = ''; cur.accent = ''; mine = { theme: '', accent: '' }; saveMine(); draw(); }
+        });
+        box.appendChild(h('label', { class: 'theme-default' }, [cb, document.createTextNode('설정의 기본 테마 쓰기')]));
+      }
+    }
+    draw();
+    return box;
+  }
+  function openThemeDialog() {
+    var m = modal('테마', themePicker(false), [h('button', { type: 'button', class: 'btn btn-accent', text: '닫기', onclick: function () { m.close(); } })]);
+  }
+  /** 설정 (YMPlayer 설정의 탭 구성 중 이 프로그램에 맞는 것: 화면 / 정보) */
+  function openSettings() {
+    var body = h('div', { class: 'settings-dialog' });
+    var tabs = h('div', { class: 'tabs' });
+    var pane = h('div', { class: 'settings-pane' });
+    var pages = {
+      '화면': function () {
+        return h('div', {}, [h('p', { class: 'muted', text: '모든 브라우저의 기본 테마입니다. 브라우저마다 따로 고르려면 왼쪽 아래 계정 옆의 팔레트 버튼을 쓰세요.' }),
+          themePicker(true)]);
+      },
+      '정보': function () {
+        var list = h('div', { class: 'about-list' });
+        var names = { gdw: '드라이브 변경 감시', wtm: '웹툰 다운로더', mini: '미니게임' };
+        Object.keys(names).forEach(function (k) {
+          list.appendChild(h('div', { class: 'about-row' }, [h('span', { text: names[k] }),
+            h('b', { text: (info.versions && info.versions[k] ? 'v' + info.versions[k] : '-') + (info[k] === false ? ' (꺼짐)' : '') })]));
+        });
+        list.appendChild(h('div', { class: 'about-row' }, [h('span', { text: '프로그램' }), h('b', { text: info.version ? 'v' + info.version : '-' })]));
+        return h('div', {}, [list, h('p', { class: 'muted', text: '모듈 켜기/끄기와 경로·토큰 같은 실행 환경은 .env에서 바꿉니다 (GDW_ENABLED / WTM_ENABLED / MINI_ENABLED).' })]);
+      }
+    };
+    function show(name) {
+      tabs.querySelectorAll('.tab').forEach(function (t) { t.classList.toggle('active', t.textContent === name); });
+      while (pane.firstChild) pane.removeChild(pane.firstChild);
+      pane.appendChild(pages[name]());
+    }
+    Object.keys(pages).forEach(function (name) {
+      tabs.appendChild(h('button', { type: 'button', class: 'tab', text: name, onclick: function () { show(name); } }));
+    });
+    body.appendChild(tabs);
+    body.appendChild(pane);
+    var m = modal('설정', body, [h('button', { type: 'button', class: 'btn btn-accent', text: '닫기', onclick: function () { m.close(); } })]);
+    show('화면');
+  }
+  var info = {};
 
   // ── 원래 탭 막대와 연결 ──
   function tabBar() { return mod && mod.tabsSel ? document.querySelector(mod.tabsSel) : null; }
@@ -141,9 +271,7 @@
   // ── 위쪽 바 ──
   var verEl = h('span', { class: 'brand-ver' });
   var mark = h('span', { class: 'brand-mark' });
-  mark.innerHTML = '<svg viewBox="0 0 32 32" aria-hidden="true"><rect class="logo-bg" width="32" height="32" rx="7"/>' +
-    '<path class="logo-ink" d="M10 7h7.2c3.3 0 5.4 1.8 5.4 4.5 0 1.8-1 3.1-2.6 3.7 2.1.5 3.4 2 3.4 4.2 0 3.1-2.4 5.1-6 5.1H10z' +
-    'm4 3.2v4h2.6c1.4 0 2.2-.7 2.2-2s-.8-2-2.2-2zm0 7v4.6h3c1.5 0 2.4-.8 2.4-2.3s-.9-2.3-2.4-2.3z"/></svg>';
+  mark.innerHTML = '<svg class="logo" viewBox="0 0 64 64" aria-hidden="true">' + LOGO_INNER + '</svg>';
   mark.appendChild(verEl);
   var crumbTab = h('b', { text: '' });
   var top = h('header', { class: 'topbar' }, [
@@ -196,41 +324,14 @@
   // 처음에는 지금 화면의 모듈을 펼친다
   openGroup(current || storeGet(OPEN_KEY));
 
-  // 아래: 테마 + 계정
-  var pop = null;
-  function closePop() { if (pop) { pop.remove(); pop = null; } }
-  function themePop() {
-    if (pop) { closePop(); return; }
-    var t = {};
-    try { t = JSON.parse(storeGet(THEME_KEY) || '{}') || {}; } catch (e) { t = {}; }
-    var themeGrid = h('div', { class: 'theme-grid' });
-    THEMES.forEach(function (th) {
-      var sw = h('span', { class: 'theme-sw' });
-      th.colors.forEach(function (c) { var i = document.createElement('i'); i.style.background = c; sw.appendChild(i); });
-      themeGrid.appendChild(h('button', { type: 'button', class: 'theme-opt' + ((t.theme || 'dark') === th.id ? ' on' : ''),
-        onclick: function () { saveTheme({ theme: th.id }); closePop(); themePop(); } }, [sw, h('span', { text: th.label })]));
-    });
-    var accentRow = h('div', { class: 'accent-row' });
-    ACCENTS.forEach(function (a) {
-      var dot = h('button', { type: 'button', class: 'accent-dot' + ((t.accent || 'amber') === a.id ? ' on' : ''), title: a.label,
-        'aria-label': a.label, onclick: function () { saveTheme({ accent: a.id }); closePop(); themePop(); } });
-      dot.style.background = a.color;
-      accentRow.appendChild(dot);
-    });
-    pop = h('div', { class: 'theme-pop', role: 'dialog', 'aria-label': '테마' },
-      [h('h4', { text: '테마' }), themeGrid, h('h4', { text: '강조색' }), accentRow]);
-    document.body.appendChild(pop);
-  }
-  document.addEventListener('click', function (ev) {
-    if (pop && !pop.contains(ev.target) && !ev.target.closest('[data-act="theme"]')) closePop();
-  });
-  document.addEventListener('keydown', function (ev) { if (ev.key === 'Escape') closePop(); });
+  // 아래 (YMPlayer와 같은 구성): 설정, 그리고 계정 줄 (테마 버튼)
   var who = h('div', { class: 'who' }, [h('b', { text: '관리자' }), h('span', { text: '' })]);
   var avatar = h('span', { class: 'avatar', text: 'A' });
   nav.appendChild(h('div', { class: 'nav-footer' }, [
-    h('a', { class: 'nav-link', href: '#', 'data-act': 'theme', onclick: function (ev) { ev.preventDefault(); themePop(); } },
-      [icon('palette'), h('span', { text: '테마' })]),
-    h('div', { class: 'nav-account' }, [avatar, who])
+    h('a', { class: 'nav-link', href: '#', onclick: function (ev) { ev.preventDefault(); openSettings(); } },
+      [icon('gear'), h('span', { text: '설정' })]),
+    h('div', { class: 'nav-account' }, [avatar, who,
+      h('button', { type: 'button', class: 'icon-btn', title: '테마', 'aria-label': '테마', onclick: openThemeDialog }, [icon('palette')])])
   ]));
 
   var scrim = h('div', { class: 'nav-scrim', onclick: function () { document.body.classList.remove('nav-open'); } });
@@ -275,7 +376,11 @@
       addItem(miniMenu, it);
     });
     syncActive();
-    if (m.version) { verEl.textContent = m.version; document.title = document.title + ' · v' + m.version; }
+    info = m;
+    if (m.ui) setDefaults(m.ui);
+    // 아이콘 배지: 지금 보는 화면의 모듈 버전 (드라이브 변경 감시 / 웹툰 다운로더 / 미니게임마다 다름)
+    var ver = (m.versions && current && m.versions[current]) || m.version;
+    if (ver) { verEl.textContent = ver; document.title = document.title + ' · v' + ver; }
     var name = m.user || '관리자';
     who.firstChild.textContent = name;
     who.lastChild.textContent = m.user ? '관리자' : '인증 없음 (WEB_PASSWORD)';

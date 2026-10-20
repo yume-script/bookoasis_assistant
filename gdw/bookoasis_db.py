@@ -100,6 +100,24 @@ class Gateway:
     def fetch_all(self, sql, params=()):
         return self._run(sql, params, "all")
 
+    def fetch_in(self, sql, values, chunk=200):
+        """sql의 {marks} 자리에 IN 목록을 넣어 여러 번 나눠 조회하되 연결은 한 번만 (중복 확인 일괄 조회용)."""
+        values = list(values)
+        if not values:
+            return []
+        mark = "?" if self.scheme == "sqlite" else "%s"
+        conn = self._connect()
+        try:
+            cur = conn.cursor()
+            out = []
+            for i in range(0, len(values), chunk):
+                part = values[i:i + chunk]
+                cur.execute(sql.replace("{marks}", ",".join([mark] * len(part))), tuple(part))
+                out.extend(_row(r) for r in cur.fetchall())
+            return out
+        finally:
+            conn.close()
+
     def fetch_one(self, sql, params=()):
         return self._run(sql, params, "one")
 

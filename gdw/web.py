@@ -36,6 +36,37 @@ OFF_PAGE = """<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta n
 MAX_BODY = 2 * 1024 * 1024
 
 
+THEMES = ("dark", "light", "black", "navy", "auto")
+ACCENTS = ("amber", "blue", "green", "purple", "red", "pink", "teal")
+
+
+def _ui_prefs_path():
+    return os.path.join(config.data_dir(), "ui_prefs.json")
+
+
+def ui_prefs():
+    """화면 기본 테마 (YMPlayer 설정 > 화면의 '기본 테마'와 같은 역할). 브라우저마다 따로 고른 테마가 있으면 그게 우선."""
+    try:
+        with open(_ui_prefs_path(), encoding="utf-8") as f:
+            data = json.load(f) or {}
+    except (OSError, ValueError):
+        data = {}
+    return {"theme": data.get("theme") if data.get("theme") in THEMES else "dark",
+            "accent": data.get("accent") if data.get("accent") in ACCENTS else "amber"}
+
+
+def module_versions():
+    """모듈별 버전 (왼쪽 위 아이콘 배지: 지금 보는 화면의 모듈 버전)."""
+    out = {"gdw": service._plugin_version()}
+    for key, path, field in (("wtm", ("wtm", "VERSION"), "plugin version"), ("mini", ("mini", "VERSION"), "plugin version")):
+        try:
+            with open(os.path.join(config.ROOT, *path), encoding="utf-8") as f:
+                out[key] = str(json.load(f).get(field) or "")
+        except (OSError, ValueError):
+            out[key] = ""
+    return out
+
+
 def modules():
     return {"gdw": config.env_bool("GDW_ENABLED", True), "wtm": config.env_bool("WTM_ENABLED", False),
             "mini": config.env_bool("MINI_ENABLED", True)}
@@ -94,7 +125,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._deny()
         mods = modules()
         if path == "/api/modules":
-            info = dict(mods, version=service._plugin_version(),
+            info = dict(mods, version=service._plugin_version(), versions=module_versions(), ui=ui_prefs(),
                         user=(config.env("WEB_USER", "admin") or "admin") if config.env("WEB_PASSWORD") else "")
             if mods["mini"]:
                 from mini import bundle
@@ -156,7 +187,7 @@ class Handler(BaseHTTPRequestHandler):
         path = self.path.split("?", 1)[0]
         if not self._authorized():
             return self._deny()
-        if not path.startswith("/api/rpc/") and path != "/api/wtm/action":
+        if not path.startswith("/api/rpc/") and path not in ("/api/wtm/action", "/api/ui-prefs"):
             return self._send(404, {"success": False, "error": "없는 주소입니다."})
         if (self.headers.get("Content-Type") or "").split(";")[0].strip().lower() != "application/json":
             return self._send(415, {"success": False, "error": "Content-Type은 application/json이어야 합니다."})
@@ -172,6 +203,15 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(400, {"success": False, "error": "JSON 형식이 아닙니다."})
         if not isinstance(context, dict):
             return self._send(400, {"success": False, "error": "JSON 객체를 보내세요."})
+        if path == "/api/ui-prefs":  # 설정 > 화면: 기본 테마 저장
+            prefs = {"theme": context.get("theme") if context.get("theme") in THEMES else "dark",
+                     "accent": context.get("accent") if context.get("accent") in ACCENTS else "amber"}
+            os.makedirs(config.data_dir(), exist_ok=True)
+            tmp = _ui_prefs_path() + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(prefs, f)
+            os.replace(tmp, _ui_prefs_path())
+            return self._send(200, {"success": True, "ui": prefs})
         if path == "/api/wtm/action":
             if not modules()["wtm"]:
                 return self._send(404, {"success": False, "error": "웹툰 다운로더가 꺼져 있습니다 (WTM_ENABLED)."})

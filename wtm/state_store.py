@@ -43,7 +43,7 @@ UPDATE_CHECK_PATH = os.path.join(DATA_DIR, "update_check.json")
 
 _lock = threading.RLock()
 
-MAX_HISTORY_LINES = 2000
+MAX_HISTORY_LINES = 12000  # 독립형: 카카오 회차가 몰려도 네이버 이력이 밀려 지워지지 않게 (예전 2000)
 MAX_LOG_LINES = 500
 
 
@@ -325,22 +325,37 @@ def append_history(entry):
         entry = dict(entry)
         entry.setdefault("ts", time.time())
         _append_capped(HISTORY_PATH, json.dumps(entry, ensure_ascii=False) + "\n",
-                       MAX_HISTORY_LINES, 1024 * 1024)
+                       MAX_HISTORY_LINES, 4 * 1024 * 1024)
 
 
 _hist_cache = {}
 
 
-def load_history(limit=200, query=None):
+def history_bucket(entry):
+    """이력 한 줄의 플랫폼 (화면 script.js historyPlatform과 같은 기준, 웹소설은 카카오에 포함)."""
+    p = entry.get("platform")
+    if p in ("kakao", "kakao_novel"):
+        return "kakao"
+    if p == "naver":
+        return "naver"
+    if entry.get("source") == "kakao" or str(entry.get("title") or "").startswith("[카카오]"):
+        return "kakao"
+    return "naver"
+
+
+def load_history(limit=200, query=None, per_platform=False):
+    """per_platform=True면 플랫폼(네이버/카카오)마다 최근 limit개씩 (시간순으로 섞어서).
+    예전에는 전체에서 최근 200개만 보냈는데, 카카오 회차가 몰리면 네이버 이력이 200개 밖으로 밀려
+    '네이버웹툰' 필터에 하나도 안 나왔다."""
     # 화면 폴링마다 이력 파일 전체를 다시 읽지 않도록, 파일이 그대로면 이전 결과를 쓴다.
     sig = _file_sig(HISTORY_PATH)
     if sig is None:
         return []
-    ck = (sig, limit, query)
+    ck = (sig, limit, query, per_platform)
     hit = _hist_cache.get("k")
     if hit == ck:
         return list(_hist_cache["v"])
-    out = _load_history_raw(limit, query)
+    out = _load_history_raw(limit, query, per_platform)
     _hist_cache["k"], _hist_cache["v"] = ck, out
     return list(out)
 
@@ -383,11 +398,29 @@ def download_rate(window=3600):
     return dict(out)
 
 
-def _load_history_raw(limit=200, query=None):
+def _load_history_raw(limit=200, query=None, per_platform=False):
     if not os.path.exists(HISTORY_PATH):
         return []
     with open(HISTORY_PATH, "r", encoding="utf-8") as f:
         lines = f.readlines()
+    if per_platform:
+        out, seen = [], {}
+        for line in reversed(lines):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                entry = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if query and query not in json.dumps(entry, ensure_ascii=False):
+                continue
+            b = history_bucket(entry)
+            if seen.get(b, 0) >= limit:
+                continue
+            seen[b] = seen.get(b, 0) + 1
+            out.append(entry)
+        return out
     out = []
     for line in reversed(lines):
         line = line.strip()

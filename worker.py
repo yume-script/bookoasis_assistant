@@ -48,9 +48,17 @@ def count_load(kind):
         LOAD[kind] = [t for t in bucket if t >= now - 3600]
 
 
+SCAN_TIMES = []  # 최근 스캔 요청 (시각, 걸린 초) - BookOasis가 스캔을 끝내고 응답하므로 폴더 하나 처리 시간이 된다
+
+
 def load_summary():
     now = time.time()
-    return {kind: sum(1 for t in times if t >= now - 3600) for kind, times in LOAD.items()}  # 한 번의 확인 안에서 (리모트, 드라이브, 페이지 토큰) → 변경 목록 페이지 (같은 드라이브 감시끼리 공유)  # 감시 폴더 이름 → 기존 파일 목록 수집 스레드/프로세스
+    out = {kind: sum(1 for t in times if t >= now - 3600) for kind, times in LOAD.items()}
+    recent = [secs for at, secs in SCAN_TIMES if at >= now - 3600]
+    if recent:
+        out["scan_avg"] = round(sum(recent) / len(recent), 1)
+        out["scan_max"] = round(max(recent), 1)
+    return out  # 한 번의 확인 안에서 (리모트, 드라이브, 페이지 토큰) → 변경 목록 페이지 (같은 드라이브 감시끼리 공유)  # 감시 폴더 이름 → 기존 파일 목록 수집 스레드/프로세스
 IGNORE = []   # 무시할 경로 정규식 (설정에서 적용)
 FILE_WAIT_INTERVAL = 20  # 파일이 마운트에 보일 때까지 다시 확인하는 간격(초)
 DEFAULT_IGNORE_PATTERNS = [
@@ -2780,10 +2788,15 @@ class BookOasis:
                         f"보관함 전체 스캔 시간대라 부분 스캔을 {until.strftime('%H:%M')}까지 미룸")
                 log.info("전체 스캔 시간대 회피: %s → %s 이후 스캔", d, until.strftime("%H:%M"))
                 continue
+            started = time.time()
             try:
                 ok, message, lib = self.scan(d, wanted[d]["removed"])
             except Exception as error:
                 ok, message, lib = False, f"{type(error).__name__}: {error}", None
+            took = time.time() - started
+            if ok is not None:
+                SCAN_TIMES.append((time.time(), took))
+                del SCAN_TIMES[:-500]
             label = f"{lib['db_type']}#{lib['id']} {lib['name']}" if lib else ""
             if ok is False and message.startswith("BookOasis 연결 실패"):
                 down = message
@@ -2797,7 +2810,7 @@ class BookOasis:
                 log.info("BookOasis 연결이 돌아왔습니다 (%s부터 끊김).", self.down_since)
                 self.down_since, self.down_wait = None, 60
             if ok is not None:
-                log.info("스캔 %s %s [%s] %s", "OK" if ok else "실패", d, label, message)
+                log.info("스캔 %s %s [%s] %s (%.1f초)", "OK" if ok else "실패", d, label, message, took)
             elif lib:
                 log.info("스캔 건너뜀 %s [%s] %s", d, label, message)
             for event_id in wanted[d]["events"]:
@@ -3338,6 +3351,7 @@ class Worker:
     def run(self):
         stop_flag = os.path.join(self.data_dir, "stop.flag")
         wake_flag = os.path.join(self.data_dir, "wake.flag")
+        process_flag = os.path.join(self.data_dir, "process.flag")  # 다른 모듈이 기록을 넣음: 쉬지 말고 바로 처리
         next_poll, next_cleanup = 0.0, 0.0
 
         def beat():
@@ -3384,6 +3398,10 @@ class Worker:
                     interval = 5  # 밀린 변경을 따라잡는 중: 기록을 처리한 뒤 곧바로 이어서 확인
                 next_poll = time.monotonic() + interval
                 self.state["next_poll"] = (datetime.now() + timedelta(seconds=interval)).isoformat(timespec="seconds")
+            try:
+                os.remove(process_flag)
+            except OSError:
+                pass
             self.process()
             try:
                 self.notifier.flush()  # 모아 둔 처리 결과: 주기·건수 조건이 되면 디스코드로
@@ -3398,7 +3416,7 @@ class Worker:
                 next_cleanup = now + 86400
             self.activity("대기 중")
             for _ in range(4):
-                if STOP or os.path.exists(stop_flag) or os.path.exists(wake_flag):
+                if STOP or os.path.exists(stop_flag) or os.path.exists(wake_flag) or os.path.exists(process_flag):
                     break
                 time.sleep(0.5)
         STOP = True

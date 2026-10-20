@@ -463,7 +463,7 @@ class Service:
                                              "error": beat.get("error"), "stopped_by_user": os.path.exists(_path("disabled.flag"))},
                 "counts": counts, "today": today_counts, "roots": roots, "warnings": warnings,
                 "libraries": len(runtime.get("libraries") or []), "auto_start": runtime.get("auto_start"),
-                "version": _plugin_version(), "db_missing": db_missing,
+                "version": _plugin_version(), "db_missing": db_missing, "pending_detail": heavy.get("pending_detail"),
                 "dedupe": _read_json("screener.json", {}) or {}}
 
     _HEAVY = {"ts": 0, "data": None, "migrated": False}
@@ -491,9 +491,27 @@ class Service:
                                      "AND result LIKE '%\"db_ok\": false%'").fetchone()[0],
             "token_fail": db.execute("SELECT COUNT(*) FROM event WHERE status IN ('failed','pending') AND "
                                      "(message LIKE '%토큰 불일치%' OR message LIKE '%Invalid webhook token%')").fetchone()[0],
+            "pending_detail": self._pending_detail(db),
         }
         cache.update(ts=time.time(), data=data)
         return data
+
+    @staticmethod
+    def _pending_detail(db):
+        """'대기'가 왜 대기인지: 모으는 중(감지 직후 모아서 처리 시간) / DB 중복 확인 차례 / 처리 차례
+        (폴더가 조용해지길 기다리는 것 포함) / 파일이 마운트에 보이길 기다림·BookOasis 대기·전체 스캔 회피."""
+        now = time.time()
+        screener = (_read_json("screener.json", {}) or {})
+        screening = bool(screener.get("enabled") and screener.get("ok") and now - float(screener.get("ts") or 0) < 30)
+        row = db.execute(
+            "SELECT SUM(status='pending' AND ready_at>?), "
+            "SUM(status='pending' AND ready_at<=? AND COALESCE(screened,0)=0), "
+            "SUM(status='pending' AND ready_at<=? AND COALESCE(screened,0)=1), "
+            "SUM(status='waiting'), MIN(CASE WHEN status IN ('pending','waiting') THEN created END) "
+            "FROM event WHERE status IN ('pending','waiting')", (now, now, now)).fetchone()
+        buffering, unscreened, screened, waiting, oldest = (row[0] or 0, row[1] or 0, row[2] or 0, row[3] or 0, row[4])
+        return {"buffering": buffering, "screening": unscreened if screening else 0,
+                "ready": screened + (0 if screening else unscreened), "waiting": waiting, "oldest": oldest or ""}
 
     def _rpc_start(self, ctx):
         self._clear_disabled()

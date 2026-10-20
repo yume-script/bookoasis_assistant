@@ -47,12 +47,39 @@ def _save(platform, patch):
         ss.write_json(STATE_PATH, st)
 
 
-def is_due(cfg):
+NAVER_KEEP_LOGIN_MINUTES = 30
+
+
+def _truthy(v, default=True):
+    if v is None or v == "":
+        return default
+    return v if isinstance(v, bool) else str(v).strip().lower() in ("1", "true", "on", "yes")
+
+
+def interval_seconds(cfg, platform):
+    """플랫폼별 갱신 간격(초). 0이면 끔.
+    네이버 '로그인 유지'(NAVER_KEEP_LOGIN, 기본 켬)면 30분마다 계정 페이지를 열어 세션을 살려 둔다
+    (네이버는 연장 API가 없어 오래 손대지 않으면 NID_SES가 만료돼 로그인이 풀린다)."""
+    if platform == "naver" and _truthy(cfg.get("NAVER_KEEP_LOGIN"), True):
+        return NAVER_KEEP_LOGIN_MINUTES * 60
     h = _hours(cfg)
-    if h <= 0:
-        return False     # 0 = 끔
-    last = load_state().get("last_run_at") or 0
-    return time.time() - float(last) >= h * 3600
+    return h * 3600 if h > 0 else 0
+
+
+def _due_platforms(cfg):
+    st, now, out = load_state(), time.time(), []
+    for platform in ("naver", "kakao"):
+        sec = interval_seconds(cfg, platform)
+        if sec <= 0:
+            continue
+        last = (st.get(platform) or {}).get("last_at") or st.get("last_run_at") or 0
+        if now - float(last) >= sec:
+            out.append(platform)
+    return out
+
+
+def is_due(cfg):
+    return bool(_due_platforms(cfg))
 
 
 def _alert_once(cfg, platform, src_hash, title, desc, log):
@@ -123,13 +150,21 @@ def keep_naver(cfg, log=print):
     return logged_in
 
 
-def run(cfg, log=print):
+def run(cfg, log=print, platforms=None):
+    """platforms를 주지 않으면 지금 갱신할 차례인 플랫폼만."""
+    due = list(platforms) if platforms else _due_platforms(cfg)
     with ss._lock:
         st = load_state()
         st["last_run_at"] = time.time()
+        for name in due:  # 쿠키가 없어 건너뛰어도 다음 차례까지는 다시 보지 않게
+            cur = st.get(name) or {}
+            cur["last_at"] = time.time()
+            st[name] = cur
         ss.write_json(STATE_PATH, st)
     out = {}
     for name, fn in (("naver", keep_naver), ("kakao", keep_kakao)):
+        if name not in due:
+            continue
         try:
             out[name] = fn(cfg, log=log)
         except Exception as e:  # noqa: BLE001

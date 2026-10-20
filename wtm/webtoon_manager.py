@@ -80,6 +80,7 @@ DEFAULTS = {
     "DELAY_SECONDS": 1.0,
     "REQUEST_TIMEOUT_SECONDS": 10,
     "COOKIE_KEEPALIVE_HOURS": 6,
+    "NAVER_KEEP_LOGIN": True,
     "FOLDER_ZERO_FILL": 4,
     "IMAGE_ZERO_FILL": 4,
     "GENERATE_COMICINFO_XML": True,
@@ -225,6 +226,9 @@ class WebtoonManagerMetadataProvider(BaseMetadataProvider):
 
         # ---------------- 네이버웹툰 ----------------
         {"key": "NAVER_COOKIE_JSON", "label": "네이버 로그인 쿠키", "type": "password", "required": False},
+        {"key": "NAVER_KEEP_LOGIN", "label": "로그인 유지 (30분마다 세션 살리기)", "type": "checkbox", "default": True,
+         "hint": "네이버는 토큰 연장 API가 없어 오래 손대지 않으면 로그인이 풀립니다. 켜면 30분마다 계정 페이지를 열어 세션을 살려 두고 "
+                 "네이버가 새로 준 쿠키를 저장해 씁니다. 쿠키는 네이버 로그인 때 '로그인 상태 유지'를 켜고 로그인한 뒤 내보내세요."},
         {"key": "DOWNLOAD_ROOT", "label": "저장 경로", "type": "text",
          "hint": "비우면 데이터 폴더/downloads. .env의 WTM_DOWNLOAD_ROOT에 저장."},
         {"key": "NAVER_DOWNLOAD_DAILY_PLUS", "label": "매일+ 작품 받기", "type": "checkbox", "default": False,
@@ -461,7 +465,7 @@ class WebtoonManagerMetadataProvider(BaseMetadataProvider):
         bundle = {
             "titles": items_list,
             "authors_tags": ss.load_authors_tags(),
-            "history": ss.load_history(limit=200),
+            "history": ss.load_history(limit=200, per_platform=True),
             "job": ss.load_job_state(),
             "title_job": ss.load_title_job_state(),
             "kakao_queue": ss.kakao_queue_list(),
@@ -689,12 +693,16 @@ class WebtoonManagerMetadataProvider(BaseMetadataProvider):
             return item
 
         items_list = [_slim(t, tid, "naver") for tid, t in ss.load_titles().items()]
-        if cfg.get("KAKAO_ENABLE") and (worker_ctl.IN_WORKER or not worker_ctl.enabled(cfg)):
-            try:
-                from . import kakao_pipeline
-                kakao_pipeline.repair_old_records_async(cfg)
-            except Exception:  # noqa: BLE001
-                pass
+        if cfg.get("KAKAO_ENABLE"):
+            # 예전 기록 고치기는 다운로드를 하는 쪽(작업 프로세스, 또는 끈 경우 이 프로세스)에서만.
+            # 목록은 늘 넣는다 - 예전에는 목록까지 이 조건 안에 있어서, 별도 작업 프로세스 모드(기본)에서는
+            # 화면에 카카오웹툰·웹소설이 하나도 안 나왔다.
+            if worker_ctl.IN_WORKER or not worker_ctl.enabled(cfg):
+                try:
+                    from . import kakao_pipeline
+                    kakao_pipeline.repair_old_records_async(cfg)
+                except Exception:  # noqa: BLE001
+                    pass
             items_list.extend(_slim(t, sid, "kakao") for sid, t in ss.load_kakao_titles().items())
         items_list.sort(key=lambda x: x.get("last_seen_at", 0) or 0, reverse=True)
         _TITLE_ITEMS_CACHE["v"] = (key, items_list)
@@ -711,7 +719,7 @@ class WebtoonManagerMetadataProvider(BaseMetadataProvider):
             "kakao_queue": ss.kakao_queue_list(),
             "titles_rev": ss.titles_rev(),
             "log_tail": ss.tail_log(60),
-            "history": ss.load_history(limit=200),
+            "history": ss.load_history(limit=200, per_platform=True),
             "speed": self._speed_info(cfg, worker),
         }, ensure_ascii=False)
 
@@ -890,6 +898,9 @@ class WebtoonManagerMetadataProvider(BaseMetadataProvider):
             if live and raw == (cfg.get("NAVER_COOKIE_JSON") or "").strip():
                 naver_api.save_session_cookies(session)
         lines.append(self._keepalive_line(cfg, "naver"))
+        warn = self._naver_session_cookie_warning(raw)
+        if warn:
+            lines.append(warn)
         if res["adult"] is True:
             lines.append("성인 인증: ✅ 됨 - 성인 작품 다운로드 가능")
             blocked = {tid: {"adult_block_hash": None} for tid, t in ss.load_titles().items()
@@ -943,18 +954,34 @@ class WebtoonManagerMetadataProvider(BaseMetadataProvider):
 
     def _keepalive_line(self, cfg, platform):
         from . import cookie_keeper
-        try:
-            h = float(cfg.get("COOKIE_KEEPALIVE_HOURS", 6) or 0)
-        except (TypeError, ValueError):
-            h = 6
-        if h <= 0:
+        sec = cookie_keeper.interval_seconds(cfg, platform)
+        if sec <= 0:
             return "쿠키 자동 갱신: 꺼짐([공통] 설정)"
+        every = ("%d분마다(로그인 유지)" % (sec // 60)) if sec < 3600 else ("%g시간마다" % (sec / 3600))
         st = cookie_keeper.load_state().get(platform) or {}
         if not st.get("last_at"):
-            return "쿠키 자동 갱신: %g시간마다(아직 실행 전)" % h
+            return "쿠키 자동 갱신: %s(아직 실행 전)" % every
         res = {True: "✅ 로그인 유지", False: "❌ 만료 감지", None: "확인 못 함"}.get(st.get("ok"), "확인 못 함")
-        return "쿠키 자동 갱신: %g시간마다 / 마지막 %s %s" % (
-            h, time.strftime("%m-%d %H:%M", time.localtime(st["last_at"])), res)
+        return "쿠키 자동 갱신: %s / 마지막 %s %s" % (
+            every, time.strftime("%m-%d %H:%M", time.localtime(st["last_at"])), res)
+
+    @staticmethod
+    def _naver_session_cookie_warning(raw):
+        """Cookie-Editor JSON에서 NID_AUT가 '세션 쿠키'(만료일 없음)면, 네이버 로그인 때 '로그인 상태 유지'를
+        켜지 않은 쿠키라 브라우저를 닫거나 몇 시간 지나면 풀린다."""
+        try:
+            data = json.loads(raw)
+        except (TypeError, ValueError):
+            return ""
+        cookies = data.get("cookies", []) if isinstance(data, dict) else data
+        for c in cookies if isinstance(cookies, list) else []:
+            if isinstance(c, dict) and c.get("name") == "NID_AUT":
+                if c.get("session") is True or not (c.get("expirationDate") or c.get("expires")):
+                    return ("⚠️ 이 쿠키는 '로그인 상태 유지' 없이 로그인한 쿠키(NID_AUT 만료일 없음)라 금방 풀립니다. "
+                            "네이버 로그인 화면에서 '로그인 상태 유지'를 켜고 로그인한 뒤 다시 내보내세요. "
+                            "쿠키를 받은 브라우저에서 로그아웃하면 이 쿠키도 같이 끊기니, 로그아웃 말고 창만 닫으세요.")
+                return ""
+        return ""
 
     def _act_toggle_notify(self, payload):
         """카드의 🔔 버튼: 이 작품의 새 회차를 받으면 디스코드로 알릴지 켜고 끈다."""
@@ -1580,7 +1607,7 @@ class WebtoonManagerMetadataProvider(BaseMetadataProvider):
         ("common", "알림 종류 / 쿠키 유지", ("NOTIFY_NEW_EPISODES_ALL", "COOKIE_KEEPALIVE_HOURS"),
          "새 회차 알림은 작품 카드의 🔔 버튼으로 작품마다 켜고 끕니다."),
 
-        ("naver", "계정", ("NAVER_COOKIE_JSON",)),
+        ("naver", "계정", ("NAVER_COOKIE_JSON", "NAVER_KEEP_LOGIN")),
         ("naver", "다운로드", ("DOWNLOAD_ROOT", "NAVER_DOWNLOAD_DAILY_PLUS", "NAVER_TRY_OWNED_PAID")),
         ("naver", "중복 확인", ("COMPARE_FOLDERS_NAVER", "NAVER_DOWNLOAD_OWNED")),
 

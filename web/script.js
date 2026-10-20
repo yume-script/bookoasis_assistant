@@ -83,6 +83,7 @@
             loadBox.hidden = !ld;
             if (ld) loadBox.textContent = '최근 1시간 · Drive 호출 ' + (ld.drive || 0).toLocaleString() + ' · VFS 새로고침 ' + (ld.vfs || 0).toLocaleString() + (ld.vfs_skip ? ' (이미 보여 생략 ' + ld.vfs_skip.toLocaleString() + ')' : '')
                 + ' · 스캔 요청 ' + (ld.scan || 0).toLocaleString() + (ld.rootscan ? ' (전체 스캔 대신 미룸 ' + ld.rootscan + ')' : '')
+                + (ld.scan_avg !== undefined ? ' (평균 ' + ld.scan_avg + '초, 최대 ' + ld.scan_max + '초)' : '')
                 + ' · 워커 CPU ' + (ld.cpu || 0) + '% · 메모리 ' + (ld.mem_mb || 0) + 'MB';
             var dd = d.dedupe || {};
             if (ld && dd.enabled) {
@@ -112,8 +113,19 @@
         $$('.gdw-flow-seg').forEach(function (s) { s.classList.toggle('is-active', s.getAttribute('data-filter') === st.status); });
         var today = d.today || {};
         bind('meta').textContent = '오늘 ' + ((today.done || 0) + (today.skipped || 0)) + '건 처리, 실패 ' + ((today.failed || 0) + (today.timeout || 0)) +
-            (c.waiting ? ' · 파일 대기 ' + c.waiting + '건' : '') + (d.db_missing ? ' · DB 확인 안 됨 ' + d.db_missing + '건' : '') +
-            '건 · 보관함 ' + d.libraries + '개 인식' + (w.last_process ? ' · 마지막 처리 ' + shortTime(w.last_process) : '');
+            '건' + (d.db_missing ? ' · DB 확인 안 됨 ' + d.db_missing + '건' : '') +
+            ' · 보관함 ' + d.libraries + '개 인식' + (w.last_process ? ' · 마지막 처리 ' + shortTime(w.last_process) : '');
+        // 대기 내역: 무엇을 기다리는 중인지 (처리가 늦을 때 원인 찾기)
+        var pd = d.pending_detail || {}, pdBox = bind('pending-detail');
+        if (pdBox) {
+            var parts = [];
+            if (pd.buffering) parts.push('모으는 중 ' + pd.buffering);
+            if (pd.screening) parts.push('DB 중복 확인 차례 ' + pd.screening);
+            if (pd.ready) parts.push('처리 차례(폴더가 조용해지길 기다림 포함) ' + pd.ready);
+            if (pd.waiting) parts.push('파일 보이길·BookOasis·전체 스캔 회피 대기 ' + pd.waiting);
+            pdBox.hidden = !parts.length;
+            pdBox.textContent = '대기 내역 · ' + parts.join(' · ') + (pd.oldest ? ' · 가장 오래된 기록 ' + shortTime(pd.oldest) : '');
+        }
 
         var tbody = clear(bind('roots'));
         if (!(d.roots || []).length) {
