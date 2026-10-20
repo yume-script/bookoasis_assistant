@@ -48,6 +48,17 @@ def count_load(kind):
         LOAD[kind] = [t for t in bucket if t >= now - 3600]
 
 
+FOLDERS_PER_BATCH = 10  # 한 번에 처리할 폴더 수(동시 스캔 1개 기준). 묶음이 끝날 때마다 결과를 기록하고 새 변경을 확인한다
+
+
+def scan_concurrency(cfg):
+    """BookOasis에 동시에 보낼 부분 스캔 수 (1~4)"""
+    try:
+        return min(4, max(1, int(cfg.get("scan_concurrency", 1) or 1)))
+    except (TypeError, ValueError):
+        return 1
+
+
 SCAN_TIMES = []  # 최근 스캔 요청 (시각, 걸린 초) - BookOasis가 스캔을 끝내고 응답하므로 폴더 하나 처리 시간이 된다
 
 
@@ -539,18 +550,34 @@ class Store:
             self.db.execute("INSERT OR REPLACE INTO vfs_map VALUES(?,?,?,?,?)",
                             (root, rc, fs, remote, datetime.now().isoformat(timespec="seconds")))
 
-    def claim(self, limit=500, quiet=0, max_wait=600):
+    def claim(self, limit=5000, quiet=0, max_wait=600, folders=0):
         """처리할 기록. quiet초: 같은 폴더에 새 변경이 이 시간 안에 또 들어왔으면 이번에는 보류하고
         (회차가 연달아 올라오는 동안 폴더마다 VFS 새로고침·스캔을 여러 번 하지 않도록) 조용해지면 한 번에 처리.
-        단, 첫 변경 뒤 max_wait초가 지나면 더 기다리지 않는다."""
-        rows = self._claim(limit)
-        if not rows or quiet <= 0:
-            return rows
-        now = time.time()
+        단, 첫 변경 뒤 max_wait초가 지나면 더 기다리지 않는다.
+        folders: 한 번에 가져갈 폴더 수(0이면 제한 없음). 기록 건수가 아니라 폴더 단위로 끊어, 한 폴더의 기록은
+        한 묶음에서 함께 처리(스캔 한 번)하고, 묶음을 작게 해 결과 기록·새 변경 확인이 스캔 몇 번마다 이어지게 한다."""
 
         def folder(ev):
             path = ev["path"] or ev["removed_path"] or ""
             return path if ev["item_type"] == "directory" else posixpath.dirname(path)
+
+        rows = self._claim(limit)
+        if rows and quiet > 0:
+            rows = self._hold_busy(rows, quiet, max_wait, folder)
+        if not rows or folders <= 0:
+            return rows
+        chosen = []
+        for ev in rows:  # _claim 순서(바로 처리할 기록 먼저, 오래된 순)대로 폴더를 고른다
+            key = folder(ev)
+            if key not in chosen:
+                if len(chosen) >= folders:
+                    continue
+                chosen.append(key)
+        chosen = set(chosen)
+        return [ev for ev in rows if folder(ev) in chosen]
+
+    def _hold_busy(self, rows, quiet, max_wait, folder):
+        now = time.time()
 
         def stamp_of(text):
             try:
@@ -575,13 +602,13 @@ class Store:
             log.debug("폴더에 변경이 이어지는 중이라 %d건 보류", held)
         return kept
 
-    def _claim(self, limit=500):
+    def _claim(self, limit=5000):
         # 서비스의 DB 중복 확인이 돌고 있으면, 확인을 마친 기록만 가져간다 (중복이면 VFS·스캔 없이 끝남)
         screened = screener_active(os.path.dirname(self.path))
         rows = self.db.execute(
             "SELECT * FROM event WHERE status IN ('pending','waiting') AND ready_at<=? "
             + ("AND (screened=1 OR status='waiting' OR ready_at < ?) " if screened else "AND ? IS NOT NULL ")
-            + "ORDER BY ready_at, id LIMIT ?",
+            + "ORDER BY force DESC, ready_at, id LIMIT ?",  # 바로 처리할 기록(다운로드 직후·수동 요청) 먼저
             (time.time(), time.time() - 300, limit)).fetchall()
         return [dict(row) for row in rows]
 
@@ -2532,6 +2559,7 @@ class BookOasis:
         self.token = cfg.get("webhook_token") or os.environ.get("WEBHOOK_TOKEN", "")
         self.down_since, self.down_wait = None, 60  # BookOasis 연결이 끊긴 시각, 다음 재시도까지(초)
         self.timeout = int(cfg.get("scan_timeout", 300))
+        self.concurrency = scan_concurrency(cfg)  # BookOasis에 동시에 보낼 부분 스캔 수
         self.file_wait = max(0, int(cfg.get("file_wait_minutes", 10)))  # 0이면 확인하지 않음
         self.allow_root_scan = bool(cfg.get("allow_root_scan", False))  # 보관함 맨 위 변경 때 전체 스캔 허용
         self.guard = max(0, int(cfg.get("full_scan_guard_minutes", 10)))  # 전체 스캔 시간대 회피(분), 0이면 끔
@@ -2771,13 +2799,8 @@ class BookOasis:
 
         # 4) 스캔 요청
         down = None  # BookOasis에 접속이 안 되면(재시작·중지 중) 이 묶음의 나머지 스캔은 시도하지 않고 함께 기다린다
+        todo = []
         for d in kept:
-            if STOP:
-                break
-            if down:
-                for event_id in wanted[d]["events"]:
-                    results[event_id]["unreachable"] = down
-                continue
             forced = any(ev.get("force") for ev in events if ev["id"] in wanted[d]["events"])
             until = None if forced else self.full_scan_until(self.library_for(d))
             if until:
@@ -2788,12 +2811,37 @@ class BookOasis:
                         f"보관함 전체 스캔 시간대라 부분 스캔을 {until.strftime('%H:%M')}까지 미룸")
                 log.info("전체 스캔 시간대 회피: %s → %s 이후 스캔", d, until.strftime("%H:%M"))
                 continue
+            todo.append(d)
+
+        def timed_scan(d):
+            if STOP:
+                return None
             started = time.time()
             try:
                 ok, message, lib = self.scan(d, wanted[d]["removed"])
             except Exception as error:
                 ok, message, lib = False, f"{type(error).__name__}: {error}", None
-            took = time.time() - started
+            return ok, message, lib, time.time() - started
+
+        def scans():
+            """(폴더, 결과) 순서대로. 동시 스캔 1개면 하나씩 보내며 BookOasis가 꺼진 게 보이면 나머지는 보내지 않는다."""
+            if self.concurrency <= 1 or len(todo) <= 1:
+                for d in todo:
+                    yield d, (None if down else timed_scan(d))
+                return
+            from concurrent.futures import ThreadPoolExecutor
+            with ThreadPoolExecutor(self.concurrency, thread_name_prefix="scan") as pool:
+                futures = [(d, pool.submit(timed_scan, d)) for d in todo]
+                for d, future in futures:
+                    yield d, future.result()
+
+        for d, outcome in scans():
+            if outcome is None:  # 워커 중지 또는 BookOasis 꺼짐으로 보내지 않음
+                if down:
+                    for event_id in wanted[d]["events"]:
+                        results[event_id]["unreachable"] = down
+                continue
+            ok, message, lib, took = outcome
             if ok is not None:
                 SCAN_TIMES.append((time.time(), took))
                 del SCAN_TIMES[:-500]
@@ -3319,7 +3367,8 @@ class Worker:
 
     def process(self):
         events = self.store.claim(quiet=int(self.cfg.get("buffer_seconds", 60)),
-                                  max_wait=int(self.cfg.get("buffer_max_minutes", 10)) * 60)
+                                  max_wait=int(self.cfg.get("buffer_max_minutes", 10)) * 60,
+                                  folders=FOLDERS_PER_BATCH * scan_concurrency(self.cfg))
         if not events or not self.target:
             return 0
         self.activity(f"이벤트 {len(events)}건 처리 중")
