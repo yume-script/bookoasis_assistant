@@ -181,5 +181,26 @@ class DispatchTest(unittest.TestCase):
         self.assertFalse(svc.dispatch("__init__", {})["success"])
 
 
+class AuthTest(unittest.TestCase):
+    def test_session_cookie(self):
+        from gdw import auth
+        auth.save_users([])
+        os.environ["WEB_PASSWORD"] = "old"
+        try:
+            self.assertTrue(auth.bootstrap_from_env())  # 예전 Basic 인증 비밀번호로 첫 관리자
+        finally:
+            os.environ.pop("WEB_PASSWORD")
+        user = auth.verify_password("ADMIN", "old")
+        self.assertTrue(user)
+        self.assertIsNone(auth.verify_password("admin", "nope"))
+        token = auth.make_token(user, remember=True)
+        self.assertEqual(auth.user_from_token(token)["username"], "admin")
+        self.assertIsNone(auth.user_from_token(token[:-2] + "xx"))
+        auth.set_password("admin", "newpass1")  # 비밀번호를 바꾸면 기존 쿠키는 무효
+        self.assertIsNone(auth.user_from_token(token))
+        with self.assertRaises(auth.AuthError):
+            auth.delete_user("admin")  # 마지막 사용자
+
+
 if __name__ == "__main__":
     unittest.main()

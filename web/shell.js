@@ -31,6 +31,9 @@
     'gamepad': '<path d="M6 11h4"/><path d="M8 9v4"/><path d="M15 12h.01"/><path d="M18 10h.01"/><path d="M17.3 5H6.7a4 4 0 0 0-3.98 3.59l-.6 5.98A3 3 0 0 0 5.1 18c1 0 1.96-.5 2.5-1.34L8.7 15h6.6l1.1 1.66A3 3 0 0 0 18.9 18a3 3 0 0 0 2.98-3.43l-.6-5.98A4 4 0 0 0 17.3 5z"/>',
     'xmark': '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
     'check': '<path d="M20 6 9 17l-5-5"/>',
+    'key': '<circle cx="7.5" cy="15.5" r="4.5"/><path d="m10.7 12.3 9.8-9.8"/><path d="m16 7 3 3"/><path d="m18 5 2 2"/>',
+    'right-from-bracket': '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/>',
+    'trash': '<path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>',
     'chevron-down': '<path d="m6 9 6 6 6-6"/>',
     'palette': '<circle cx="13.5" cy="6.5" r="1.2" fill="currentColor"/><circle cx="17.5" cy="10.5" r="1.2" fill="currentColor"/><circle cx="8.5" cy="7.5" r="1.2" fill="currentColor"/><circle cx="6.5" cy="12.5" r="1.2" fill="currentColor"/><path d="M12 2a10 10 0 0 0 0 20 2 2 0 0 0 2-2c0-.5-.2-1-.5-1.3-.3-.4-.5-.8-.5-1.3a2 2 0 0 1 2-2h2.4A5.6 5.6 0 0 0 22 9.8C22 5.5 17.5 2 12 2z"/>'
   };
@@ -142,6 +145,43 @@
   }
   applyTheme();
 
+  // 로그인 화면: 테마·파비콘·로고만 쓰고 화면 틀(메뉴)은 만들지 않는다
+  if (document.body.classList.contains('login-body')) {
+    var loginMark = document.querySelector('.login-brand .brand-mark');
+    if (loginMark) loginMark.innerHTML = '<svg class="logo" viewBox="0 0 64 64" aria-hidden="true">' + LOGO_INNER + '</svg>';
+    window.GdwShell = { setDefaults: setDefaults };
+    return;
+  }
+
+  // 로그인이 풀리면(만료, 비밀번호 변경, 계정 삭제) API가 401을 주므로 로그인 화면으로. 로그인 뒤 지금 화면으로 돌아온다
+  if (window.fetch) {
+    var rawFetch = window.fetch.bind(window);
+    window.fetch = function () {
+      return rawFetch.apply(null, arguments).then(function (res) {
+        if (res.status === 401) {
+          var page = location.pathname.split('/').filter(Boolean)[0] || '';
+          location.href = 'login#' + encodeURIComponent(page + location.hash);
+        }
+        return res;
+      });
+    };
+  }
+  function api(path, body) {  // 설정 창의 계정 요청: 실패면 서버의 오류 문구로 reject
+    return fetch(path, body === undefined ? { credentials: 'same-origin' } : { method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+      .then(function (r) {
+        return r.json().catch(function () { return {}; }).then(function (d) {
+          if (!r.ok || d.success === false) throw new Error(d.error || 'HTTP ' + r.status);
+          return d;
+        });
+      });
+  }
+  function toast(msg, kind) {
+    var t = h('div', { class: 'shell-toast' + (kind ? ' ' + kind : ''), role: 'status', text: msg });
+    document.body.appendChild(t);
+    setTimeout(function () { t.remove(); }, 3000);
+  }
+
   // ── 창 (YMPlayer util.js modal과 같은 모양) ──
   function modal(title, body, actions) {
     var wrap;
@@ -216,6 +256,7 @@
         return h('div', {}, [h('p', { class: 'muted', text: '모든 브라우저의 기본 테마입니다. 브라우저마다 따로 고르려면 왼쪽 아래 계정 옆의 팔레트 버튼을 쓰세요.' }),
           themePicker(true)]);
       },
+      '사용자': usersPane,
       '정보': function () {
         var list = h('div', { class: 'about-list' });
         var names = { gdw: '드라이브 변경 감시', wtm: '웹툰 다운로더', mini: '미니게임' };
@@ -241,6 +282,66 @@
     show('화면');
   }
   var info = {};
+
+  /** 설정 > 사용자 (YMPlayer 사용자 관리). 이 화면은 관리용이라 모든 사용자가 관리자다. */
+  function usersPane() {
+    var box = h('div', { class: 'users-box' });
+    function load() {
+      while (box.firstChild) box.removeChild(box.firstChild);
+      box.appendChild(h('p', { class: 'muted', text: '로그인할 수 있는 사람 (모두 관리자). 비밀번호를 바꾸면 그 사람의 다른 기기 로그인은 끊깁니다.' }));
+      var list = h('div', { class: 'about-list' });
+      box.appendChild(list);
+      api('api/users').then(function (d) {
+        d.users.forEach(function (u) {
+          var me = u.username === info.user;
+          var pw = h('button', { type: 'button', class: 'icon-btn', title: '비밀번호 바꾸기', 'aria-label': '비밀번호 바꾸기', onclick: function () {
+            if (me) { changePassword(); return; }
+            var v = window.prompt(u.username + '의 새 비밀번호 (6자 이상)');
+            if (!v) return;
+            api('api/users/password', { username: u.username, password: v })
+              .then(function () { toast('비밀번호를 바꿨습니다.', 'success'); }, function (e) { toast(e.message, 'error'); });
+          } }, [icon('key')]);
+          var del = me ? null : h('button', { type: 'button', class: 'icon-btn', title: '지우기', 'aria-label': '지우기', onclick: function () {
+            if (!window.confirm(u.username + ' 사용자를 지울까요?')) return;
+            api('api/users/delete', { username: u.username }).then(load, function (e) { toast(e.message, 'error'); });
+          } }, [icon('trash')]);
+          list.appendChild(h('div', { class: 'about-row' }, [h('span', { text: u.username + (me ? ' (나)' : '') }),
+            h('span', { class: 'row-actions' }, [pw, del])]));
+        });
+      }, function (e) { box.appendChild(h('p', { class: 'muted', text: e.message })); });
+      var name = h('input', { class: 'input', type: 'text', placeholder: '아이디', autocomplete: 'off' });
+      var pass = h('input', { class: 'input', type: 'password', placeholder: '비밀번호 (6자 이상)', autocomplete: 'new-password' });
+      var add = h('button', { type: 'button', class: 'btn btn-accent', text: '추가', onclick: function () {
+        api('api/users', { username: name.value.trim(), password: pass.value })
+          .then(function () { toast('추가했습니다.', 'success'); load(); }, function (e) { toast(e.message, 'error'); });
+      } });
+      box.appendChild(h('h4', { text: '사용자 추가' }));
+      box.appendChild(h('div', { class: 'user-add' }, [name, pass, add]));
+    }
+    load();
+    return box;
+  }
+  /** 내 비밀번호 바꾸기 (YMPlayer와 같음): 바꾸면 다른 기기의 로그인은 끊기고 이 기기는 새 쿠키 */
+  function changePassword() {
+    var cur = h('input', { class: 'input', type: 'password', placeholder: '지금 비밀번호', autocomplete: 'current-password' });
+    var next = h('input', { class: 'input', type: 'password', placeholder: '새 비밀번호 (6자 이상)', autocomplete: 'new-password' });
+    var again = h('input', { class: 'input', type: 'password', placeholder: '새 비밀번호 확인', autocomplete: 'new-password' });
+    var save = h('button', { type: 'button', class: 'btn btn-accent', text: '바꾸기' });
+    var m = modal('비밀번호 변경', h('div', { class: 'pw-fields' }, [cur, next, again,
+      h('span', { class: 'muted', text: '바꾸면 다른 기기의 로그인은 끊깁니다.' })]), [save]);
+    save.addEventListener('click', function () {
+      if (next.value !== again.value) { toast('새 비밀번호 확인이 다릅니다.', 'error'); return; }
+      save.disabled = true;
+      api('api/auth/password', { current: cur.value, 'new': next.value })
+        .then(function () { m.close(); toast('비밀번호를 바꿨습니다.', 'success'); }, function (e) { toast(e.message, 'error'); })
+        .then(function () { save.disabled = false; });
+    });
+    cur.focus();
+  }
+  function logout() {
+    api('api/auth/logout', {}).catch(function () { /* 이미 풀렸어도 로그인 화면으로 */ })
+      .then(function () { location.href = 'login'; });
+  }
 
   // ── 원래 탭 막대와 연결 ──
   function tabBar() { return mod && mod.tabsSel ? document.querySelector(mod.tabsSel) : null; }
@@ -325,13 +426,15 @@
   openGroup(current || storeGet(OPEN_KEY));
 
   // 아래 (YMPlayer와 같은 구성): 설정, 그리고 계정 줄 (테마 버튼)
-  var who = h('div', { class: 'who' }, [h('b', { text: '관리자' }), h('span', { text: '' })]);
+  var who = h('div', { class: 'who' }, [h('b', { text: '' }), h('span', { text: '' })]);
   var avatar = h('span', { class: 'avatar', text: 'A' });
   nav.appendChild(h('div', { class: 'nav-footer' }, [
     h('a', { class: 'nav-link', href: '#', onclick: function (ev) { ev.preventDefault(); openSettings(); } },
       [icon('gear'), h('span', { text: '설정' })]),
     h('div', { class: 'nav-account' }, [avatar, who,
-      h('button', { type: 'button', class: 'icon-btn', title: '테마', 'aria-label': '테마', onclick: openThemeDialog }, [icon('palette')])])
+      h('button', { type: 'button', class: 'icon-btn', title: '테마', 'aria-label': '테마', onclick: openThemeDialog }, [icon('palette')]),
+      h('button', { type: 'button', class: 'icon-btn', title: '비밀번호 변경', 'aria-label': '비밀번호 변경', onclick: changePassword }, [icon('key')]),
+      h('button', { type: 'button', class: 'icon-btn', title: '로그아웃', 'aria-label': '로그아웃', onclick: logout }, [icon('right-from-bracket')])])
   ]));
 
   var scrim = h('div', { class: 'nav-scrim', onclick: function () { document.body.classList.remove('nav-open'); } });
@@ -381,9 +484,9 @@
     // 아이콘 배지: 지금 보는 화면의 모듈 버전 (드라이브 변경 감시 / 웹툰 다운로더 / 미니게임마다 다름)
     var ver = (m.versions && current && m.versions[current]) || m.version;
     if (ver) { verEl.textContent = ver; document.title = document.title + ' · v' + ver; }
-    var name = m.user || '관리자';
+    var name = m.user || '?';
     who.firstChild.textContent = name;
-    who.lastChild.textContent = m.user ? '관리자' : '인증 없음 (WEB_PASSWORD)';
+    who.lastChild.textContent = '관리자';
     avatar.textContent = name.slice(0, 1).toUpperCase();
   }).catch(function () {});
 })();

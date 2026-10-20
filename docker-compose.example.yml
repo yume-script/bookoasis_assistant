@@ -9,10 +9,10 @@ services:
     stop_grace_period: 60s
     # env_file은 쓰지 않는다: 설정은 마운트한 .env를 이 프로그램이 직접 읽고 쓴다
     # (여기 environment에 적은 키는 .env보다 우선하므로 화면에서 바꿀 값은 적지 말 것)
-    # .env에 RCLONE_CONFIG=/config/rclone/rclone.conf, WEB_PASSWORD=… 를 넣는다
+    # .env에 RCLONE_CONFIG=/config/rclone/rclone.conf, WEB_USER/WEB_PASSWORD=… (첫 관리자 계정)를 넣는다
     environment:
       DATA_DIR: /data
-      WEB_HOST: 0.0.0.0          # 외부에 열므로 .env에 WEB_PASSWORD 필수
+      WEB_HOST: 0.0.0.0          # 외부에 열므로 계정이 없으면 .env에 WEB_USER/WEB_PASSWORD 필수
       TZ: Asia/Seoul
     volumes:
       - ./data:/data

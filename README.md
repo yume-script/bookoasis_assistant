@@ -21,7 +21,7 @@ BookOasis 플러그인으로 쓰던 세 가지를 **BookOasis 밖에서 따로 �
 | 보관함 목록 갱신 | 화면을 열 때만 (안 열면 cron·RC 주소 변경이 워커에 반영 안 됨) | 상주 스레드가 계속 갱신 (60초 캐시), DB가 잠깐 끊겨도 이전 목록 유지 |
 | 설정 | 플러그인 설정(BookOasis DB) + `watch.json`의 env 두 군데 | **`.env` 한 곳** (화면에서 저장해도 `.env`의 해당 줄만 바뀜) |
 | BookOasis DB | 플러그인 게이트웨이로만 접근 → 중복 확인 스레드를 Flask 앱 문맥에 얹고, 여러 BookOasis 프로세스 중 하나만 돌도록 파일 잠금 | `.env`의 주소로 **직접 연결** (MariaDB/MySQL·SQLite). DB 없이 보관함을 JSON으로 적어 쓸 수도 있음 |
-| 관리 화면 | BookOasis 카테고리 탭 (BookOasis 관리자 세션) | 자체 웹 서버 (표준 라이브러리), HTTP Basic 인증 |
+| 관리 화면 | BookOasis 카테고리 탭 (BookOasis 관리자 세션) | 자체 웹 서버 (표준 라이브러리), YMPlayer와 같은 로그인 화면·세션 쿠키 |
 | BookOasis 재시작·업데이트 | 감시도 같이 멈춤/재시작 | 영향 없음 (스캔 요청만 BookOasis가 받을 때까지 재시도) |
 
 워커와 주고받는 파일(`runtime.json`, `state.db`, `heartbeat.json`, `*.flag`)은 그대로라 **플러그인 데이터 폴더를 복사해 오면 기록·체크포인트가 이어집니다** (아래 "플러그인에서 옮겨 오기").
@@ -52,7 +52,7 @@ sudo systemctl daemon-reload && sudo systemctl enable --now gdrive_watch_sa
 
 ## 설치 (도커)
 ```bash
-cp env.example .env                       # WEB_PASSWORD, RCLONE_CONFIG=/config/rclone/rclone.conf 등
+cp env.example .env                       # WEB_USER/WEB_PASSWORD(첫 관리자), RCLONE_CONFIG=/config/rclone/rclone.conf 등
 cp docker-compose.example.yml docker-compose.yml   # 마운트 경로를 BookOasis와 같게
 docker compose up -d --build
 ```
@@ -63,8 +63,8 @@ docker compose up -d --build
 ## .env
 | 변수 | 기본값 | 설명 |
 |---|---|---|
-| `WEB_HOST` / `WEB_PORT` | `127.0.0.1` / `5931` | 관리 화면 주소. 루프백이 아닌 주소에 열려면 `WEB_PASSWORD` 필수 (없으면 시작 거부) |
-| `WEB_USER` / `WEB_PASSWORD` | `admin` / (없음) | HTTP Basic 인증. 비밀번호가 없으면 인증 없음 |
+| `WEB_HOST` / `WEB_PORT` | `127.0.0.1` / `5931` | 관리 화면 주소. 루프백이 아닌 주소에 열 때 로그인 계정이 하나도 없으면 시작 거부 |
+| `WEB_USER` / `WEB_PASSWORD` | `admin` / (없음) | **첫 관리자 계정** (사용자가 없을 때 한 번만 만듦). 비우면 첫 화면에서 관리자 계정 만들기 |
 | `WEB_ALLOW_NO_AUTH` | `false` | 리버스 프록시에서 인증할 때만 `true` (비밀번호 없이 외부 주소 허용) |
 | `DATA_DIR` | `data` | state.db, 로그, watch.json 등. 상대 경로는 저장소 기준 |
 | `LOG_LEVEL` | `INFO` | 서비스 로그(표준 출력) 수준. 워커 로그는 `DATA_DIR/worker.log` |
@@ -168,6 +168,10 @@ docker compose up -d --build
 - `GET /` 드라이브 변경 감시 (현황, 변경 기록, 감시 설정, 스캔 일정, 로그) · `GET /webtoon` 웹툰 다운로더 · `GET /games` 미니게임
 - `POST /api/rpc/<동작>` 드라이브 변경 감시 RPC, `GET /api/wtm/data`·`POST /api/wtm/action` 웹툰 다운로더.
   `Content-Type: application/json`만 받습니다(다른 사이트 폼 전송 차단).
+- **로그인**: YMPlayer와 같은 로그인 화면입니다. '로그인 유지'를 켜면 30일, 끄면 12시간 유지됩니다. 계정은 `DATA_DIR/users.json`(PBKDF2 해시)이고
+  왼쪽 아래 계정 줄에서 비밀번호 변경·로그아웃, **설정 > 사용자**에서 사용자 추가·삭제·비밀번호 재설정을 합니다(모두 관리자).
+  예전 HTTP Basic 인증의 `WEB_USER`/`WEB_PASSWORD`는 첫 실행 때 그대로 첫 계정이 되므로 같은 아이디·비밀번호로 로그인하면 됩니다.
+  비밀번호를 바꾸면 다른 기기의 로그인은 끊깁니다. 로그인 실패가 IP마다 10분에 10번을 넘으면 잠시 막습니다.
 - 화면은 YMPlayer와 같은 틀입니다. 왼쪽 메뉴 맨 아래 **설정**(화면 · 정보)에서 모든 사용자의 **기본 테마·강조색**을 정하고(`DATA_DIR/ui_prefs.json`),
   팔레트 버튼으로 이 브라우저에서만 쓸 테마를 따로 고를 수 있습니다. 파비콘은 강조색을 따라가고, 로고 옆 배지는 지금 모듈의 버전입니다.
 - `GET /api/modules` 켜진 모듈·모듈별 버전·기본 테마, `POST /api/ui-prefs` 기본 테마 저장, `GET /healthz` 인증 없이 `{"ok": true, "worker": true|false}` (모니터링용)

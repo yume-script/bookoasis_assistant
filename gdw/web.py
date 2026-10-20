@@ -10,25 +10,31 @@
   GET  /api/wtm/data     웹툰 다운로더 화면 데이터
   POST /api/wtm/action   웹툰 다운로더 동작 (본문: {"action_id", "context"})
   GET  /healthz          상태 확인 (인증 없음, 워커 실행 여부만)
+  GET  /login            로그인 화면 (사용자가 없으면 '관리자 계정 만들기')
+  GET  /api/auth/state   POST /api/auth/login · setup · logout · password
+  GET  /api/users        POST /api/users (추가) · /api/users/password (다른 사용자 비밀번호) · /api/users/delete
 
-인증: WEB_PASSWORD가 있으면 HTTP Basic 인증(WEB_USER / WEB_PASSWORD).
+인증: YMPlayer와 같은 로그인 화면 + 서명한 세션 쿠키 (gdw/auth.py). 로그인 안 했으면 화면은 /login으로, API는 401.
 RPC는 Content-Type: application/json만 받는다 → 다른 사이트의 폼 전송(CSRF)으로는 호출할 수 없다.
 """
-import base64
-import hmac
 import json
 import logging
 import mimetypes
 import os
+import time
+from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import config, service
+from . import auth, config, service
 
 log = logging.getLogger("gdw.web")
 WEB_DIR = os.path.join(config.ROOT, "web")
 STATIC = {"/": "index.html", "/index.html": "index.html", "/style.css": "style.css", "/script.js": "script.js",
           "/theme.css": "theme.css", "/shell.js": "shell.js", "/webtoon": "webtoon/index.html", "/webtoon/": "webtoon/index.html",
-          "/webtoon/style.css": "webtoon/style.css", "/webtoon/script.js": "webtoon/script.js"}
+          "/webtoon/style.css": "webtoon/style.css", "/webtoon/script.js": "webtoon/script.js",
+          "/login": "login.html", "/login.js": "login.js"}
+PUBLIC = {"/login", "/login.js", "/theme.css", "/shell.js", "/healthz", "/api/auth/state", "/api/auth/login", "/api/auth/setup"}
+PAGES = {"/", "/index.html", "/webtoon", "/webtoon/", "/games", "/games/"}  # 로그인 안 했으면 로그인 화면으로 보낼 주소
 OFF_PAGE = """<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{title}</title><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
 <link rel="stylesheet" href="theme.css"></head><body data-module=""><main class="gdw-page"><div class="app-off"><h2>{title}: 꺼져 있음</h2>
@@ -95,24 +101,30 @@ class Handler(BaseHTTPRequestHandler):
         if self.command != "HEAD":
             self.wfile.write(data)
 
-    def _authorized(self):
-        password = config.env("WEB_PASSWORD")
-        if not password:
-            return True
-        header = self.headers.get("Authorization") or ""
-        if not header.startswith("Basic "):
-            return False
+    def _user(self):
+        """로그인한 사용자 (세션 쿠키), 아니면 None"""
+        cookie = SimpleCookie()
         try:
-            user, _, given = base64.b64decode(header[6:]).decode("utf-8").partition(":")
-        except (ValueError, UnicodeDecodeError):
-            return False
-        ok_user = hmac.compare_digest(user.encode(), (config.env("WEB_USER", "admin") or "admin").encode())
-        ok_pass = hmac.compare_digest(given.encode(), password.encode())
-        return ok_user and ok_pass
+            cookie.load(self.headers.get("Cookie") or "")
+        except Exception:
+            return None
+        morsel = cookie.get(auth.COOKIE)
+        return auth.user_from_token(morsel.value) if morsel else None
 
-    def _deny(self):
-        self._send(401, {"success": False, "error": "인증이 필요합니다."},
-                   extra={"WWW-Authenticate": 'Basic realm="gdrive_watch", charset="UTF-8"'})
+    def _deny(self, path):
+        if path in PAGES and self.command in ("GET", "HEAD"):
+            page = path.strip("/").split("/")[0].replace("index.html", "")
+            return self._send(302, b"", extra={"Location": "login" + ("#" + page if page else "")})  # 로그인 뒤 이 화면으로
+        self._send(401, {"success": False, "error": "로그인이 필요합니다.", "login": True})
+
+    def _session_cookie(self, user, remember):
+        """Set-Cookie 값. https 뒤(리버스 프록시)면 Secure도 붙인다."""
+        parts = [f"{auth.COOKIE}={auth.make_token(user, remember)}", "Path=/", "HttpOnly", "SameSite=Lax"]
+        if remember:
+            parts.append(f"Max-Age={auth.REMEMBER_SEC}")
+        if (self.headers.get("X-Forwarded-Proto") or "").lower() == "https":
+            parts.append("Secure")
+        return "; ".join(parts)
 
     def do_HEAD(self):
         self.do_GET()
@@ -121,12 +133,20 @@ class Handler(BaseHTTPRequestHandler):
         path = self.path.split("?", 1)[0]
         if path == "/healthz":
             return self._send(200, {"ok": True, "worker": service._worker_alive() if self.svc else None})
-        if not self._authorized():
-            return self._deny()
+        user = self._user()
+        if path == "/api/auth/state":
+            return self._send(200, {"success": True, "setup": auth.needs_setup(), "ui": ui_prefs(),
+                                    "version": service._plugin_version(), "user": auth.public_user(user) if user else None})
+        if path == "/login" and user:
+            return self._send(302, b"", extra={"Location": "./"})
+        if not user and path not in PUBLIC:
+            return self._deny(path)
+        if path == "/api/users":
+            return self._send(200, {"success": True, "users": [auth.public_user(u) for u in auth.load_users()]})
         mods = modules()
         if path == "/api/modules":
             info = dict(mods, version=service._plugin_version(), versions=module_versions(), ui=ui_prefs(),
-                        user=(config.env("WEB_USER", "admin") or "admin") if config.env("WEB_PASSWORD") else "")
+                        user=user["username"])
             if mods["mini"]:
                 from mini import bundle
                 info["games"] = bundle.menu()
@@ -185,9 +205,10 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         path = self.path.split("?", 1)[0]
-        if not self._authorized():
-            return self._deny()
-        if not path.startswith("/api/rpc/") and path not in ("/api/wtm/action", "/api/ui-prefs"):
+        user = self._user()
+        if not user and path not in PUBLIC:
+            return self._deny(path)
+        if not path.startswith(("/api/rpc/", "/api/auth/", "/api/users")) and path not in ("/api/wtm/action", "/api/ui-prefs"):
             return self._send(404, {"success": False, "error": "없는 주소입니다."})
         if (self.headers.get("Content-Type") or "").split(";")[0].strip().lower() != "application/json":
             return self._send(415, {"success": False, "error": "Content-Type은 application/json이어야 합니다."})
@@ -203,6 +224,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(400, {"success": False, "error": "JSON 형식이 아닙니다."})
         if not isinstance(context, dict):
             return self._send(400, {"success": False, "error": "JSON 객체를 보내세요."})
+        if path.startswith(("/api/auth/", "/api/users")):
+            return self._auth_post(path, context, user)
         if path == "/api/ui-prefs":  # 설정 > 화면: 기본 테마 저장
             prefs = {"theme": context.get("theme") if context.get("theme") in THEMES else "dark",
                      "accent": context.get("accent") if context.get("accent") in ACCENTS else "amber"}
@@ -222,6 +245,51 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(404, {"success": False, "error": "드라이브 변경 감시가 꺼져 있습니다 (GDW_ENABLED)."})
         result = self.svc.dispatch(path[len("/api/rpc/"):], context)
         self._send(200, result)
+
+
+    def _auth_post(self, path, body, user):
+        """로그인/로그아웃/첫 관리자/비밀번호/사용자 관리 (YMPlayer와 같은 동작)"""
+        ok = lambda data=None: self._send(200, dict({"success": True}, **(data or {})))  # noqa: E731
+        fail = lambda code, msg: self._send(code, {"success": False, "error": msg})  # noqa: E731
+        try:
+            if path == "/api/auth/login":
+                ip = self.client_address[0] if self.client_address else "?"
+                if auth.throttled(ip):
+                    return fail(429, "로그인 실패가 너무 많습니다. 10분 뒤에 다시 시도하세요.")
+                found = auth.verify_password(body.get("username"), str(body.get("password") or ""))
+                if not found:
+                    auth.record_failure(ip)
+                    time.sleep(0.5)  # 무작위 대입을 느리게
+                    return fail(401, "아이디 또는 비밀번호가 틀렸습니다.")
+                auth.clear_failures(ip)
+                return self._send(200, {"success": True, "user": auth.public_user(found)},
+                                  extra={"Set-Cookie": self._session_cookie(found, bool(body.get("remember")))})
+            if path == "/api/auth/setup":  # 사용자가 하나도 없을 때만: 첫 관리자 만들기
+                if not auth.needs_setup():
+                    return fail(403, "이미 관리자 계정이 있습니다.")
+                auth.create_user(body.get("username"), str(body.get("password") or ""))
+                found = auth.find_user(body.get("username"))
+                return self._send(200, {"success": True, "user": auth.public_user(found)},
+                                  extra={"Set-Cookie": self._session_cookie(found, bool(body.get("remember")))})
+            if path == "/api/auth/logout":
+                return self._send(200, {"success": True},
+                                  extra={"Set-Cookie": f"{auth.COOKIE}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax"})
+            if path == "/api/auth/password":  # 내 비밀번호 바꾸기: 다른 기기의 로그인은 끊기고 이 기기는 새 쿠키
+                if not auth.verify_password(user["username"], str(body.get("current") or "")):
+                    return fail(400, "지금 비밀번호가 틀렸습니다.")
+                changed = auth.set_password(user["username"], str(body.get("new") or ""))
+                return self._send(200, {"success": True}, extra={"Set-Cookie": self._session_cookie(changed, True)})
+            if path == "/api/users":
+                return ok({"user": auth.create_user(body.get("username"), str(body.get("password") or ""))})
+            if path == "/api/users/password":
+                auth.set_password(body.get("username"), str(body.get("password") or ""))
+                return ok()
+            if path == "/api/users/delete":
+                auth.delete_user(body.get("username"), acting=user["username"])
+                return ok()
+        except auth.AuthError as error:
+            return fail(400, str(error))
+        return fail(404, "없는 주소입니다.")
 
 
 def make_server(svc, host, port):

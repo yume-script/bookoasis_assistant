@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="ko" data-theme="dark" data-accent="amber">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#141517">
+<title>로그인 · BookOasis 보조</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700&display=swap">
+<script>
+  // 테마를 그리기 전에 정해 둔다 (깜빡임 방지). 이 브라우저에서 고른 값이 있으면 기본 테마 대신
+  (function () { try { var t = JSON.parse(localStorage.getItem('bo_theme') || '{}') || {};
+    var d = JSON.parse(localStorage.getItem('bo_theme_default') || '{}') || {};
+    document.documentElement.setAttribute('data-theme', t.theme || d.theme || 'dark');
+    document.documentElement.setAttribute('data-accent', t.accent || d.accent || 'amber'); } catch (e) { /* 저장소를 못 쓰는 브라우저 */ } })();
+</script>
+<link rel="stylesheet" href="theme.css">
+</head>
+<body class="login-body" data-module="">
+<main class="login-wrap">
+  <div class="login-brand"><span class="brand-mark"></span> <span class="brand-name">BookOasis 보조</span></div>
+  <form id="loginForm" class="login-card" autocomplete="on" novalidate>
+    <h1 id="loginTitle">로그인</h1>
+    <p id="setupNote" class="login-note" hidden>처음 실행했습니다. 관리자 계정을 만들어 주세요.<br>설정 &gt; 사용자에서 다른 사용자를 추가할 수 있습니다.</p>
+    <label class="login-field">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21v-1a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v1"/></svg>
+      <input id="username" name="username" type="text" placeholder="아이디" autocomplete="username" autocapitalize="off" spellcheck="false" required>
+    </label>
+    <label class="login-field">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
+      <input id="password" name="password" type="password" placeholder="비밀번호" autocomplete="current-password" required>
+    </label>
+    <label class="login-field" id="confirmField" hidden>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
+      <input id="confirm" type="password" placeholder="비밀번호 확인" autocomplete="new-password">
+    </label>
+    <div id="loginError" class="login-error" role="alert" hidden></div>
+    <button id="loginBtn" class="login-btn" type="submit">로그인</button>
+    <label class="login-remember"><input id="remember" type="checkbox" checked> 로그인 유지</label>
+  </form>
+</main>
+<script src="shell.js"></script>
+<script src="login.js"></script>
+</body>
+</html>

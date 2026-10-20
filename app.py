@@ -23,7 +23,7 @@ from gdw import config  # noqa: E402
 
 config.load_env()  # gdw.service가 DATA_DIR을 정하기 전에
 
-from gdw import bookoasis_db, screener, service, supervisor  # noqa: E402
+from gdw import auth, bookoasis_db, screener, service, supervisor  # noqa: E402
 from gdw.web import make_server, modules  # noqa: E402
 
 log = logging.getLogger("gdw")
@@ -119,9 +119,13 @@ def main():
 
     host = config.env("WEB_HOST", "127.0.0.1") or "127.0.0.1"
     port = config.env_int("WEB_PORT", 5931)
-    if not config.env("WEB_PASSWORD") and not _is_loopback(host) and not config.env_bool("WEB_ALLOW_NO_AUTH"):
-        log.error("WEB_PASSWORD 없이 %s에 열 수 없습니다 (토큰·rclone 설정을 바꿀 수 있는 화면). "
-                  ".env에 WEB_PASSWORD를 넣거나 WEB_HOST=127.0.0.1로 두세요.", host)
+    if auth.bootstrap_from_env():  # 사용자가 없으면 .env의 WEB_USER/WEB_PASSWORD로 첫 관리자를 만든다
+        log.info("로그인 계정 '%s'을(를) .env의 WEB_USER/WEB_PASSWORD로 만들었습니다. 이후 비밀번호는 화면에서 바꿉니다.",
+                 config.env("WEB_USER", "admin") or "admin")
+    if auth.needs_setup() and not _is_loopback(host) and not config.env_bool("WEB_ALLOW_NO_AUTH"):
+        # 계정이 없으면 처음 연 사람이 관리자를 만들 수 있으므로 외부에 그대로 열지 않는다
+        log.error("로그인 계정이 없어 %s에 열 수 없습니다 (토큰·rclone 설정을 바꿀 수 있는 화면). "
+                  ".env에 WEB_USER/WEB_PASSWORD를 넣어 첫 관리자를 만들거나, WEB_HOST=127.0.0.1로 열어 화면에서 만드세요.", host)
         return 2
 
     stop_event = threading.Event()
