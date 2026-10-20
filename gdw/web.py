@@ -13,6 +13,7 @@
   GET  /login            로그인 화면 (사용자가 없으면 '관리자 계정 만들기')
   GET  /api/auth/state   POST /api/auth/login · setup · logout · password
   GET  /api/users        POST /api/users (추가) · /api/users/password (다른 사용자 비밀번호) · /api/users/delete
+  POST /mcp              MCP 서버 (gdw/mcp.py, Authorization: Bearer MCP_TOKEN) · GET/POST /api/mcp 설정 > MCP
 
 인증: YMPlayer와 같은 로그인 화면 + 서명한 세션 쿠키 (gdw/auth.py). 로그인 안 했으면 화면은 /login으로, API는 401.
 RPC는 Content-Type: application/json만 받는다 → 다른 사이트의 폼 전송(CSRF)으로는 호출할 수 없다.
@@ -25,7 +26,7 @@ import time
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import auth, config, service
+from . import auth, config, mcp, service
 
 log = logging.getLogger("gdw.web")
 WEB_DIR = os.path.join(config.ROOT, "web")
@@ -133,6 +134,8 @@ class Handler(BaseHTTPRequestHandler):
         path = self.path.split("?", 1)[0]
         if path == "/healthz":
             return self._send(200, {"ok": True, "worker": service._worker_alive() if self.svc else None})
+        if path == "/mcp":  # Streamable HTTP의 서버→클라이언트 SSE 스트림은 쓰지 않는다
+            return self._send(405, {"success": False, "error": "MCP는 POST만 받습니다."}, extra={"Allow": "POST"})
         user = self._user()
         if path == "/api/auth/state":
             return self._send(200, {"success": True, "setup": auth.needs_setup(), "ui": ui_prefs(),
@@ -143,6 +146,9 @@ class Handler(BaseHTTPRequestHandler):
             return self._deny(path)
         if path == "/api/users":
             return self._send(200, {"success": True, "users": [auth.public_user(u) for u in auth.load_users()]})
+        if path == "/api/mcp":
+            return self._send(200, {"success": True, "enabled": mcp.enabled(), "token": mcp.token(),
+                                    "overridden": bool(config.overridden(["MCP_TOKEN"]))})
         mods = modules()
         if path == "/api/modules":
             info = dict(mods, version=service._plugin_version(), versions=module_versions(), ui=ui_prefs(),
@@ -205,10 +211,12 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         path = self.path.split("?", 1)[0]
+        if path == "/mcp":
+            return self._mcp()
         user = self._user()
         if not user and path not in PUBLIC:
             return self._deny(path)
-        if not path.startswith(("/api/rpc/", "/api/auth/", "/api/users")) and path not in ("/api/wtm/action", "/api/ui-prefs"):
+        if not path.startswith(("/api/rpc/", "/api/auth/", "/api/users")) and path not in ("/api/wtm/action", "/api/ui-prefs", "/api/mcp"):
             return self._send(404, {"success": False, "error": "없는 주소입니다."})
         if (self.headers.get("Content-Type") or "").split(";")[0].strip().lower() != "application/json":
             return self._send(415, {"success": False, "error": "Content-Type은 application/json이어야 합니다."})
@@ -226,6 +234,14 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(400, {"success": False, "error": "JSON 객체를 보내세요."})
         if path.startswith(("/api/auth/", "/api/users")):
             return self._auth_post(path, context, user)
+        if path == "/api/mcp":  # 설정 > MCP: 토큰 만들기 / 끄기
+            if config.overridden(["MCP_TOKEN"]):
+                return self._send(400, {"success": False, "error": "MCP_TOKEN이 실제 환경변수로 지정돼 있어 화면에서 바꿀 수 없습니다."})
+            if context.get("action") == "disable":
+                mcp.disable()
+            else:
+                mcp.new_token()
+            return self._send(200, {"success": True, "enabled": mcp.enabled(), "token": mcp.token()})
         if path == "/api/ui-prefs":  # 설정 > 화면: 기본 테마 저장
             prefs = {"theme": context.get("theme") if context.get("theme") in THEMES else "dark",
                      "accent": context.get("accent") if context.get("accent") in ACCENTS else "amber"}
@@ -246,6 +262,28 @@ class Handler(BaseHTTPRequestHandler):
         result = self.svc.dispatch(path[len("/api/rpc/"):], context)
         self._send(200, result)
 
+
+    def _mcp(self):
+        """MCP (Streamable HTTP, 상태 없음): Bearer 토큰으로만 들어온다 (세션 쿠키 아님)."""
+        if not mcp.enabled():
+            return self._send(404, {"success": False, "error": "MCP가 꺼져 있습니다 (설정 > MCP에서 토큰을 만드세요)."})
+        if not mcp.authorized(self.headers.get("Authorization")):
+            return self._send(401, {"success": False, "error": "MCP 토큰이 필요합니다."},
+                              extra={"WWW-Authenticate": 'Bearer realm="gdrive_watch_sa"'})
+        origin = self.headers.get("Origin")
+        if origin and origin.split("://", 1)[-1] != (self.headers.get("Host") or ""):
+            return self._send(403, {"success": False, "error": "다른 사이트에서 온 요청입니다."})  # DNS 리바인딩 방지
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+            body = json.loads(self.rfile.read(length) or b"null") if 0 < length <= MAX_BODY else None
+        except ValueError:
+            body = None
+        if body is None:
+            return self._send(400, {"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "Parse error"}})
+        code, reply = mcp.handle(body, modules(), self.svc)
+        if reply is None:
+            return self._send(code, b"", "text/plain; charset=utf-8")
+        self._send(code, reply)
 
     def _auth_post(self, path, body, user):
         """로그인/로그아웃/첫 관리자/비밀번호/사용자 관리 (YMPlayer와 같은 동작)"""

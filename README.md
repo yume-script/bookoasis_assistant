@@ -172,8 +172,14 @@ docker compose up -d --build
   왼쪽 아래 계정 줄에서 비밀번호 변경·로그아웃, **설정 > 사용자**에서 사용자 추가·삭제·비밀번호 재설정을 합니다(모두 관리자).
   예전 HTTP Basic 인증의 `WEB_USER`/`WEB_PASSWORD`는 첫 실행 때 그대로 첫 계정이 되므로 같은 아이디·비밀번호로 로그인하면 됩니다.
   비밀번호를 바꾸면 다른 기기의 로그인은 끊깁니다. 로그인 실패가 IP마다 10분에 10번을 넘으면 잠시 막습니다.
+- **MCP 서버**: Claude Code·Claude Desktop 같은 MCP 클라이언트가 `POST /mcp`(Streamable HTTP, `Authorization: Bearer <MCP_TOKEN>`)로 붙습니다.
+  **설정 > MCP**에서 [켜기]를 누르면 토큰이 `.env`의 `MCP_TOKEN`에 저장되고, 연결 명령(Claude Code)과 설정(Claude Desktop, `mcp-remote`)이 나옵니다.
+  도구: `gdw_status`·`gdw_events`·`gdw_log`·`gdw_schedules`(조회), `gdw_request_path`(경로 직접 반영)·`gdw_retry`·`gdw_poll_now`·`gdw_worker`,
+  `wtm_status`·`wtm_titles`·`wtm_history`(조회), `wtm_set_subscription`·`wtm_download_title`·`wtm_run`. 켜진 모듈의 도구만 보입니다.
+  토큰이 있으면 로그인 없이 이 동작을 할 수 있으니 비밀번호처럼 다루세요. 외부(인터넷)에서 쓰려면 https 리버스 프록시 뒤에 두세요.
 - 화면은 YMPlayer와 같은 틀입니다. 왼쪽 메뉴 맨 아래 **설정**(화면 · 정보)에서 모든 사용자의 **기본 테마·강조색**을 정하고(`DATA_DIR/ui_prefs.json`),
   팔레트 버튼으로 이 브라우저에서만 쓸 테마를 따로 고를 수 있습니다. 파비콘은 강조색을 따라가고, 로고 옆 배지는 지금 모듈의 버전입니다.
+- `POST /mcp` MCP 서버 (위 "MCP 서버" 참고)
 - `GET /api/modules` 켜진 모듈·모듈별 버전·기본 테마, `POST /api/ui-prefs` 기본 테마 저장, `GET /healthz` 인증 없이 `{"ok": true, "worker": true|false}` (모니터링용)
 
 ## 파일

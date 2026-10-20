@@ -257,6 +257,7 @@
           themePicker(true)]);
       },
       '사용자': usersPane,
+      'MCP': mcpPane,
       '정보': function () {
         var list = h('div', { class: 'about-list' });
         var names = { gdw: '드라이브 변경 감시', wtm: '웹툰 다운로더', mini: '미니게임' };
@@ -319,6 +320,57 @@
       box.appendChild(h('div', { class: 'user-add' }, [name, pass, add]));
     }
     load();
+    return box;
+  }
+  /** 설정 > MCP: Claude Code·Claude Desktop 같은 MCP 클라이언트가 붙을 주소와 토큰 */
+  function mcpPane() {
+    var box = h('div', { class: 'mcp-box' });
+    var url = new URL('mcp', location.href).href;
+    function copyBtn(text) {
+      return h('button', { type: 'button', class: 'btn', text: '복사', onclick: function () {
+        (navigator.clipboard ? navigator.clipboard.writeText(text) : Promise.reject()).then(
+          function () { toast('복사했습니다.', 'success'); }, function () { window.prompt('복사하세요', text); });
+      } });
+    }
+    function code(text) { return h('div', { class: 'mcp-code' }, [h('pre', { text: text }), copyBtn(text)]); }
+    function draw(st) {
+      while (box.firstChild) box.removeChild(box.firstChild);
+      box.appendChild(h('p', { class: 'muted', text: 'MCP 클라이언트(Claude Code, Claude Desktop 등)에서 감시 현황·변경 기록·로그를 묻고, ' +
+        '경로 반영·재시도·워커 제어, 웹툰 구독·다운로드를 시킬 수 있습니다. 토큰이 있는 사람은 로그인 없이 이 동작을 할 수 있으니 비밀번호처럼 다루세요.' }));
+      var list = h('div', { class: 'about-list' });
+      list.appendChild(h('div', { class: 'about-row' }, [h('span', { text: '상태' }), h('b', { text: st.enabled ? '켜짐' : '꺼짐' })]));
+      list.appendChild(h('div', { class: 'about-row' }, [h('span', { text: '주소' }), h('b', { text: url })]));
+      box.appendChild(list);
+      if (st.enabled) {
+        var masked = h('input', { class: 'input mcp-token', type: 'password', readonly: 'readonly', value: st.token });
+        box.appendChild(h('h4', { text: '토큰' }));
+        box.appendChild(h('div', { class: 'user-add' }, [masked,
+          h('button', { type: 'button', class: 'btn', text: '보기', onclick: function () { masked.type = masked.type === 'password' ? 'text' : 'password'; } }),
+          copyBtn(st.token)]));
+        box.appendChild(h('h4', { text: 'Claude Code' }));
+        box.appendChild(code('claude mcp add --transport http bookoasis ' + url + ' --header "Authorization: Bearer ' + st.token + '"'));
+        box.appendChild(h('h4', { text: 'Claude Desktop (claude_desktop_config.json, Node.js 필요)' }));
+        box.appendChild(code(JSON.stringify({ mcpServers: { bookoasis: { command: 'npx', args: ['-y', 'mcp-remote', url,
+          '--header', 'Authorization: Bearer ' + st.token] } } }, null, 2)));
+      }
+      var actions = h('div', { class: 'user-add' });
+      if (st.overridden) {
+        actions.appendChild(h('p', { class: 'muted', text: 'MCP_TOKEN이 실제 환경변수로 지정돼 있어 여기서 바꿀 수 없습니다.' }));
+      } else {
+        actions.appendChild(h('button', { type: 'button', class: 'btn btn-accent', text: st.enabled ? '새 토큰 만들기' : '켜기 (토큰 만들기)', onclick: function () {
+          if (st.enabled && !window.confirm('새 토큰을 만들면 지금 토큰으로 연결한 클라이언트는 끊깁니다. 계속할까요?')) return;
+          api('api/mcp', { action: 'generate' }).then(draw, function (e) { toast(e.message, 'error'); });
+        } }));
+        if (st.enabled) {
+          actions.appendChild(h('button', { type: 'button', class: 'btn', text: '끄기', onclick: function () {
+            if (!window.confirm('MCP를 끌까요? 토큰이 지워집니다.')) return;
+            api('api/mcp', { action: 'disable' }).then(draw, function (e) { toast(e.message, 'error'); });
+          } }));
+        }
+      }
+      box.appendChild(actions);
+    }
+    api('api/mcp').then(draw, function (e) { box.appendChild(h('p', { class: 'muted', text: e.message })); });
     return box;
   }
   /** 내 비밀번호 바꾸기 (YMPlayer와 같음): 바꾸면 다른 기기의 로그인은 끊기고 이 기기는 새 쿠키 */

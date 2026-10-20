@@ -202,5 +202,27 @@ class AuthTest(unittest.TestCase):
             auth.delete_user("admin")  # 마지막 사용자
 
 
+class McpTest(unittest.TestCase):
+    def test_protocol(self):
+        from gdw import mcp
+        os.environ["MCP_TOKEN"] = "gdw_test"
+        try:
+            self.assertTrue(mcp.authorized("Bearer gdw_test"))
+            self.assertFalse(mcp.authorized("Bearer nope"))
+        finally:
+            os.environ.pop("MCP_TOKEN")
+        mods = {"gdw": False, "wtm": False}
+        code, reply = mcp.handle({"jsonrpc": "2.0", "id": 1, "method": "initialize",
+                                  "params": {"protocolVersion": "2025-03-26"}}, mods, None)
+        self.assertEqual((code, reply["result"]["protocolVersion"]), (200, "2025-03-26"))
+        self.assertEqual(mcp.handle({"jsonrpc": "2.0", "method": "notifications/initialized"}, mods, None), (202, None))
+        self.assertEqual(mcp.handle({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}, mods, None)[1]["result"]["tools"], [])
+        names = [t["name"] for t in mcp.handle({"jsonrpc": "2.0", "id": 3, "method": "tools/list"}, {"gdw": True}, object())[1]["result"]["tools"]]
+        self.assertIn("gdw_status", names)
+        self.assertEqual(mcp.handle({"jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {"name": "gdw_status"}},
+                                    mods, None)[1]["error"]["code"], -32602)  # 꺼진 모듈의 도구
+        self.assertEqual(mcp.handle({"jsonrpc": "2.0", "id": 5, "method": "nope"}, mods, None)[1]["error"]["code"], -32601)
+
+
 if __name__ == "__main__":
     unittest.main()
