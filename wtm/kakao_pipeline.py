@@ -521,6 +521,9 @@ def _needs_check(cfg, t, now=None):
     return False
 
 
+WAITFREE_TICK_MAX = 20   # 기다무 확인 한 번에 처리할 작품 수
+
+
 def waitfree_period(t):
     """기다무 충전 주기(초). 작품 정보의 waitfree_period_by_minute (3시간 기다무면 180분), 없으면 24시간."""
     return max(60, int(t.get("waitfree_period_min") or 1440)) * 60
@@ -560,6 +563,14 @@ def run_waitfree_tick(cfg, log=print):
     res = {"titles": len(due), "downloaded": 0, "waitfree_used": 0}
     if not due:
         return res
+    # 한 번에 너무 많이 붙잡고 있으면 같은 스케줄러가 도는 네이버·전체 실행이 그동안 밀린다.
+    # 충전된 지 오래된 작품부터 WAITFREE_TICK_MAX개만 하고 나머지는 다음 확인(5분 뒤)에.
+    nums = [n for n, _c in accounts(cfg)] or [1]
+    order = sorted(due.items(), key=lambda kv: min(_ticket_at(kv[1], n) + waitfree_period(kv[1]) for n in nums))
+    if len(order) > WAITFREE_TICK_MAX:
+        log("카카오 기다무: 대여권이 충전된 작품 %d개 중 %d개만 이번에 확인 (나머지는 다음 확인 때)" % (len(order), WAITFREE_TICK_MAX))
+        order = order[:WAITFREE_TICK_MAX]
+    due = dict(order)
     log("카카오 기다무: 대여권이 충전된 작품 %d개 확인" % len(due))
     session = build_session_from_cfg(cfg)
     try:
@@ -573,7 +584,7 @@ def run_waitfree_tick(cfg, log=print):
             sessions[n] = account_session(cfg, n, cookie, log=log)
         return sessions[n]
     try:
-        for sid, t in sorted(due.items(), key=lambda kv: str(kv[1].get("title") or "")):
+        for sid, t in due.items():
             if ss.load_job_state().get("cancel_requested"):
                 break
             ss.save_job_state({"message": "기다무 대여권 사용: %s" % t.get("title", sid)})
