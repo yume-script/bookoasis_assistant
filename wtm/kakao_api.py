@@ -856,4 +856,18 @@ def use_waitfree_ticket(session, product_id):
                                            "ticket_type": RENTAL_TICKET_TYPE},
                      timeout=session.request_timeout)
     _check_auth(r, "기다무 사용")
+    # 실패 사유를 로그에 남길 수 있게 응답을 붙여 둔다 (대기 시간 미충족 / 로그인 안 됨 등)
+    session.kakao_ticket_detail = "HTTP %s %s" % (r.status_code, (r.text or "")[:200].replace("\n", " "))
     return r.status_code < 300
+
+
+def is_logged_in(session):
+    """(로그인 여부, 사유). 로그인이 안 된 쿠키도 무료 회차는 받아지므로, 대여권을 쓰기 전에 따로 확인한다."""
+    try:
+        r = session.post(PROFILE_API, timeout=session.request_timeout)
+        body = r.json()
+    except Exception as e:  # noqa: BLE001
+        return None, "로그인 확인 실패(네트워크?): %s" % e
+    if body.get("result_code") in (0, "0"):
+        return True, ""
+    return False, "%s (%s)" % (body.get("message") or "", body.get("message_key") or "")

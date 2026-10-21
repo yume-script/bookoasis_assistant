@@ -531,7 +531,10 @@ def waitfree_due_titles(cfg, now=None):
     구독 중이거나 구매 작품이고, 대여권으로 열 회차가 남아 있는(has_locked) 기다무 작품만. 완결작도 포함."""
     if not (cfg.get("KAKAO_ENABLE") and cfg.get("KAKAO_USE_WAITFREE")):
         return {}
-    nums = [n for n, _c in accounts(cfg)]
+    job = ss.load_job_state()
+    # 쿠키 만료·로그인 안 됨으로 확인된 추가 계정은 빼고 센다 (그 계정 때문에 5분마다 다시 돌지 않게).
+    # 다음 전체 실행에서 그 계정이 다시 로그인되면 표시가 풀린다.
+    nums = [n for n, _c in accounts(cfg) if n == 1 or not job.get("kakao_cookie_expired_notified_%d" % n)]
     if not nums:
         return {}
     now = now or time.time()
@@ -563,18 +566,26 @@ def run_waitfree_tick(cfg, log=print):
         kakao_api.refresh_token(session, log=log)
     except kakao_api.KakaoAuthExpired as e:
         log("카카오페이지: %s" % e)
-    dead = set()
+    dead, sessions = set(), {}
+
+    def _session_for(n, cookie):  # 추가 계정 세션은 실행마다 한 번 (로그인 확인 포함)
+        if n not in sessions:
+            sessions[n] = account_session(cfg, n, cookie, log=log)
+        return sessions[n]
     try:
         for sid, t in sorted(due.items(), key=lambda kv: str(kv[1].get("title") or "")):
             if ss.load_job_state().get("cancel_requested"):
                 break
             ss.save_job_state({"message": "기다무 대여권 사용: %s" % t.get("title", sid)})
-            r = download_series_all(cfg, session, sid, log=log, dead=dead,
+            r = download_series_all(cfg, session, sid, log=log, dead=dead, session_for=_session_for,
                                     cancel_check=lambda: bool(ss.load_job_state().get("cancel_requested")))
             res["downloaded"] += r.get("downloaded", 0)
             res["waitfree_used"] += r.get("waitfree_used", 0)
     finally:
         kakao_api.save_session_cookies(session)
+        for s in sessions.values():
+            kakao_api.save_session_cookies(s)
+    _notify_expired_accounts(cfg, dead, log=log)
     log("카카오 기다무: 대여권 %d장 사용 / 신규 %d화" % (res["waitfree_used"], res["downloaded"]))
     return res
 
@@ -743,15 +754,16 @@ def _existing_nos(series_dir):
 
 
 def download_series(cfg, session, sid, log=print, full=False, cancel_check=None,
-                    on_progress=None, only_nos=None, force=False, account=1, extra=False):
+                    on_progress=None, only_nos=None, force=False, account=1, extra=False, skip_nos=None):
     """작품 하나의 볼 수 있는 미보유 회차를 받는다.
     full=True(수동 '지금 다운로드'): 미보유 회차를 전부 시도.
     full=False(자동): 새 회차 + 이미 대여/소장 표시된 회차 + (옵션)기다무만 시도.
-    account: 계정 번호(기다무 사용 시각 기록용). extra=True: 추가 계정으로 남은 회차만 다시 시도하는 실행
+    account: 계정 번호(기다무 사용 시각 기록용). skip_nos: 앞 계정이 이번에 받은 회차(파일이 아직 폴더에 안 보여도 다시 받지 않게).
+    extra=True: 추가 계정으로 남은 회차만 다시 시도하는 실행
     (작품 정보 갱신 생략, 결과 문구는 계정 1의 결과 뒤에 덧붙임).
     반환 dict: downloaded, locked, failures(list), auth_expired, cancelled, waitfree_used"""
     res = {"downloaded": 0, "locked": 0, "failures": [], "auth_expired": False,
-           "cancelled": False, "waitfree_used": 0}
+           "cancelled": False, "waitfree_used": 0, "done_nos": []}
     t = dict(ss.get_kakao_title(sid) or {})
     if not t:
         return res
@@ -881,6 +893,8 @@ def download_series(cfg, session, sid, log=print, full=False, cancel_check=None,
     only = set(int(n) for n in only_nos) if only_nos else None
     targets, locked_eps = [], []
     for ep in episodes:
+        if skip_nos and ep["no"] in skip_nos:
+            continue
         if only is not None:
             if ep["no"] not in only or not ep.get("product_id") or (ep["no"] in have and not force):
                 continue
@@ -1019,6 +1033,9 @@ def download_series(cfg, session, sid, log=print, full=False, cancel_check=None,
                     log("%s %d화: 기다무 대여권 사용 시도" % (title, no))
                     if not kakao_api.use_waitfree_ticket(session, pid):
                         ticket_available = False  # 대기 시간 미충족 등 - 이번 실행엔 더 시도 안 함
+                        log("%s %d화: 계정%d 기다무 대여권 사용 실패 - %s" % (
+                            title, no, account, getattr(session, "kakao_ticket_detail", "")))
+                        res["waitfree_failed"] = True
                         raise
                     ticket_available = False       # 작품당 실행 1회에 1장
                     res["waitfree_used"] += 1
@@ -1107,6 +1124,7 @@ def download_series(cfg, session, sid, log=print, full=False, cancel_check=None,
                                     "error": "압축 실패: %s" % c_msg})
             continue
         res["downloaded"] += 1
+        res["done_nos"].append(no)
         if no >= kakao_api.SPECIAL_EP_BASE:
             log("%s %s 완료 (%d장) - 회차 제목 '%s'에 'N화' 번호가 없어 특별 회차 번호 %d로 저장" % (
                 title, _ep_label(no), cnt, ep.get("subtitle", ""), no))
@@ -1153,11 +1171,18 @@ def download_series(cfg, session, sid, log=print, full=False, cancel_check=None,
     done_patch = {"last_downloaded_no": last_ok, "checked_no": max_checked,
                   "last_result": summary, "last_result_at": time.time(),
                   "has_locked": bool(res["locked"])}
+    stamp = None
     if res["waitfree_used"]:
+        stamp = time.time()
+    elif res.get("waitfree_failed"):
+        # 아직 충전 전(또는 쓸 수 없음): 실제 충전 시각을 모르므로 최대 1시간 뒤 다시 본다
+        # (기록하지 않으면 5분마다 같은 작품을 다시 시도한다)
+        stamp = time.time() - waitfree_period(t) + min(waitfree_period(t), 3600)
+    if stamp is not None:
         if account == 1:
-            done_patch["last_ticket_at"] = time.time()
+            done_patch["last_ticket_at"] = stamp
         else:
-            done_patch["ticket_at_acc"] = dict(cur.get("ticket_at_acc") or {}, **{str(account): time.time()})
+            done_patch["ticket_at_acc"] = dict(cur.get("ticket_at_acc") or {}, **{str(account): stamp})
     if not res.get("capped") and not res["cancelled"] and not res["auth_expired"]:
         # 이번에 끝까지 확인했으니, 새 회차가 올라오기 전까지는 다시 안 봐도 됨
         done_patch["checked_slide_dt"] = t.get("last_slide_added_dt") or ""
@@ -1176,9 +1201,15 @@ def download_series(cfg, session, sid, log=print, full=False, cancel_check=None,
 
 
 def account_session(cfg, n, cookie, log=print):
-    """추가 계정 세션 (토큰 연장까지). 쿠키가 만료됐으면 KakaoAuthExpired."""
+    """추가 계정 세션 (토큰 연장 + 로그인 확인). 쿠키가 만료됐거나 로그인 쿠키가 아니면 KakaoAuthExpired.
+    로그인이 안 된 쿠키도 무료 회차는 받아져서, 확인하지 않으면 대여권만 조용히 못 쓰고 지나간다."""
     s = build_session_from_cfg(account_cfg(cfg, cookie))
     kakao_api.refresh_token(s, log=_prefixed(log, n))
+    ok, detail = kakao_api.is_logged_in(s)
+    if ok is False:
+        raise kakao_api.KakaoAuthExpired("로그인되지 않은 쿠키 - 대여권·구매 회차를 쓸 수 없음 (%s). "
+                                         "[설정] > 카카오웹툰 > 추가 계정 %d에 그 계정의 Cookie-Editor JSON을 다시 넣으세요"
+                                         % (detail, n))
     return s
 
 
@@ -1204,12 +1235,14 @@ def download_series_all(cfg, session, sid, log=print, session_for=None, dead=Non
         try:
             s = session_for(n, cookie) if session_for else account_session(cfg, n, cookie, log=log)
         except kakao_api.KakaoAuthExpired as e:
-            log("[계정%d] 쿠키 만료 - 이번 실행에서는 이 계정을 건너뜀 (%s)" % (n, e))
+            log("[계정%d] 쿠키 만료·로그인 안 됨 - 이번 실행에서는 이 계정을 건너뜀 (%s)" % (n, e))
             if dead is not None:
                 dead.add(n)
             res.setdefault("expired_accounts", []).append(n)
             continue
-        r = download_series(acfg, s, sid, log=_prefixed(log, n), account=n, extra=True, **kw)
+        r = download_series(acfg, s, sid, log=_prefixed(log, n), account=n, extra=True,
+                            skip_nos=set(res.get("done_nos") or []), **kw)
+        res["done_nos"] = list(res.get("done_nos") or []) + list(r.get("done_nos") or [])
         if not session_for:
             kakao_api.save_session_cookies(s)
         for k in ("downloaded", "waitfree_used", "tickets_used"):
@@ -1275,7 +1308,7 @@ def run_kakao_cycle(cfg, log=print, manage_job=False):
         try:
             extra_main[n] = account_session(cfg, n, cookie, log=log)
         except kakao_api.KakaoAuthExpired as e:
-            log("[계정%d] 쿠키 만료 - 이번 실행에서는 이 계정을 건너뜀 (%s)" % (n, e))
+            log("[계정%d] 쿠키 만료·로그인 안 됨 - 이번 실행에서는 이 계정을 건너뜀 (%s)" % (n, e))
             dead.add(n)
 
     now = time.time()
