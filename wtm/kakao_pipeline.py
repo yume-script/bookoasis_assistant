@@ -1171,11 +1171,13 @@ def account_session(cfg, n, cookie, log=print):
 def download_series_all(cfg, session, sid, log=print, session_for=None, dead=None, **kw):
     """계정 1로 받은 뒤, 아직 잠긴 회차가 남았거나 성인 인증으로 막혔으면 추가 계정으로 차례로 다시 시도한다.
     session_for(n, cookie): 추가 계정 세션을 주는 함수(없으면 매번 만든다). dead: 이번 실행에서 만료로 뺀 계정 번호 집합.
-    force(선택 회차 다시 받기)일 때는 계정 1만 쓴다(추가 계정이 같은 회차를 또 지우고 받지 않게)."""
+    force(선택 회차 다시 받기)는 계정 1에만 적용한다 - 추가 계정은 force 없이 아직 없는 회차만 채운다
+    (계정 1이 방금 다시 받은 회차를 또 지우고 받지 않게)."""
     res = download_series(cfg, session, sid, log=log, **kw)
     extras = extra_accounts(cfg)
-    if not extras or kw.get("force"):
+    if not extras:
         return res
+    kw = dict(kw, force=False)
     cancel_check = kw.get("cancel_check")
     for n, cookie in extras:
         if res.get("cancelled") or (cancel_check and cancel_check()):
