@@ -1068,7 +1068,11 @@
           '<span' + (isDone ? ' style="opacity:.6"' : '') + '>' +
           (e.special ? '특별회차(파일 ' + e.no + '화)' : e.no + '화') + ' - ' + escapeHtml(e.subtitle || '') + '</span>' +
           (isPaid ? ' <b>(유료 - 선택불가)</b>' : '') +
-          (paidButSelectable && !e.rented ? ' <span class="wtm-hint" style="margin:0">(유료 - 구매·대여한 경우만 받아짐)</span>' : '') +
+          (paidButSelectable && !e.rented ? ' <span class="wtm-hint" style="margin:0">(유료 - ' +
+            (lookupResult.platform === 'kakao' && (cfgp.KAKAO_USE_WAITFREE || cfgp.KAKAO_USE_OWNED_TICKETS)
+              ? '구매·대여했거나 ' + [cfgp.KAKAO_USE_WAITFREE ? '기다무' : '', cfgp.KAKAO_USE_OWNED_TICKETS ? '보유 대여권' : '']
+                  .filter(Boolean).join('·') + '으로 열 수 있으면 받아짐' + (cfgp.KAKAO_USE_WAITFREE ? ', 기다무는 계정마다 1장' : '') + ')'
+              : '구매·대여한 경우만 받아짐)') + '</span>' : '') +
           (e.rented ? ' <span class="wtm-badge up">대여·소장</span>' : '') +
           (isDone ? ' <span class="wtm-badge" style="background:color-mix(in srgb, #4f9d76 22%, transparent);color:color-mix(in srgb, #4f9d76 90%, var(--app-text-primary))">받음</span>' : '') +
           '</label>';

@@ -869,9 +869,15 @@ def download_series(cfg, session, sid, log=print, full=False, cancel_check=None,
             min_order = acc[-initial_n].get("order", acc[-initial_n]["no"])
             ss.upsert_kakao_title({sid: {"min_order": min_order}})
             log("%s: 처음 구독한 작품이라 볼 수 있는 %d화 중 최신 %d화만 받음" % (title, len(acc), initial_n))
+    # [선택 회차 다운로드]: 고른 회차만 대상으로 아래 대여권 규칙(기다무·보유 대여권)을 똑같이 적용한다.
+    # force면 이미 받은 회차도 지우고 다시 받는다.
+    only = set(int(n) for n in only_nos) if only_nos else None
     targets, locked_eps = [], []
     for ep in episodes:
-        if ep["no"] in have or not ep.get("product_id") or ep["product_id"] in skip_pids:
+        if only is not None:
+            if ep["no"] not in only or not ep.get("product_id") or (ep["no"] in have and not force):
+                continue
+        elif ep["no"] in have or not ep.get("product_id") or ep["product_id"] in skip_pids:
             continue
         if min_order is not None and ep.get("order", ep["no"]) < min_order:
             continue
@@ -919,15 +925,13 @@ def download_series(cfg, session, sid, log=print, full=False, cancel_check=None,
         if ticket_eps:
             targets.extend(ticket_eps)
             targets.sort(key=lambda e: e.get("order", e["no"]))
-    if only_nos:
-        # [선택 회차 다운로드]: 고른 회차만. force면 이미 받은 회차도 지우고 다시 받는다.
-        # 유료 표시 회차도 고르면 한 번 시도한다(앱에서 방금 대여했을 수 있음).
-        only = set(int(n) for n in only_nos)
-        targets = [ep for ep in episodes if ep["no"] in only and ep.get("product_id")
-                   and (force or ep["no"] not in have)]
-        locked_eps, ticket_eps, wait_ep = [], [], None
-        ticket_available = False
+    if only is not None:
+        # 대여권을 배정받지 못한 유료 회차도 고른 것이면 한 번 시도한다(앱에서 방금 대여했을 수 있음)
+        targets.extend(ep for ep in locked_eps if ep not in targets)
+        targets.sort(key=lambda e: e.get("order", e["no"]))
     res["locked"] = len(locked_eps) - (1 if wait_ep else 0) - len(ticket_eps)
+    if only is not None:
+        res["locked"] = 0  # 고른 유료 회차는 모두 시도하므로, 실제로 열지 못한 것만 아래에서 센다
     res["paid_total"] = len(locked_eps)
     res["tickets_used"] = 0
 
