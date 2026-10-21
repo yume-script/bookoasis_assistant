@@ -225,6 +225,8 @@ def _loop(get_cfg_func, run_full_cycle_func, run_finished_scan_func):
                     try:
                         r = kakao_pipeline.run_waitfree_tick(cfg, log=_ss.append_log)
                         msg = "기다무 대여권 %d장 사용 / 신규 %d화" % (r["waitfree_used"], r["downloaded"])
+                        if r["titles"] > kakao_pipeline.WAITFREE_TICK_MAX:
+                            _wf_state["checked"] = 0.0  # 밀린 작품이 남았으면 5분 기다리지 않고 다음 순환(1분 뒤)에 이어서
                     except Exception as e:  # noqa: BLE001
                         msg = "기다무 대여권 사용 오류: %s" % e
                         _ss.append_log(msg)
