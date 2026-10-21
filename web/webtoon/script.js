@@ -170,9 +170,14 @@
     if (t.waitfree) {  // 기다무: 충전 주기(3시간 등)와 다음 대여권 사용 가능 시각
       var wp = t.waitfree_period_min || 1440;
       var wl = wp % 1440 === 0 ? (wp / 1440 === 1 ? '' : (wp / 1440) + '일 ') : (wp % 60 === 0 ? (wp / 60) + '시간 ' : wp + '분 ');
-      var wn = t.waitfree_next ? new Date(t.waitfree_next * 1000) : null;
-      var wt = wn ? (wn <= new Date() ? '대여권 충전됨 - 곧 사용' : '다음 대여권 ' + (wn.getMonth() + 1) + '/' + wn.getDate() + ' ' +
-        String(wn.getHours()).padStart(2, '0') + ':' + String(wn.getMinutes()).padStart(2, '0')) : '';
+      var when = function (sec) {
+        var d = new Date(sec * 1000);
+        return d <= new Date() ? '충전됨' : (d.getMonth() + 1) + '/' + d.getDate() + ' ' +
+          String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+      };
+      var wt = (t.waitfree_accounts || []).length > 1
+        ? '다음 대여권 - ' + t.waitfree_accounts.map(function (a) { return '계정' + a[0] + ' ' + when(a[1]); }).join(' / ')
+        : (t.waitfree_next ? '다음 대여권 ' + when(t.waitfree_next) : '');
       out += '<span class="wtm-badge up"' + (wt ? ' title="' + wt + '"' : '') + '>' + wl + '기다무</span>';
     }
     if (t.purchased) out += '<span class="wtm-badge new" title="카카오페이지 보관함 > 구매 목록에 있는 작품 - 구독하지 않아도 구매·대여 회차를 받습니다">구매</span>';
@@ -373,6 +378,12 @@
       var text = '';
       if (h.type === 'download' || h.type === 'manual_download') {
         text = '<b>' + title + '</b> - ' + historyEpLabel(h) + ' (' + (h.image_count || 0) + unit + ')';
+        // 카카오: 어느 계정으로, 무엇(기다무·대여권·대여/소장·무료)으로 연 회차인지
+        if (h.account || h.via) {
+          var viaPaid = h.via && h.via !== '무료';
+          text += ' <span class="wtm-badge' + (viaPaid ? ' up' : '') + '">' +
+            escapeHtml((h.account ? '계정' + h.account : '') + (h.account && h.via ? ' · ' : '') + (h.via || '')) + '</span>';
+        }
       } else if (h.type === 'skipped_paid') {
         text = '<b>' + title + '</b> - ' + historyEpLabel(h) + ': 유료라 건너뜀' +
           (h.error ? ' (' + escapeHtml(h.error) + ')' : '');

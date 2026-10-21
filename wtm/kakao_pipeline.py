@@ -579,6 +579,13 @@ def run_waitfree_tick(cfg, log=print):
     return res
 
 
+def waitfree_schedule(cfg, t):
+    """계정마다 다음 기다무 대여권 사용 가능 시각 [(계정 번호, 시각)]"""
+    if not t.get("waitfree"):
+        return []
+    return [(n, _ticket_at(t, n) + waitfree_period(t)) for n, _c in accounts(cfg)]
+
+
 def next_waitfree_at(cfg, t):
     """이 작품에서 다음에 기다무 대여권을 쓸 수 있는 시각 (계정 중 가장 빠른 것). 계정이 없으면 None."""
     nums = [n for n, _c in accounts(cfg)]
@@ -988,6 +995,7 @@ def download_series(cfg, session, sid, log=print, full=False, cancel_check=None,
         if on_progress:
             on_progress(i, len(targets), "%s %d화" % (title, ep["no"]))
         no, pid = ep["no"], ep["product_id"]
+        opened = None   # 이 회차를 무엇으로 열었는지 (이력에 남김): 기다무 / 보유 대여권 이름
 
         def _images(pid=pid):
             return kakao_api.fetch_episode_images(session, sid, pid)
@@ -1014,6 +1022,8 @@ def download_series(cfg, session, sid, log=print, full=False, cancel_check=None,
                         raise
                     ticket_available = False       # 작품당 실행 1회에 1장
                     res["waitfree_used"] += 1
+                    opened = "기다무"
+                    log("%s %d화: 계정%d의 기다무 대여권 사용" % (title, no, account))
                 elif ep.get("use_owned") and any(v > 0 for v in owned.values()):
                     try:
                         ready, _raw = kakao_api.ready_ticket_types(session, pid)
@@ -1034,6 +1044,7 @@ def download_series(cfg, session, sid, log=print, full=False, cancel_check=None,
                         raise
                     owned[choice] -= 1
                     res["tickets_used"] += 1
+                    opened = kakao_api.TICKET_NAMES.get(choice, choice)
                 else:
                     raise
                 ok, skipped, cnt, err = _try_download()
@@ -1113,7 +1124,10 @@ def download_series(cfg, session, sid, log=print, full=False, cancel_check=None,
                            "platform": yaml_platform(t),
                            "title_id": sid, "title": title, "episode_no": no,
                            "subtitle": ep.get("subtitle"), "image_count": cnt,
-                           "unit": "words" if is_novel else "images"})
+                           "unit": "words" if is_novel else "images",
+                           # 어느 계정으로, 무엇으로 열었는지 (로그인 쿠키가 있을 때만)
+                           "account": account if has_cookie else None,
+                           "via": opened or ("대여·소장" if ep.get("rented") else ("무료" if ep.get("free") else None))})
         if no < kakao_api.SPECIAL_EP_BASE and (last_ok is None or no > last_ok):
             last_ok = no
         if no < kakao_api.SPECIAL_EP_BASE and prev_last_no is not None and no > prev_last_no:

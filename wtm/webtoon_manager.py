@@ -701,6 +701,7 @@ class WebtoonManagerMetadataProvider(BaseMetadataProvider):
                 item["waitfree_period_min"] = int(t.get("waitfree_period_min") or 1440)
                 if cfg.get("KAKAO_USE_WAITFREE") and t.get("has_locked"):
                     item["waitfree_next"] = kakao_pipeline.next_waitfree_at(cfg, t)
+                    item["waitfree_accounts"] = [[n, at] for n, at in kakao_pipeline.waitfree_schedule(cfg, t)]
             if compare_set is None:
                 item["in_library"] = None
             else:
