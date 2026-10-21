@@ -684,6 +684,8 @@ def _episodes_to_download(session, cfg, title_id, known_last_no):
 
 
 def run_download_cycle(cfg, log=print):
+    _raw_log = log
+    log = lambda msg: _raw_log("[네이버] %s" % msg)  # noqa: E731 - 로그 앞머리 (카카오는 [카카오웹툰:계정N])
     if cfg.get("LOW_PRIORITY_MODE", True):
         downloader.lower_thread_priority(int(cfg.get("DOWNLOAD_NICE_LEVEL", 10)))
     session = build_session_from_cfg(cfg)

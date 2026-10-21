@@ -108,7 +108,16 @@ def account_cfg(cfg, cookie):
 
 
 def _prefixed(log, n):
-    return lambda msg: log("[계정%d] %s" % (n, msg))
+    """작품과 상관없는 계정 단위 로그 (토큰 연장, 구매 목록 등)"""
+    return lambda msg: log("[카카오:계정%d] %s" % (n, msg))
+
+
+def _title_log(log, cfg, t, account):
+    """작품 로그 앞머리: [카카오웹툰:계정1] / [카카오웹소설:계정2] (로그인 쿠키가 없으면 계정 없이)"""
+    tag = "카카오웹소설" if _is_novel(t) else "카카오웹툰"
+    if account != 1 or (cfg.get("KAKAO_COOKIE") or "").strip():
+        tag += ":계정%d" % account
+    return lambda msg: log("[%s] %s" % (tag, msg))
 
 
 def _ticket_at(t, account):
@@ -811,6 +820,7 @@ def download_series(cfg, session, sid, log=print, full=False, cancel_check=None,
     t = dict(ss.get_kakao_title(sid) or {})
     if not t:
         return res
+    log = _title_log(log, cfg, t, account)
 
     # 작품 정보는 하루 한 번만 갱신(예전 버전에서 잘못 저장된 정보는 즉시 갱신)
     if not extra and (int(t.get("info_version") or 0) < INFO_VERSION or
@@ -1082,14 +1092,14 @@ def download_series(cfg, session, sid, log=print, full=False, cancel_check=None,
                     log("%s %d화: 기다무 대여권 사용 시도" % (title, no))
                     if not kakao_api.use_waitfree_ticket(session, pid):
                         ticket_available = False  # 대기 시간 미충족 등 - 이번 실행엔 더 시도 안 함
-                        log("%s %d화: 계정%d 기다무 대여권 사용 실패 - %s" % (
-                            title, no, account, getattr(session, "kakao_ticket_detail", "")))
+                        log("%s %d화: 기다무 대여권 사용 실패 - %s" % (
+                            title, no, getattr(session, "kakao_ticket_detail", "")))
                         res["waitfree_failed"] = True
                         raise
                     ticket_available = False       # 작품당 실행 1회에 1장
                     res["waitfree_used"] += 1
                     opened = "기다무"
-                    log("%s %d화: 계정%d의 기다무 대여권 사용" % (title, no, account))
+                    log("%s %d화: 기다무 대여권 사용" % (title, no))
                 elif ep.get("use_owned") and any(v > 0 for v in owned.values()):
                     try:
                         ready, _raw = kakao_api.ready_ticket_types(session, pid)
@@ -1284,12 +1294,12 @@ def download_series_all(cfg, session, sid, log=print, session_for=None, dead=Non
         try:
             s = session_for(n, cookie) if session_for else account_session(cfg, n, cookie, log=log)
         except kakao_api.KakaoAuthExpired as e:
-            log("[계정%d] 쿠키 만료·로그인 안 됨 - 이번 실행에서는 이 계정을 건너뜀 (%s)" % (n, e))
+            log("[카카오:계정%d] 쿠키 만료·로그인 안 됨 - 이번 실행에서는 이 계정을 건너뜀 (%s)" % (n, e))
             if dead is not None:
                 dead.add(n)
             res.setdefault("expired_accounts", []).append(n)
             continue
-        r = download_series(acfg, s, sid, log=_prefixed(log, n), account=n, extra=True,
+        r = download_series(acfg, s, sid, log=log, account=n, extra=True,
                             skip_nos=set(res.get("done_nos") or []), **kw)
         res["done_nos"] = list(res.get("done_nos") or []) + list(r.get("done_nos") or [])
         if not session_for:
@@ -1302,7 +1312,7 @@ def download_series_all(cfg, session, sid, log=print, session_for=None, dead=Non
         if r.get("cancelled"):
             res["cancelled"] = True
         if r.get("auth_expired"):
-            log("[계정%d] 쿠키 만료 - 이번 실행에서는 이 계정을 건너뜀" % n)
+            log("[카카오:계정%d] 쿠키 만료 - 이번 실행에서는 이 계정을 건너뜀" % n)
             if dead is not None:
                 dead.add(n)
             res.setdefault("expired_accounts", []).append(n)
@@ -1357,7 +1367,7 @@ def run_kakao_cycle(cfg, log=print, manage_job=False):
         try:
             extra_main[n] = account_session(cfg, n, cookie, log=log)
         except kakao_api.KakaoAuthExpired as e:
-            log("[계정%d] 쿠키 만료·로그인 안 됨 - 이번 실행에서는 이 계정을 건너뜀 (%s)" % (n, e))
+            log("[카카오:계정%d] 쿠키 만료·로그인 안 됨 - 이번 실행에서는 이 계정을 건너뜀 (%s)" % (n, e))
             dead.add(n)
 
     now = time.time()
