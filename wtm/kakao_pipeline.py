@@ -118,6 +118,19 @@ def _ticket_at(t, account):
     return float((t.get("ticket_at_acc") or {}).get(str(account)) or 0)
 
 
+def _ticket_patch(sid, t, account, stamp):
+    """기다무 사용(또는 다시 볼) 시각 기록용 작품 정보 패치"""
+    if account == 1:
+        return {"last_ticket_at": stamp}
+    cur = ss.get_kakao_title(sid) or t
+    return {"ticket_at_acc": dict(cur.get("ticket_at_acc") or t.get("ticket_at_acc") or {}, **{str(account): stamp})}
+
+
+def _waitfree_backoff(t):
+    """대여권을 못 썼을 때 기록할 시각: 실제 충전 시각을 모르므로 최대 1시간 뒤 다시 본다"""
+    return time.time() - waitfree_period(t) + min(waitfree_period(t), 3600)
+
+
 def _adult_hashes(t):
     hashes = list(t.get("adult_block_hashes") or [])
     if t.get("adult_block_hash"):
@@ -751,6 +764,11 @@ def add_series(cfg, text, log=print):
 # ---------------------------------------------------------------------------
 # 다운로드
 # ---------------------------------------------------------------------------
+def _outbox_nos(temp_root, sid):
+    """라이브러리로 옮기는 중(또는 옮기기에 실패해 남은) 회차 zip - 이미 받은 것으로 본다"""
+    return _existing_nos(os.path.join(temp_root, "_outbox", str(sid)))
+
+
 def _existing_nos(series_dir):
     nos = set()
     try:
@@ -874,7 +892,7 @@ def download_series(cfg, session, sid, log=print, full=False, cancel_check=None,
     t.update(patch)
 
     series_dir = downloader.title_dir(root, title, sid)
-    have = _existing_nos(series_dir)
+    have = _existing_nos(series_dir) | _outbox_nos(temp_root, sid)
     checked_no = int(t.get("checked_no") or 0)
     use_waitfree = bool(cfg.get("KAKAO_USE_WAITFREE", False))
 
@@ -918,9 +936,13 @@ def download_series(cfg, session, sid, log=print, full=False, cancel_check=None,
         else:
             locked_eps.append(ep)
     wait_ep = None
+    # 기다무를 쓸 수 있는 계정인데 대여권으로 열 회차가 없는 작품(잠긴 회차가 기다무 대상이 아님 등)도
+    # 확인한 시각을 남겨, 기다무 확인이 같은 작품을 1~5분마다 다시 붙잡지 않게 한다
+    res["waitfree_none"] = bool(use_waitfree and has_cookie and only is None)
     if use_waitfree and has_cookie:
         wait_ep = next((ep for ep in locked_eps if ep["waitfree_ok"]), None)
         if wait_ep:
+            res["waitfree_none"] = False
             targets.append(wait_ep)
             targets.sort(key=lambda e: e.get("order", e["no"]))
     # 보유 대여권(이벤트/선물/쿠폰 등) 자동 사용 - 기본은 무료로 받은 대여권만,
@@ -975,18 +997,19 @@ def download_series(cfg, session, sid, log=print, full=False, cancel_check=None,
                 embed_cover=bool(cfg.get("KAVITA_YAML_EMBED_COVER", True)),
                 log=log, platform=yaml_platform(t))
 
+    idle_patch = _ticket_patch(sid, t, account, _waitfree_backoff(t)) if res.get("waitfree_none") else {}
     if not targets and extra:
         # 추가 계정으로도 열 회차가 없음 - 계정 1의 결과 문구는 그대로 둔다
-        ss.upsert_kakao_title({sid: {"has_locked": bool(locked_eps)}})
+        ss.upsert_kakao_title({sid: dict(idle_patch, has_locked=bool(locked_eps))})
         return res
     if not targets:
         msg = "받을 회차 없음(보유 %d화" % len(have)
         if locked_eps:
             msg += ", 유료 %d화는 건너뜀" % len(locked_eps)
         msg += ")"
-        ss.upsert_kakao_title({sid: {"last_result": msg,
-                                     "last_result_at": time.time(), "has_locked": bool(locked_eps),
-                                     "checked_slide_dt": t.get("last_slide_added_dt") or ""}})
+        ss.upsert_kakao_title({sid: dict(idle_patch, last_result=msg,
+                                         last_result_at=time.time(), has_locked=bool(locked_eps),
+                                         checked_slide_dt=t.get("last_slide_added_dt") or "")})
         # 예전에 받아둔 회차만 있고 kavita.yaml이 없던 작품도 여기서 만들어진다
         _update_yaml()
         return res
@@ -1123,7 +1146,14 @@ def download_series(cfg, session, sid, log=print, full=False, cancel_check=None,
             log("%s %d화 실패: %s" % (title, no, err))
             continue
 
-        if is_novel or skipped:
+        if skipped:
+            # 이미 받은 회차(라이브러리, 또는 라이브러리로 옮기는 중인 임시 폴더에 있음) - 새로 받은 것으로 세지 않고
+            # 이력에도 남기지 않는다 (예전엔 매번 '받음'으로 기록돼 같은 회차가 이력에 계속 쌓였다)
+            max_checked = max(max_checked, ep.get("order", no))
+            if no < kakao_api.SPECIAL_EP_BASE and (last_ok is None or no > last_ok):
+                last_ok = no
+            continue
+        if is_novel:
             c_ok, c_msg = True, ""     # 웹소설은 EPUB을 바로 만들어 저장함(압축 단계 없음)
         else:
             c_ok, _c_path, c_msg = downloader.compress_episode(
@@ -1182,18 +1212,11 @@ def download_series(cfg, session, sid, log=print, full=False, cancel_check=None,
     done_patch = {"last_downloaded_no": last_ok, "checked_no": max_checked,
                   "last_result": summary, "last_result_at": time.time(),
                   "has_locked": bool(res["locked"])}
-    stamp = None
     if res["waitfree_used"]:
-        stamp = time.time()
-    elif res.get("waitfree_failed"):
-        # 아직 충전 전(또는 쓸 수 없음): 실제 충전 시각을 모르므로 최대 1시간 뒤 다시 본다
-        # (기록하지 않으면 5분마다 같은 작품을 다시 시도한다)
-        stamp = time.time() - waitfree_period(t) + min(waitfree_period(t), 3600)
-    if stamp is not None:
-        if account == 1:
-            done_patch["last_ticket_at"] = stamp
-        else:
-            done_patch["ticket_at_acc"] = dict(cur.get("ticket_at_acc") or {}, **{str(account): stamp})
+        done_patch.update(_ticket_patch(sid, t, account, time.time()))
+    elif res.get("waitfree_failed") or res.get("waitfree_none"):
+        # 아직 충전 전이거나 대여권으로 열 회차가 없음 - 기록하지 않으면 기다무 확인이 같은 작품을 계속 다시 붙잡는다
+        done_patch.update(_ticket_patch(sid, t, account, _waitfree_backoff(t)))
     if not res.get("capped") and not res["cancelled"] and not res["auth_expired"]:
         # 이번에 끝까지 확인했으니, 새 회차가 올라오기 전까지는 다시 안 봐도 됨
         done_patch["checked_slide_dt"] = t.get("last_slide_added_dt") or ""
