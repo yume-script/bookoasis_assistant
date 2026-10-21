@@ -858,7 +858,14 @@ def use_waitfree_ticket(session, product_id):
     _check_auth(r, "기다무 사용")
     # 실패 사유를 로그에 남길 수 있게 응답을 붙여 둔다 (대기 시간 미충족 / 로그인 안 됨 등)
     session.kakao_ticket_detail = "HTTP %s %s" % (r.status_code, (r.text or "")[:200].replace("\n", " "))
-    return r.status_code < 300
+    if r.status_code >= 300:
+        return False
+    # 실패도 HTTP 200에 result_code(예: -100 '권한 인증 실패')로 온다 - 상태 코드만 보면 성공으로 착각한다
+    try:
+        body = json.loads(r.content.decode("utf-8"))
+    except ValueError:
+        return True
+    return not isinstance(body, dict) or body.get("result_code") in (None, 0, "0")
 
 
 def is_logged_in(session):
