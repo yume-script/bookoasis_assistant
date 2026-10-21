@@ -717,7 +717,9 @@
       }).join('') + '</select>';
     } else if (f.type === 'password') {
       input = '<div style="display:flex;gap:6px;align-items:center">' +
-        '<input type="password" class="wtm-input" autocomplete="new-password" data-setting="' + key + '" placeholder="' +
+        // type=password면 브라우저가 저장된 로그인 비밀번호를 자동으로 채워 쿠키 대신 저장되는 일이 있어, 글자만 가린 일반 칸으로
+        '<input type="text" class="wtm-input wtm-secret" autocomplete="off" autocapitalize="off" spellcheck="false" ' +
+        'data-lpignore="true" data-1p-ignore="true" data-form-type="other" data-setting="' + key + '" placeholder="' +
         (secretSet ? '저장됨 - 바꾸려면 새 값 입력' : '(비어 있음)') + '">' +
         (secretSet ? '<label style="font-size:11px;white-space:nowrap"><input type="checkbox" data-setting-clear="' + key + '"> 지우기</label>' : '') +
         '</div>';
@@ -787,7 +789,8 @@
     els('[data-el="settings-save"]').forEach(function (b) { b.disabled = true; });
     var r = await callAction('save_settings', { values: values, clear: clear });
     els('[data-el="settings-save"]').forEach(function (b) { b.disabled = false; });
-    if (msg) msg.textContent = (r.success ? '✅ ' : '❌ ') + (r.message || '');
+    if (msg) msg.textContent = (r.success ? '✅ ' : '❌ ') + (r.message || '').split('\n')[0];
+    window.alert((r.success ? '✅ ' : '❌ 저장하지 못했습니다\n\n') + (r.message || ''));
     if (r.success) {
       settingsDirty = false;
       await loadSettingsForm(true);

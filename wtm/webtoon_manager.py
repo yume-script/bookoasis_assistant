@@ -1739,6 +1739,24 @@ class WebtoonManagerMetadataProvider(BaseMetadataProvider):
                 patch[k] = str(v if v is not None else "").strip()
         if errors:
             return False, "잘못된 값이 있습니다: %s" % ", ".join(errors)
+        # 쿠키 칸: 쿠키처럼 생기지 않은 값(브라우저가 자동으로 채운 비밀번호 등)은 저장하지 않는다
+        from . import kakao_api
+        labels = {f["key"]: f.get("label") or f["key"] for f in self.settings_schema}
+        secret_notes = []
+        for k in [k for k in patch if types.get(k) == "password" and patch[k]]:
+            if k.startswith("KAKAO_COOKIE"):
+                parsed = kakao_api._parse_cookie_input(patch[k])
+                if not parsed:
+                    return False, ("%s: 쿠키 형식이 아닙니다(Cookie-Editor JSON 또는 'a=b; c=d'). 브라우저가 저장된 비밀번호를 "
+                                   "자동으로 채웠을 수 있습니다 - 칸을 비우고 쿠키를 다시 붙여 넣으세요." % labels[k])
+                missing = kakao_api.missing_required_cookies(patch[k])
+                secret_notes.append("%s: 쿠키 %d개%s" % (labels[k], len(parsed),
+                                    (" ⚠️ 필수 로그인 쿠키 빠짐(%s) - page.kakao.com에 로그인한 상태에서 다시 내보내세요" % ", ".join(missing))
+                                    if missing else " (로그인 쿠키 있음)"))
+            else:
+                secret_notes.append("%s: 새 값" % labels[k])
+        for k in [k for k in patch if types.get(k) == "password" and not patch[k]]:
+            secret_notes.append("%s: 지움" % labels[k])
         if not self._save_cfg_patch(db_type, patch):
             return False, "설정 저장 실패"
         try:   # 작업 프로세스가 새 설정을 바로 쓰게
@@ -1754,7 +1772,8 @@ class WebtoonManagerMetadataProvider(BaseMetadataProvider):
             except Exception:  # noqa: BLE001
                 pass
         return True, "설정을 저장했습니다(%d개 항목)" % len(patch) + (
-            " · 실패하거나 건너뛴 텔레그램 업로드 %d개를 다시 올립니다" % retried if retried else "")
+            "\n쿠키·토큰 변경:\n- " + "\n- ".join(secret_notes) if secret_notes else "\n쿠키·토큰은 바꾸지 않았습니다(빈 칸은 기존 값 유지)") + (
+            "\n실패하거나 건너뛴 텔레그램 업로드 %d개를 다시 올립니다" % retried if retried else "")
 
     def _save_cfg_patch(self, db_type, patch):
         cfg = self.get_plugin_config(db_type, default={}) or {}
