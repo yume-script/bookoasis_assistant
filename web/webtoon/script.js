@@ -59,13 +59,26 @@
     };
 
     try {
+      var bodyText = JSON.stringify(body);
       var resp = await fetch(ACTION_URL, {
         method: 'POST',
         credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body)
+        body: bodyText
       });
-      var data = await resp.json();
+      var respText = await resp.text();
+      var data;
+      try {
+        data = JSON.parse(respText);
+      } catch (parseErr) {
+        // 이 프로그램은 오류도 JSON으로 답한다. HTML이 왔다면 앞단(리버스 프록시 등)이 요청을 막은 것
+        var t = /<title>([^<]*)<\/title>/i.exec(respText) || /<h1>([^<]*)<\/h1>/i.exec(respText);
+        var why = t ? t[1].trim() : 'HTTP ' + resp.status;  // nginx 제목에는 상태 코드가 들어 있다
+        var hint = resp.status === 413
+          ? '리버스 프록시의 요청 크기 제한에 걸렸습니다(nginx: client_max_body_size 10m; 추가 후 nginx 재시작)'
+          : '리버스 프록시(nginx 등)가 요청을 이 프로그램에 전달하지 않았습니다 - 프록시 오류 로그를 확인하세요';
+        return { success: false, message: '요청이 거부됨: ' + why + ' (보낸 크기 ' + Math.round(bodyText.length / 1024) + 'KB)\n' + hint };
+      }
       // 코어는 run_context_menu_action()이 {'success': bool, 'message'|'error': str}
       // dict를 반환할 것으로 기대하고, success=false면 HTTP 400으로 내려준다.
       // resp.ok(2xx) 여부가 아니라 data.success로 성공/실패를 판단해야 한다.
