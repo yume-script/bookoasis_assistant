@@ -219,6 +219,8 @@ def _loop(get_cfg_func, run_full_cycle_func, run_finished_scan_func):
             _wf_state["checked"] = time.time()
             try:
                 from . import kakao_pipeline
+                if not _ss.load_job_state().get("running"):
+                    kakao_pipeline.flush_leftovers(cfg, log=_ss.append_log)  # 옮기다 만 zip 정리
                 if kakao_pipeline.waitfree_due_titles(cfg) and _ss.try_acquire_job({
                         "stage": "waitfree", "message": "스케줄러: 충전된 기다무 대여권 사용",
                         "started_at": time.time(), "cancel_requested": False, "last_error": None}):

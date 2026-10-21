@@ -568,10 +568,25 @@ def waitfree_due_titles(cfg, now=None):
     return out
 
 
+def flush_leftovers(cfg, log=print):
+    """재시작 등으로 옮기다 만 zip(임시 폴더 _outbox)을 라이브러리로 옮긴다 - 전체 실행(몇 시간마다)까지 기다리지 않게.
+    이 프로세스에서 옮기는 중인 게 있으면 그쪽이 마저 옮기므로 건드리지 않는다. 반환: 옮긴 수"""
+    if not cfg.get("KAKAO_ENABLE") or downloader.moves_pending():
+        return 0
+    if not os.path.isdir(os.path.join(kakao_temp_root(cfg), "_outbox")):
+        return 0
+    try:
+        return downloader.flush_outbox(kakao_temp_root(cfg), log=log)
+    except Exception as e:  # noqa: BLE001
+        log("카카오: 남은 zip 정리 실패(무시): %s" % e)
+        return 0
+
+
 def run_waitfree_tick(cfg, log=print):
     """충전된 기다무 대여권만 바로 쓰는 가벼운 실행 (스케줄러가 몇 분마다 부름).
     자동 실행 주기(기본 4시간)를 기다리지 않으므로 3시간 기다무도 충전될 때마다 1화씩 받는다.
     호출 쪽에서 작업 잠금(try_acquire_job)을 잡고 부른다."""
+    flush_leftovers(cfg, log=log)
     due = waitfree_due_titles(cfg)
     res = {"titles": len(due), "downloaded": 0, "waitfree_used": 0}
     if not due:

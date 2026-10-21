@@ -353,6 +353,12 @@ def _queue_move(src, series_dir, name, log=None, wait=False):
     return os.path.join(series_dir, name)
 
 
+def moves_pending():
+    """이 프로세스에서 라이브러리로 옮기는 중인 zip 수"""
+    with _mover_lock:
+        return sum(len(v) for v in _pending.values())
+
+
 def wait_moves(series_dir=None, timeout=600):
     """옮기는 중인 zip이 라이브러리에 다 들어갈 때까지 기다린다(kavita.yaml 갱신 전 등)."""
     with _mover_lock:
