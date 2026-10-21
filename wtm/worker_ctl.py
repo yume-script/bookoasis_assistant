@@ -348,9 +348,17 @@ def run_worker():
     nice = _lower_process_priority(_truthy(cfg0.get("LOW_PRIORITY_MODE"), True))
 
     # 이전 워커가 작업 도중에 끝났으면(업데이트/재시작) 실행 중 표시가 남아 있다 - 정리
-    if ss.load_job_state().get("running"):
-        ss.save_job_state({"running": False, "stage": "idle",
-                            "message": "작업 프로세스가 다시 시작되어 이전 작업 표시를 정리했습니다"})
+    job0 = ss.load_job_state()
+    if job0.get("running") or job0.get("resume_after_restart"):
+        # 이전 워커가 작업 도중에 끝났다(업데이트/재시작): 실행 중 표시를 정리하고, 자동 실행이 끊긴 거였으면
+        # 다음 주기를 기다리지 않고 곧바로 다시 돌게 한다 (마지막 실행 시각을 비움)
+        resume = bool(job0.get("resume_after_restart")) or (job0.get("running") and job0.get("stage") != "waitfree")
+        patch = {"running": False, "stage": "idle", "cancel_requested": False, "resume_after_restart": False,
+                 "message": "작업 프로세스가 다시 시작되어 이전 작업 표시를 정리했습니다"}
+        if resume:
+            patch["last_scan_at"] = None
+            ss.append_log("재시작으로 끊긴 자동 실행을 곧 다시 시작합니다")
+        ss.save_job_state(patch)
     if ss.load_title_job_state().get("running"):
         ss.save_title_job_state({"running": False, "message": "작업 프로세스가 다시 시작되어 중단됨"})
 
@@ -442,7 +450,11 @@ def run_worker():
             if os.path.exists(stop_flag):
                 if not stop_since:
                     ss.append_log("서비스 종료 요청 - 진행 중인 작업을 멈추고 작업 프로세스를 끝냅니다")
-                    ss.save_job_state({"cancel_requested": True})
+                    job_now = ss.load_job_state()
+                    # 자동 실행(요일별 스캔+다운로드)이 도중에 끊기면 다음 시작 때 바로 다시 돌린다
+                    # (그대로 두면 다음 실행 주기 - 기본 4시간 - 까지 남은 작품을 받지 않는다)
+                    resume = bool(job_now.get("running")) and job_now.get("stage") != "waitfree"
+                    ss.save_job_state({"cancel_requested": True, "resume_after_restart": resume})
                     ss.save_title_job_state({"cancel_requested": True})
                 stop_since = stop_since or time.time()
                 if not _jobs_running() or time.time() - stop_since > STOP_WAIT:
