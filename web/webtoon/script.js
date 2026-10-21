@@ -167,7 +167,14 @@
     } else {
       out += '<span class="wtm-badge" style="background:color-mix(in srgb, #03c75a 22%, transparent);color:color-mix(in srgb, #03a14a 90%, var(--app-text-primary))">네이버</span>';
     }
-    if (t.waitfree && t.status !== '완결') out += '<span class="wtm-badge up">기다무</span>';
+    if (t.waitfree) {  // 기다무: 충전 주기(3시간 등)와 다음 대여권 사용 가능 시각
+      var wp = t.waitfree_period_min || 1440;
+      var wl = wp % 1440 === 0 ? (wp / 1440 === 1 ? '' : (wp / 1440) + '일 ') : (wp % 60 === 0 ? (wp / 60) + '시간 ' : wp + '분 ');
+      var wn = t.waitfree_next ? new Date(t.waitfree_next * 1000) : null;
+      var wt = wn ? (wn <= new Date() ? '대여권 충전됨 - 곧 사용' : '다음 대여권 ' + (wn.getMonth() + 1) + '/' + wn.getDate() + ' ' +
+        String(wn.getHours()).padStart(2, '0') + ':' + String(wn.getMinutes()).padStart(2, '0')) : '';
+      out += '<span class="wtm-badge up"' + (wt ? ' title="' + wt + '"' : '') + '>' + wl + '기다무</span>';
+    }
     if (t.purchased) out += '<span class="wtm-badge new" title="카카오페이지 보관함 > 구매 목록에 있는 작품 - 구독하지 않아도 구매·대여 회차를 받습니다">구매</span>';
     if (t.bl) out += '<span class="wtm-badge rest" title="' + ((state.config_public || {}).ALLOW_BL ? 'BL 장르' : 'BL 장르 - [설정] > [공통]에서 허용해야 다운로드됨') + '">BL' + ((state.config_public || {}).ALLOW_BL ? '' : ' (받지 않음)') + '</span>';
     if (t.gl) out += '<span class="wtm-badge rest" title="' + ((state.config_public || {}).ALLOW_GL ? 'GL 장르' : 'GL 장르 - [설정] > [공통]에서 허용해야 다운로드됨') + '">GL' + ((state.config_public || {}).ALLOW_GL ? '' : ' (받지 않음)') + '</span>';

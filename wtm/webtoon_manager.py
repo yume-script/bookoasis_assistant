@@ -676,7 +676,9 @@ class WebtoonManagerMetadataProvider(BaseMetadataProvider):
     def _build_title_items(self, cfg, compare_set):
         """목록 데이터. titles.json/kakao_titles.json이 바뀌지 않았으면 이전 결과를
         그대로 재사용한다(파일 수정 시각 + 비교 폴더 결과로 캐시 키)."""
-        key = (ss.titles_rev(), bool(cfg.get("KAKAO_ENABLE")),
+        key = (ss.titles_rev(), bool(cfg.get("KAKAO_ENABLE")), bool(cfg.get("KAKAO_USE_WAITFREE")),
+               tuple(bool((cfg.get(k) or "").strip()) for k in ("KAKAO_COOKIE", "KAKAO_COOKIE_2", "KAKAO_COOKIE_3",
+                                                               "KAKAO_COOKIE_4", "KAKAO_COOKIE_5")),
                (compare_set or {}).get("_sig") if compare_set is not None else None)
         cached = _TITLE_ITEMS_CACHE.get("v")
         if cached and cached[0] == key:
@@ -692,6 +694,11 @@ class WebtoonManagerMetadataProvider(BaseMetadataProvider):
                 item["gl"] = True
             if platform == "kakao" and "소설" in str(t.get("category") or ""):
                 item["novel"] = True
+            if platform == "kakao" and t.get("waitfree"):
+                from . import kakao_pipeline
+                item["waitfree_period_min"] = int(t.get("waitfree_period_min") or 1440)
+                if cfg.get("KAKAO_USE_WAITFREE") and t.get("has_locked"):
+                    item["waitfree_next"] = kakao_pipeline.next_waitfree_at(cfg, t)
             if compare_set is None:
                 item["in_library"] = None
             else:

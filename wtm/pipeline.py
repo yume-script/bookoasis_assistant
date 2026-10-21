@@ -168,8 +168,9 @@ def in_new_episode_scope(cfg, t, platform="naver", now=None):
     wds = set(t.get("weekdays") or [])
     if "dailyPlus" in wds:
         return True
-    if platform == "kakao" and t.get("waitfree") and t.get("status") != "완결":
-        return True
+    if platform == "kakao" and t.get("waitfree") and (
+            t.get("status") != "완결" or (cfg.get("KAKAO_USE_WAITFREE") and t.get("has_locked"))):
+        return True  # 기다무: 연재 중이거나, 완결이라도 대여권으로 열 회차가 남아 있으면
     return bool(wds & target_weekdays(now))
 
 

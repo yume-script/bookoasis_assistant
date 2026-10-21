@@ -136,6 +136,10 @@ def _is_finished_scan_due(job, target_hour):
         return False
 
 
+WAITFREE_TICK_SECONDS = 300
+_wf_state = {"checked": 0.0}
+
+
 def _loop(get_cfg_func, run_full_cycle_func, run_finished_scan_func):
     from . import state_store as _ss
     try:
@@ -208,6 +212,25 @@ def _loop(get_cfg_func, run_full_cycle_func, run_finished_scan_func):
                             run_finished_scan_func(cfg, log=_ss.append_log)
                         except Exception as e:  # noqa: BLE001
                             _ss.append_log("스케줄러(완결 스캔) 실행 오류: %s" % e)
+
+        # 기다무 대여권: 자동 실행 주기와 별도로 5분마다 충전된 작품이 있는지 보고 바로 쓴다
+        # (3시간 기다무를 4시간 주기에 맞추면 매번 1시간씩 버려진다)
+        if enabled and time.time() - _wf_state["checked"] >= WAITFREE_TICK_SECONDS:
+            _wf_state["checked"] = time.time()
+            try:
+                from . import kakao_pipeline
+                if kakao_pipeline.waitfree_due_titles(cfg) and _ss.try_acquire_job({
+                        "stage": "waitfree", "message": "스케줄러: 충전된 기다무 대여권 사용",
+                        "started_at": time.time(), "cancel_requested": False, "last_error": None}):
+                    try:
+                        r = kakao_pipeline.run_waitfree_tick(cfg, log=_ss.append_log)
+                        msg = "기다무 대여권 %d장 사용 / 신규 %d화" % (r["waitfree_used"], r["downloaded"])
+                    except Exception as e:  # noqa: BLE001
+                        msg = "기다무 대여권 사용 오류: %s" % e
+                        _ss.append_log(msg)
+                    _ss.save_job_state({"running": False, "stage": "done", "finished_at": time.time(), "message": msg})
+            except Exception as e:  # noqa: BLE001
+                _ss.append_log("기다무 확인 오류(무시): %s" % e)
 
         # 쿠키 자동 갱신은 예약 다운로드를 꺼 둬도 따로 돈다(기본 6시간마다).
         try:

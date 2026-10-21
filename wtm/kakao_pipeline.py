@@ -514,11 +514,77 @@ def _needs_check(cfg, t, now=None):
             and now - float(t.get("last_checked_at") or 0) >= 24 * 3600):
         return True   # 보유 대여권이 새로 생겼을 수 있으니 하루 1번은 확인
     if cfg.get("KAKAO_USE_WAITFREE") and t.get("waitfree") and t.get("has_locked"):
-        period = max(60, int(t.get("waitfree_period_min") or 1440)) * 60
+        period = waitfree_period(t)
         nums = [n for n, _c in accounts(cfg)] or [1]
         if any(now - _ticket_at(t, n) >= period for n in nums):
             return True
     return False
+
+
+def waitfree_period(t):
+    """기다무 충전 주기(초). 작품 정보의 waitfree_period_by_minute (3시간 기다무면 180분), 없으면 24시간."""
+    return max(60, int(t.get("waitfree_period_min") or 1440)) * 60
+
+
+def waitfree_due_titles(cfg, now=None):
+    """기다무 대여권이 (어느 계정이든) 충전돼 지금 쓸 수 있는 작품 {sid: 작품}.
+    구독 중이거나 구매 작품이고, 대여권으로 열 회차가 남아 있는(has_locked) 기다무 작품만. 완결작도 포함."""
+    if not (cfg.get("KAKAO_ENABLE") and cfg.get("KAKAO_USE_WAITFREE")):
+        return {}
+    nums = [n for n, _c in accounts(cfg)]
+    if not nums:
+        return {}
+    now = now or time.time()
+    from . import pipeline as _pl
+    out = {}
+    for sid, t in ss.load_kakao_titles().items():
+        if not (t.get("waitfree") and t.get("has_locked")) or t.get("excluded") or t.get("unsubscribed"):
+            continue
+        if not (t.get("subscribed") or t.get("purchased")) or (_is_novel(t) and not novel_enabled(cfg)):
+            continue
+        if adult_block_reason_any(cfg, t) or _pl.bl_blocked(cfg, t):
+            continue
+        if any(now - _ticket_at(t, n) >= waitfree_period(t) for n in nums):
+            out[sid] = t
+    return out
+
+
+def run_waitfree_tick(cfg, log=print):
+    """충전된 기다무 대여권만 바로 쓰는 가벼운 실행 (스케줄러가 몇 분마다 부름).
+    자동 실행 주기(기본 4시간)를 기다리지 않으므로 3시간 기다무도 충전될 때마다 1화씩 받는다.
+    호출 쪽에서 작업 잠금(try_acquire_job)을 잡고 부른다."""
+    due = waitfree_due_titles(cfg)
+    res = {"titles": len(due), "downloaded": 0, "waitfree_used": 0}
+    if not due:
+        return res
+    log("카카오 기다무: 대여권이 충전된 작품 %d개 확인" % len(due))
+    session = build_session_from_cfg(cfg)
+    try:
+        kakao_api.refresh_token(session, log=log)
+    except kakao_api.KakaoAuthExpired as e:
+        log("카카오페이지: %s" % e)
+    dead = set()
+    try:
+        for sid, t in sorted(due.items(), key=lambda kv: str(kv[1].get("title") or "")):
+            if ss.load_job_state().get("cancel_requested"):
+                break
+            ss.save_job_state({"message": "기다무 대여권 사용: %s" % t.get("title", sid)})
+            r = download_series_all(cfg, session, sid, log=log, dead=dead,
+                                    cancel_check=lambda: bool(ss.load_job_state().get("cancel_requested")))
+            res["downloaded"] += r.get("downloaded", 0)
+            res["waitfree_used"] += r.get("waitfree_used", 0)
+    finally:
+        kakao_api.save_session_cookies(session)
+    log("카카오 기다무: 대여권 %d장 사용 / 신규 %d화" % (res["waitfree_used"], res["downloaded"]))
+    return res
+
+
+def next_waitfree_at(cfg, t):
+    """이 작품에서 다음에 기다무 대여권을 쓸 수 있는 시각 (계정 중 가장 빠른 것). 계정이 없으면 None."""
+    nums = [n for n, _c in accounts(cfg)]
+    if not nums or not t.get("waitfree"):
+        return None
+    return min(_ticket_at(t, n) for n in nums) + waitfree_period(t)
 
 
 def _fill_missing_thumbnails(session, log=print, limit=THUMB_FILL_PER_SCAN, should_cancel=None):
