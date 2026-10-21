@@ -60,11 +60,21 @@
 
     try {
       var bodyText = JSON.stringify(body);
+      var sendText = bodyText;
+      // 쿠키 JSON처럼 큰 요청은 gzip으로 줄여 보낸다 - 앞단 프록시가 8~16KB가 넘는 요청에서 오류를 내는 경우가 있다
+      if (bodyText.length > 4000 && window.CompressionStream) {
+        try {
+          var gzBuf = await new Response(new Blob([bodyText]).stream().pipeThrough(new CompressionStream('gzip'))).arrayBuffer();
+          var bytes = new Uint8Array(gzBuf), bin = '';
+          for (var bi = 0; bi < bytes.length; bi += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(bi, bi + 0x8000));
+          sendText = JSON.stringify({ gz: btoa(bin) });
+        } catch (gzErr) { sendText = bodyText; }
+      }
       var resp = await fetch(ACTION_URL, {
         method: 'POST',
         credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
-        body: bodyText
+        body: sendText
       });
       var respText = await resp.text();
       var data;
@@ -77,7 +87,7 @@
         var hint = resp.status === 413
           ? '리버스 프록시의 요청 크기 제한에 걸렸습니다(nginx: client_max_body_size 10m; 추가 후 nginx 재시작)'
           : '리버스 프록시(nginx 등)가 요청을 이 프로그램에 전달하지 않았습니다 - 프록시 오류 로그를 확인하세요';
-        return { success: false, message: '요청이 거부됨: ' + why + ' (보낸 크기 ' + Math.round(bodyText.length / 1024) + 'KB)\n' + hint };
+        return { success: false, message: '요청이 거부됨: ' + why + ' (보낸 크기 ' + Math.round(sendText.length / 1024) + 'KB)\n' + hint };
       }
       // 코어는 run_context_menu_action()이 {'success': bool, 'message'|'error': str}
       // dict를 반환할 것으로 기대하고, success=false면 HTTP 400으로 내려준다.
@@ -734,6 +744,8 @@
         '<input type="text" class="wtm-input wtm-secret" autocomplete="off" autocapitalize="off" spellcheck="false" ' +
         'data-lpignore="true" data-1p-ignore="true" data-form-type="other" data-setting="' + key + '" placeholder="' +
         (secretSet ? '저장됨 - 바꾸려면 새 값 입력' : '(비어 있음)') + '">' +
+        (/COOKIE/.test(key) ? '<button type="button" class="wtm-btn wtm-btn-secondary wtm-btn-small" data-cookie-file="' + key + '" ' +
+          'title="Cookie-Editor로 내보낸 .json 파일을 골라 이 칸에 넣습니다 (저장은 [설정 저장])" style="white-space:nowrap">파일에서 불러오기</button>' : '') +
         (secretSet ? '<label style="font-size:11px;white-space:nowrap"><input type="checkbox" data-setting-clear="' + key + '"> 지우기</label>' : '') +
         '</div>';
     } else if (f.type === 'textarea') {
@@ -844,6 +856,28 @@
       els('[data-settings-pane]').forEach(function (p) {
         p.style.display = p.getAttribute('data-settings-pane') === settingsSection ? '' : 'none';
       });
+      return;
+    }
+
+    var fileBtn = ev.target.closest('[data-cookie-file]');
+    if (fileBtn) {  // 쿠키 JSON 파일을 골라 칸에 넣는다 (브라우저에서 읽기만, 서버 전송은 [설정 저장] 때)
+      var fkey = fileBtn.getAttribute('data-cookie-file');
+      var picker = document.createElement('input');
+      picker.type = 'file';
+      picker.accept = '.json,.txt,application/json,text/plain';
+      picker.onchange = function () {
+        var file = picker.files && picker.files[0];
+        if (!file) return;
+        file.text().then(function (text) {
+          var field = el('[data-setting="' + fkey + '"]');
+          if (!field) return;
+          field.value = text.trim();
+          markSettingsDirty(true);
+          var m = el('[data-el="settings-save-msg"]');
+          if (m) m.textContent = '📄 ' + file.name + ' (' + Math.round(text.length / 1024) + 'KB)을 넣었습니다 - [설정 저장]을 눌러야 저장됩니다';
+        });
+      };
+      picker.click();
       return;
     }
 

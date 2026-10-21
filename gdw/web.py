@@ -276,6 +276,18 @@ class Handler(BaseHTTPRequestHandler):
             os.replace(tmp, _ui_prefs_path())
             return self._send(200, {"success": True, "ui": prefs})
         if path == "/api/wtm/action":
+            if isinstance(context.get("gz"), str):  # 큰 요청(쿠키 JSON 등)은 화면이 gzip+base64로 줄여 보낸다 (프록시 크기 제한 회피)
+                try:
+                    import base64
+                    import gzip
+                    raw = gzip.decompress(base64.b64decode(context["gz"]))
+                    if len(raw) > MAX_BODY * 4:
+                        return self._send(413, {"success": False, "error": "요청이 너무 큽니다."})
+                    context = json.loads(raw)
+                except (ValueError, OSError, EOFError):
+                    return self._send(400, {"success": False, "error": "압축된 요청을 읽지 못했습니다."})
+                if not isinstance(context, dict):
+                    return self._send(400, {"success": False, "error": "JSON 객체를 보내세요."})
             if not modules()["wtm"]:
                 return self._send(404, {"success": False, "error": "웹툰 다운로더가 꺼져 있습니다 (WTM_ENABLED)."})
             from wtm import service as wtm_service

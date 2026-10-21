@@ -96,9 +96,11 @@ class WebtoonHostTest(unittest.TestCase):
             self.assertEqual(json.load(handle), {"PARALLEL_TITLES": 4})
         env = config.read_env_file()
         self.assertEqual(env["WTM_DOWNLOAD_ROOT"], "/mnt/webtoon")
-        self.assertEqual(env["WTM_KAKAO_COOKIE"], "a=b; c=d")
+        self.assertNotIn("WTM_KAKAO_COOKIE", env)  # 쿠키는 .env가 아니라 cookies/ 파일로
+        with open(host.cookie_path("KAKAO_COOKIE"), encoding="utf-8") as handle:
+            self.assertEqual(handle.read().strip(), "a=b; c=d")
         cfg = host.load_settings()
-        self.assertEqual((cfg["PARALLEL_TITLES"], cfg["DOWNLOAD_ROOT"]), (4, "/mnt/webtoon"))
+        self.assertEqual((cfg["PARALLEL_TITLES"], cfg["DOWNLOAD_ROOT"], cfg["KAKAO_COOKIE"]), (4, "/mnt/webtoon", "a=b; c=d"))
 
     def test_question_mark_placeholder(self):
         path = os.path.join(TMP, "q.db")
@@ -237,6 +239,20 @@ class KakaoAccountsTest(unittest.TestCase):
         self.assertIsNone(kp.adult_block_reason_any(cfg, adult))  # 계정 2는 아직 시도 가능
         adult["adult_block_hash"] = kakao_api._cookie_hash("b=2")  # 예전 형식 필드도 읽음
         self.assertTrue(kp.adult_block_reason_any(cfg, adult))
+
+
+class CookieFileTest(unittest.TestCase):
+    def test_cookie_files(self):
+        os.environ.setdefault("WTM_HOST", "1")
+        from wtm import host
+        config.save_env({"WTM_KAKAO_COOKIE_2": "old=1"})
+        self.assertEqual(host.load_settings().get("KAKAO_COOKIE_2"), "old=1")  # 파일이 없으면 .env
+        host.save_settings(dict(host.load_settings(), KAKAO_COOKIE_2='[{"name": "_kau", "value": "1"}]'))
+        self.assertTrue(os.path.exists(host.cookie_path("KAKAO_COOKIE_2")))
+        self.assertEqual(host.load_settings()["KAKAO_COOKIE_2"], '[{"name": "_kau", "value": "1"}]')
+        self.assertEqual(config.read_env_file().get("WTM_KAKAO_COOKIE_2"), "")  # .env의 예전 값은 비움
+        host.save_settings(dict(host.load_settings(), KAKAO_COOKIE_2=""))
+        self.assertFalse(os.path.exists(host.cookie_path("KAKAO_COOKIE_2")))
 
 
 if __name__ == "__main__":

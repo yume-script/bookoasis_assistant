@@ -43,8 +43,48 @@ ENV_KEYS = (
     "NOTIFY_NTFY_URL", "NOTIFY_NTFY_TOKEN",
     "TELEGRAM_UPLOAD_CHAT_ID", "TELEGRAM_UPLOAD_BOT_TOKEN", "TELEGRAM_UPLOAD_API_URL",
 )
+# 로그인 쿠키는 길고(Cookie-Editor JSON) 계정마다 하나라 .env 대신 파일로 둔다: WTM_DATA_DIR/cookies/<이름>.json
+# 서버에 파일을 직접 넣어도 된다(Cookie-Editor로 내보낸 JSON 그대로). 파일이 없으면 예전처럼 .env(WTM_…) 값을 쓴다.
+COOKIE_FILES = {"NAVER_COOKIE_JSON": "naver.json", "KAKAO_COOKIE": "kakao_1.json", "KAKAO_COOKIE_2": "kakao_2.json",
+                "KAKAO_COOKIE_3": "kakao_3.json", "KAKAO_COOKIE_4": "kakao_4.json", "KAKAO_COOKIE_5": "kakao_5.json"}
+COOKIE_DIR = os.path.join(DATA_DIR, "cookies")
 _LOCK = threading.RLock()
 _ENV_CACHE = {"mtime": None, "values": {}}
+
+
+def cookie_path(key):
+    return os.path.join(COOKIE_DIR, COOKIE_FILES[key])
+
+
+def _read_cookie_file(key):
+    try:
+        with open(cookie_path(key), encoding="utf-8-sig") as f:
+            return f.read().strip()
+    except OSError:
+        return None
+
+
+def _write_cookie_file(key, value):
+    """값이 같으면 쓰지 않는다. 빈 값이면 파일을 지운다."""
+    path = cookie_path(key)
+    if not value:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+        return
+    if _read_cookie_file(key) == value.strip():
+        return
+    os.makedirs(COOKIE_DIR, exist_ok=True)
+    try:
+        os.chmod(COOKIE_DIR, 0o700)
+    except OSError:
+        pass
+    tmp = path + ".tmp"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(value.strip() + "\n")
+    os.replace(tmp, path)
 
 
 def enabled():
@@ -81,6 +121,10 @@ def load_settings():
         value = _env_value(key)
         if value is not None:
             cfg[key] = value
+    for key in COOKIE_FILES:  # 쿠키 파일이 있으면 그 값 (.env보다 우선)
+        value = _read_cookie_file(key)
+        if value:
+            cfg[key] = value
     return cfg
 
 
@@ -88,6 +132,13 @@ def save_settings(cfg):
     """ENV_KEYS는 .env(WTM_…)로, 나머지는 settings.json으로. 바뀐 .env 키만 쓴다."""
     cfg = dict(cfg or {})
     env_patch = {}
+    for key in COOKIE_FILES:  # 쿠키는 파일로. .env에 남은 예전 값은 비워 둔다(두 곳에 다른 값이 남지 않게)
+        if key in cfg:
+            value = cfg.pop(key)
+            value = "" if value is None else str(value)
+            _write_cookie_file(key, value)
+            if _env_value(key):
+                env_patch["WTM_" + key] = ""
     for key in ENV_KEYS:
         if key in cfg:
             value = cfg.pop(key)
