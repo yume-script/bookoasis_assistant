@@ -139,7 +139,8 @@ class WebtoonManagerMetadataProvider(BaseMetadataProvider):
         {"key": "ENABLE_SCHEDULER", "label": "자동 실행 사용", "type": "checkbox", "default": False,
          "hint": "켜면 아래 주기마다 요일별 스캔 + 새 회차 다운로드를 자동으로 합니다."},
         {"key": "INTERVAL_MINUTES", "label": "실행 주기(분)", "type": "number", "default": 240,
-         "hint": "최소 10분."},
+         "hint": "요일별 스캔 + 새 회차 다운로드(네이버·카카오 전체) 주기. 최소 10분. 카카오 기다무 대여권은 이 주기와 "
+                 "상관없이 5분마다 작품별 충전 주기(3시간·1일·2일·3일 등)에 맞춰 충전된 작품만 따로 받습니다."},
         {"key": "FINISHED_SCAN_HOUR", "label": "완결 목록 수집 시각(0~23시)", "type": "number", "default": 4,
          "hint": "하루 1번 완결 작품 전체 목록을 수집합니다."},
         {"key": "NEW_EP_SCOPE", "label": "새 회차 확인 범위", "type": "select", "default": "today",
