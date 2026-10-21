@@ -44,6 +44,13 @@ UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
 # (해시가 달라지면) 이 파일은 무시하고 설정 값부터 다시 시작한다.
 COOKIE_STATE_PATH = os.path.join(ss.DATA_DIR, "kakao_cookie_state.json")
 
+
+def _cookie_state_path(source_hash):
+    """연장된 쿠키를 저장하는 파일. 계정(원래 쿠키)마다 따로 둔다 - 여러 계정이 한 파일을 쓰면
+    서로의 연장 쿠키를 덮어써 다른 계정으로 로그인되거나 연장분을 잃는다."""
+    return os.path.join(ss.DATA_DIR, "kakao_cookie_state.%s.json" % (source_hash or "none")[:16])
+
+
 _SERIES_ID_RE = re.compile(r"(?:content/|series_id=|seriesId=)(\d+)")
 
 
@@ -133,8 +140,11 @@ def build_session(cookie_raw, timeout=15):
     s.request_timeout = int(timeout or 15)
 
     cookies = _parse_cookie_input(cookie_raw)
-    saved = ss.read_json(COOKIE_STATE_PATH, {})
-    if saved.get("source_hash") == _cookie_hash(cookie_raw) and saved.get("cookies"):
+    src = _cookie_hash(cookie_raw)
+    saved = ss.read_json(_cookie_state_path(src), {})
+    if saved.get("source_hash") != src:
+        saved = ss.read_json(COOKIE_STATE_PATH, {})  # 계정별 파일 이전에 저장된 것 (계정 1)
+    if saved.get("source_hash") == src and saved.get("cookies"):
         # refresh_token으로 연장된 최신 쿠키가 있으면 그걸 우선 사용
         cookies = [(c["name"], c["value"], c.get("domain") or ".kakao.com")
                    for c in saved["cookies"] if c.get("name")]
@@ -209,8 +219,9 @@ def save_session_cookies(session):
     try:
         data = [{"name": c.name, "value": c.value, "domain": c.domain or ".kakao.com"}
                 for c in session.cookies if "kakao" in (c.domain or "kakao")]
-        ss.write_json(COOKIE_STATE_PATH, {
-            "source_hash": getattr(session, "kakao_cookie_source_hash", ""),
+        src = getattr(session, "kakao_cookie_source_hash", "")
+        ss.write_json(_cookie_state_path(src), {
+            "source_hash": src,
             "saved_at": time.time(), "cookies": data})
     except Exception:  # noqa: BLE001
         pass

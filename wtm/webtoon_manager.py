@@ -89,6 +89,10 @@ DEFAULTS = {
     "KAVITA_YAML_EMBED_COVER": True,
     "KAKAO_ENABLE": False,
     "KAKAO_COOKIE": "",
+    "KAKAO_COOKIE_2": "",
+    "KAKAO_COOKIE_3": "",
+    "KAKAO_COOKIE_4": "",
+    "KAKAO_COOKIE_5": "",
     "KAKAO_DOWNLOAD_ROOT": "",
     "KAKAO_AUTO": True,
     "KAKAO_USE_WAITFREE": False,
@@ -247,6 +251,11 @@ class WebtoonManagerMetadataProvider(BaseMetadataProvider):
          "hint": "카카오 웹툰 목록 수집/다운로드. 카카오웹소설을 쓰려면 이것도 켜야 합니다."},
         {"key": "KAKAO_COOKIE", "label": "카카오페이지 로그인 쿠키", "type": "password", "required": False,
          "hint": "Cookie-Editor JSON 또는 'a=b; c=d'. 비우면 무료 회차만. 웹소설도 이 쿠키를 씁니다."},
+        {"key": "KAKAO_COOKIE_2", "label": "추가 계정 2 쿠키", "type": "password", "required": False,
+         "hint": "다른 카카오 계정의 로그인 쿠키. 계정 1로 받은 뒤 남은 유료 회차를 이 계정의 기다무·대여권·구매 회차로 다시 시도합니다."},
+        {"key": "KAKAO_COOKIE_3", "label": "추가 계정 3 쿠키", "type": "password", "required": False},
+        {"key": "KAKAO_COOKIE_4", "label": "추가 계정 4 쿠키", "type": "password", "required": False},
+        {"key": "KAKAO_COOKIE_5", "label": "추가 계정 5 쿠키", "type": "password", "required": False},
         {"key": "KAKAO_AUTO", "label": "자동 실행에 포함", "type": "checkbox", "default": True,
          "hint": "자동 실행 때 네이버와 동시에 카카오 웹툰·웹소설 새 회차를 확인합니다."},
         {"key": "KAKAO_DOWNLOAD_ROOT", "label": "저장 경로", "type": "text",
@@ -917,9 +926,10 @@ class WebtoonManagerMetadataProvider(BaseMetadataProvider):
 
     def _act_kakao_verify_cookie(self, cfg, payload):
         """[설정] 탭 '카카오 쿠키 검증' - 입력칸에 새로 붙여넣은 값이 있으면 그걸,
-        없으면 저장된 쿠키를 검증한다."""
-        from . import kakao_api
-        raw = (payload.get("cookie") or "").strip() or (cfg.get("KAKAO_COOKIE") or "").strip()
+        없으면 저장된 쿠키를 검증한다. key: 어느 계정 칸인지(KAKAO_COOKIE, KAKAO_COOKIE_2~5)."""
+        from . import kakao_api, kakao_pipeline
+        key = payload.get("key") if payload.get("key") in ("KAKAO_COOKIE",) + kakao_pipeline.EXTRA_COOKIE_KEYS else "KAKAO_COOKIE"
+        raw = (payload.get("cookie") or "").strip() or (cfg.get(key) or "").strip()
         if not raw:
             return False, "카카오 쿠키가 비어 있습니다. Cookie-Editor로 page.kakao.com 쿠키를 JSON으로 내보내 붙여넣으세요."
         if not kakao_api._parse_cookie_input(raw):
@@ -934,8 +944,9 @@ class WebtoonManagerMetadataProvider(BaseMetadataProvider):
         if res["adult"] is True:
             lines.append("성인 인증: ✅ 됨 - 성인 작품 다운로드 가능")
             # 예전 쿠키로 막혔던 성인 작품들을 다시 시도하도록 표시 해제
-            blocked = {sid: {"adult_block_hash": None} for sid, t in ss.load_kakao_titles().items()
-                       if t.get("adult_block_hash")}
+            blocked = {sid: {"adult_block_hash": None, "adult_block_hashes": None}
+                       for sid, t in ss.load_kakao_titles().items()
+                       if t.get("adult_block_hash") or t.get("adult_block_hashes")}
             if blocked:
                 ss.upsert_kakao_title(blocked)
                 lines.append("성인 인증 실패로 건너뛰던 작품 %d개를 다시 시도하도록 풀었습니다" % len(blocked))
@@ -1612,6 +1623,11 @@ class WebtoonManagerMetadataProvider(BaseMetadataProvider):
         ("naver", "중복 확인", ("COMPARE_FOLDERS_NAVER", "NAVER_DOWNLOAD_OWNED")),
 
         ("kakao", "사용 / 계정(웹툰·웹소설 공통)", ("KAKAO_ENABLE", "KAKAO_COOKIE", "KAKAO_AUTO")),
+        ("kakao", "추가 계정(여러 계정)", ("KAKAO_COOKIE_2", "KAKAO_COOKIE_3", "KAKAO_COOKIE_4", "KAKAO_COOKIE_5"),
+         "작품마다 계정 1(위의 로그인 쿠키)로 받은 뒤, 아직 잠긴 회차가 남았거나 성인 인증으로 막혔으면 추가 계정으로 차례로 "
+         "다시 시도합니다. 계정마다 자기 기다무 대여권·보유 대여권·구매 회차를 쓰고(대여권 설정은 계정 1과 같음), "
+         "구매 작품 동기화도 모든 계정의 구매 목록을 모읍니다. 쿠키는 .env의 WTM_KAKAO_COOKIE_2~5에 저장됩니다. "
+         "여러 계정으로 무료 혜택을 늘리는 것은 카카오 이용약관에 어긋날 수 있으니 본인·가족 계정으로만 쓰세요."),
         ("kakao", "다운로드", ("KAKAO_DOWNLOAD_ROOT", "KAKAO_DOWNLOAD_WAITFREE", "KAKAO_SYNC_PURCHASED")),
         ("kakao", "대여권(웹툰·웹소설 공통)", ("KAKAO_USE_WAITFREE", "KAKAO_USE_OWNED_TICKETS",
                                             "KAKAO_USE_PAID_TICKETS")),

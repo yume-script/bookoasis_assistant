@@ -224,5 +224,20 @@ class McpTest(unittest.TestCase):
         self.assertEqual(mcp.handle({"jsonrpc": "2.0", "id": 5, "method": "nope"}, mods, None)[1]["error"]["code"], -32601)
 
 
+class KakaoAccountsTest(unittest.TestCase):
+    def test_accounts_and_blocks(self):
+        os.environ.setdefault("WTM_HOST", "1")
+        from wtm import kakao_api, kakao_pipeline as kp
+        cfg = {"KAKAO_COOKIE": "a=1", "KAKAO_COOKIE_2": "b=2", "KAKAO_COOKIE_3": "a=1", "KAKAO_COOKIE_5": " "}
+        self.assertEqual(kp.accounts(cfg), [(1, "a=1"), (2, "b=2")])  # 같은 쿠키·빈 칸은 빠짐
+        t = {"last_ticket_at": 100, "ticket_at_acc": {"2": 200}}
+        self.assertEqual((kp._ticket_at(t, 1), kp._ticket_at(t, 2), kp._ticket_at(t, 3)), (100, 200, 0))
+        adult = {"adult": True, "adult_block_hashes": [kakao_api._cookie_hash("a=1")]}
+        self.assertTrue(kp.adult_block_reason(cfg, adult))
+        self.assertIsNone(kp.adult_block_reason_any(cfg, adult))  # 계정 2는 아직 시도 가능
+        adult["adult_block_hash"] = kakao_api._cookie_hash("b=2")  # 예전 형식 필드도 읽음
+        self.assertTrue(kp.adult_block_reason_any(cfg, adult))
+
+
 if __name__ == "__main__":
     unittest.main()

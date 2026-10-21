@@ -96,12 +96,25 @@ def _alert_once(cfg, platform, src_hash, title, desc, log):
 
 
 def keep_kakao(cfg, log=print):
-    from . import kakao_api, kakao_pipeline
-    raw = (cfg.get("KAKAO_COOKIE") or "").strip()
-    if not raw or not cfg.get("KAKAO_ENABLE"):
+    """카카오 계정마다 토큰 연장·로그인 확인. 반환: 계정 1의 로그인 여부 (계정 1 쿠키가 없으면 None)."""
+    from . import kakao_pipeline
+    if not cfg.get("KAKAO_ENABLE"):
         return None
+    result = None
+    for n, raw in kakao_pipeline.accounts(cfg):
+        ok = _keep_kakao_one(cfg, raw, "kakao" if n == 1 else "kakao_%d" % n,
+                             "카카오페이지" if n == 1 else "카카오페이지 계정%d" % n, log)
+        if n == 1:
+            result = ok
+    if result is None:  # 계정 1 쿠키 없이 추가 계정만 있을 때도 갱신 주기는 계정 1 기록으로 센다
+        _save("kakao", {"last_at": time.time()})
+    return result
+
+
+def _keep_kakao_one(cfg, raw, state_key, name, log):
+    from . import kakao_api, kakao_pipeline
     src = kakao_api._cookie_hash(raw)
-    session = kakao_pipeline.build_session_from_cfg(cfg)
+    session = kakao_pipeline.build_session_from_cfg(kakao_pipeline.account_cfg(cfg, raw))
     refreshed, logged_in, detail = False, None, ""
     try:
         kakao_api.refresh_token(session, log=log)
@@ -119,14 +132,14 @@ def keep_kakao(cfg, log=print):
             detail = "로그인 확인 실패(네트워크?): %s" % e
     if logged_in:
         kakao_api.save_session_cookies(session)
-    _save("kakao", {"last_at": time.time(), "ok": logged_in, "refreshed": refreshed,
-                    "detail": detail, "source_hash": src})
+    _save(state_key, {"last_at": time.time(), "ok": logged_in, "refreshed": refreshed,
+                      "detail": detail, "source_hash": src})
     if logged_in is False:
-        _alert_once(cfg, "kakao", src, "🍪 카카오페이지 쿠키 만료",
-                    "로그인이 풀렸습니다(%s). [설정] > 카카오페이지에서 쿠키를 새로 넣어주세요. "
-                    "그 전까지는 무료 회차만 받습니다." % (detail or "자동 연장 실패"), log)
+        _alert_once(cfg, state_key, src, "🍪 %s 쿠키 만료" % name,
+                    "로그인이 풀렸습니다(%s). [설정] > 카카오웹툰에서 이 계정의 쿠키를 새로 넣어주세요. "
+                    "그 전까지는 이 계정으로 유료 회차를 받지 않습니다." % (detail or "자동 연장 실패"), log)
     elif logged_in:
-        log("카카오페이지 쿠키 자동 갱신 완료%s" % ("" if refreshed else "(연장 응답 없음, 로그인은 유지 중)"))
+        log("%s 쿠키 자동 갱신 완료%s" % (name, ("" if refreshed else "(연장 응답 없음, 로그인은 유지 중)")))
     return logged_in
 
 

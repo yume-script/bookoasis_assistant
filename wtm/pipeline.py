@@ -1030,7 +1030,7 @@ def run_full_cycle(cfg, log=print):
                     from . import kakao_pipeline
                     kakao_box["result"] = kakao_pipeline.run_kakao_cycle(cfg, log=log)
                     # 하루 1번 구매 작품 동기화(로그인 쿠키가 있을 때)
-                    if ((cfg.get("KAKAO_COOKIE") or "").strip() and _cfg_bool(cfg, "KAKAO_SYNC_PURCHASED", True)
+                    if (kakao_pipeline.accounts(cfg) and _cfg_bool(cfg, "KAKAO_SYNC_PURCHASED", True)
                             and not ss.load_job_state().get("cancel_requested")
                             and time.time() - float(ss.load_job_state().get("last_kakao_purchase_sync_at") or 0)
                             >= 24 * 3600):
