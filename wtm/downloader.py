@@ -269,9 +269,15 @@ _MOVE_WORKERS = 3
 # 옮기기 대기가 이보다 많으면(라이브러리 쓰기가 다운로드보다 느림) 다운로드 쪽이 잠깐 기다린다
 # - 로컬 임시 디스크에 zip이 무한정 쌓이지 않게.
 _MAX_PENDING_MOVES = 24
+# 옮기기 대기가 가득 찬 채 이 시간이 지나면 더 기다리지 않고 zip을 임시 폴더에 둔 채 다음 회차로 넘어간다.
+# 라이브러리(원격 마운트) 쓰기가 멈추면 예전엔 다운로드 전체(네이버·카카오)가 무한정 멈췄다.
+_MOVE_GATE_WAIT = 120
+_SLOW_MOVE_SECONDS = 120   # 옮기기 하나가 이보다 오래 걸리면 로그
 _mover = None
 _mover_lock = threading.Lock()
 _pending = {}          # series_dir -> set(Future)
+_started = {}          # Future -> 시작 시각
+_gate_warned = {"at": 0.0}
 
 
 def _get_mover():
@@ -326,24 +332,42 @@ def _queue_move(src, series_dir, name, log=None, wait=False):
         return _move_into_library(src, series_dir, name, log=log)
 
     def _job():
+        t0 = time.time()
         try:
             return _move_into_library(src, series_dir, name, log=log)
         except Exception as e:  # noqa: BLE001
             if log:
                 log("라이브러리로 옮기기 실패(다음 실행 때 다시 시도): %s -> %s (%s)" % (name, series_dir, e))
             raise
+        finally:
+            took = time.time() - t0
+            if took > _SLOW_MOVE_SECONDS and log:
+                log("라이브러리로 옮기는 데 %d초 걸림: %s (라이브러리 마운트 쓰기가 느림)" % (took, name))
+    deadline = time.time() + _MOVE_GATE_WAIT
     while True:
         with _mover_lock:
             n_pending = sum(len(v) for v in _pending.values())
+            oldest = min(_started.values()) if _started else None
         if n_pending < _MAX_PENDING_MOVES:
             break
+        if time.time() >= deadline:
+            # 옮기기가 전혀 줄지 않음(마운트 쓰기 멈춤 등): zip은 임시 폴더에 두고(.dest 기록됨) 다음 회차로.
+            # 이미 받은 회차로 인정되고(find_existing_episode_archive가 임시 폴더도 봄), 나중에 flush_outbox가 옮긴다.
+            if log and time.time() - _gate_warned["at"] > 600:
+                _gate_warned["at"] = time.time()
+                log("라이브러리로 옮기기가 밀려 있음(옮기는 중 %d개, 가장 오래된 것 %d초째) - 받은 zip은 임시 폴더에 두고 "
+                    "다음 회차를 계속 받습니다. 라이브러리 마운트 상태를 확인하세요" % (
+                        n_pending, int(time.time() - oldest) if oldest else 0))
+            return os.path.join(series_dir, name)
         time.sleep(0.2)
     fut = _get_mover().submit(_job)
     with _mover_lock:
         _pending.setdefault(series_dir, set()).add(fut)
+        _started[fut] = time.time()
 
     def _done(f, sd=series_dir):
         with _mover_lock:
+            _started.pop(f, None)
             s_ = _pending.get(sd)
             if s_:
                 s_.discard(f)

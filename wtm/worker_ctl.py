@@ -354,6 +354,7 @@ def run_worker():
         # 다음 주기를 기다리지 않고 곧바로 다시 돌게 한다 (마지막 실행 시각을 비움)
         resume = bool(job0.get("resume_after_restart")) or (job0.get("running") and job0.get("stage") != "waitfree")
         patch = {"running": False, "stage": "idle", "cancel_requested": False, "resume_after_restart": False,
+                 "naver": None, "kakao": None,   # 끊긴 실행의 플랫폼별 진행 줄이 화면에 계속 남지 않게
                  "message": "작업 프로세스가 다시 시작되어 이전 작업 표시를 정리했습니다"}
         if resume:
             patch["last_scan_at"] = None
