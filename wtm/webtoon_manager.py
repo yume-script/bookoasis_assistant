@@ -971,6 +971,8 @@ class WebtoonManagerMetadataProvider(BaseMetadataProvider):
         if res.get("detail") and not res["logged_in"]:
             lines.append("상세: %s" % res["detail"])
         lines.append(self._keepalive_line(cfg, "kakao"))
+        if (payload.get("cookie") or "").strip():
+            lines.append("⚠️ 검증만 했고 아직 저장하지 않았습니다 - [설정 저장]을 눌러야 다시 시작해도 유지됩니다")
         return bool(res["logged_in"]), " / ".join(lines)
 
     def _keepalive_line(self, cfg, platform):

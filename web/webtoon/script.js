@@ -754,6 +754,23 @@
       '<span class="wtm-set-label">' + label + '</span>' + input + hint + '</div>';
   }
 
+  // 저장하지 않은 설정 (쿠키를 붙여 넣고 검증만 한 채 떠나면 사라지므로 알려 준다)
+  var settingsDirty = false;
+  function markSettingsDirty(on) {
+    settingsDirty = on;
+    var msg = el('[data-el="settings-save-msg"]');
+    if (msg && on) msg.textContent = '⚠️ 저장하지 않은 변경이 있습니다 - [설정 저장]을 눌러야 유지됩니다';
+  }
+  document.addEventListener('input', function (ev) {
+    if (ev.target.closest && ev.target.closest('[data-setting], [data-setting-clear]')) markSettingsDirty(true);
+  });
+  document.addEventListener('change', function (ev) {
+    if (ev.target.closest && ev.target.closest('[data-setting], [data-setting-clear]')) markSettingsDirty(true);
+  });
+  window.addEventListener('beforeunload', function (ev) {
+    if (settingsDirty) { ev.preventDefault(); ev.returnValue = ''; }
+  });
+
   async function saveSettingsForm() {
     var msg = el('[data-el="settings-save-msg"]');
     var values = {};
@@ -772,6 +789,7 @@
     els('[data-el="settings-save"]').forEach(function (b) { b.disabled = false; });
     if (msg) msg.textContent = (r.success ? '✅ ' : '❌ ') + (r.message || '');
     if (r.success) {
+      settingsDirty = false;
       await loadSettingsForm(true);
       await refresh();
     }
@@ -830,7 +848,7 @@
     var saveBtn = ev.target.closest('[data-el="settings-save"]');
     if (saveBtn) { saveSettingsForm(); return; }
     var reloadBtn = ev.target.closest('[data-el="settings-reload"]');
-    if (reloadBtn) { loadSettingsForm(true); return; }
+    if (reloadBtn) { settingsDirty = false; loadSettingsForm(true); return; }
 
     var moreBtn = ev.target.closest('[data-el="grid-more"]');
     if (moreBtn) {

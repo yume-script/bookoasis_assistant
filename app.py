@@ -38,6 +38,13 @@ def _is_loopback(host):
         return False
 
 
+def kakao_accounts_text(cfg):
+    """카카오 쿠키가 저장된 계정 번호 (.env의 WTM_KAKAO_COOKIE, WTM_KAKAO_COOKIE_2~5)"""
+    keys = ("KAKAO_COOKIE", "KAKAO_COOKIE_2", "KAKAO_COOKIE_3", "KAKAO_COOKIE_4", "KAKAO_COOKIE_5")
+    nums = [str(i) for i, k in enumerate(keys, start=1) if str(cfg.get(k) or "").strip()]
+    return ("계정 " + ", ".join(nums)) if nums else "없음"
+
+
 def check_wtm():
     from wtm import host
     problems = 0
@@ -55,7 +62,7 @@ def check_wtm():
         print(f"  {label:<10}: {path}  {'✓' if ok else '✗ 없거나 쓸 수 없음'}")
         problems += 0 if ok else 1
     print(f"  쿠키          : 네이버 {'있음' if cfg.get('NAVER_COOKIE_JSON') else '없음'} · "
-          f"카카오 {'있음' if cfg.get('KAKAO_COOKIE') else '없음'}")
+          f"카카오 {kakao_accounts_text(cfg)}")
     try:
         import requests  # noqa: F401
     except ImportError:
@@ -150,6 +157,12 @@ def main():
              "BookOasis DB" if bookoasis_db.configured() else config.libraries_file(),
              ", ".join(name for name, on in (("드라이브 변경 감시", mods["gdw"]), ("웹툰 다운로더", mods["wtm"]),
                                              ("미니게임", mods["mini"])) if on))
+    if mods["wtm"]:  # 재시작 뒤 어떤 카카오 계정 쿠키가 살아 있는지 로그로 바로 확인할 수 있게
+        try:
+            from wtm import host as wtm_host
+            log.info("웹툰 다운로더 카카오 쿠키: %s", kakao_accounts_text(wtm_host.load_settings()))
+        except Exception:  # noqa: BLE001
+            pass
     try:
         server.serve_forever()
     finally:
