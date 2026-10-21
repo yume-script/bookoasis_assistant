@@ -35,6 +35,7 @@
     'right-from-bracket': '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/>',
     'trash': '<path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>',
     'chevron-down': '<path d="m6 9 6 6 6-6"/>',
+    'chevron-up': '<path d="m18 15-6-6-6 6"/>',
     'palette': '<circle cx="13.5" cy="6.5" r="1.2" fill="currentColor"/><circle cx="17.5" cy="10.5" r="1.2" fill="currentColor"/><circle cx="8.5" cy="7.5" r="1.2" fill="currentColor"/><circle cx="6.5" cy="12.5" r="1.2" fill="currentColor"/><path d="M12 2a10 10 0 0 0 0 20 2 2 0 0 0 2-2c0-.5-.2-1-.5-1.3-.3-.4-.5-.8-.5-1.3a2 2 0 0 1 2-2h2.4A5.6 5.6 0 0 0 22 9.8C22 5.5 17.5 2 12 2z"/>'
   };
   var MENU = [
@@ -74,7 +75,7 @@
     { id: 'red', label: '빨강', color: '#ef4444' }, { id: 'pink', label: '분홍', color: '#ec4899' },
     { id: 'teal', label: '청록', color: '#14b8a6' }
   ];
-  var THEME_KEY = 'bo_theme', OPEN_KEY = 'bo_nav_open';
+  var THEME_KEY = 'bo_theme', OPEN_KEY = 'bo_nav_open', NAV_KEY = 'bo_nav_order';
   var root = document.documentElement;
   var current = document.body.getAttribute('data-module');
   var mod = MENU.filter(function (m) { return m.id === current; })[0];
@@ -84,6 +85,7 @@
   function h(tag, attrs, children) {
     var n = document.createElement(tag);
     Object.keys(attrs || {}).forEach(function (k) {
+      if (attrs[k] == null) return;  // null이면 속성을 두지 않는다 (disabled: 조건 ? 'disabled' : null)
       if (k === 'text') n.textContent = attrs[k];
       else if (k === 'class') n.className = attrs[k];
       else if (k.slice(0, 2) === 'on') n.addEventListener(k.slice(2), attrs[k]);
@@ -256,6 +258,7 @@
         return h('div', {}, [h('p', { class: 'muted', text: '모든 브라우저의 기본 테마입니다. 브라우저마다 따로 고르려면 왼쪽 아래 계정 옆의 팔레트 버튼을 쓰세요.' }),
           themePicker(true)]);
       },
+      '메뉴': navPane,
       '사용자': usersPane,
       'MCP': mcpPane,
       '정보': function () {
@@ -284,6 +287,53 @@
   }
   var info = {};
 
+  /** 설정 > 메뉴: 사이드 메뉴의 모듈 순서와 각 모듈 안 메뉴 순서 (모든 브라우저 공통, ui_prefs.json) */
+  function navPane() {
+    var box = h('div', { class: 'nav-order' });
+    function save() {
+      storeSet(NAV_KEY, JSON.stringify(navOrder));
+      applyNavOrder();
+      api('api/ui-prefs', { nav: navOrder }).catch(function (e) { toast(e.message, 'error'); });
+      draw();
+    }
+    function move(list, index, delta) {  // 지금 보이는 순서 전체를 저장해 둔다 (기본 순서가 바뀌어도 그대로)
+      var j = index + delta;
+      if (j < 0 || j >= list.length) return null;
+      var copy = list.slice();
+      var tmp = copy[index]; copy[index] = copy[j]; copy[j] = tmp;
+      return copy;
+    }
+    function arrows(list, index, apply, label) {
+      return h('span', { class: 'row-actions' }, [
+        h('button', { type: 'button', class: 'icon-btn', title: label + ' 위로', 'aria-label': label + ' 위로', disabled: index === 0 ? 'disabled' : null,
+          onclick: function () { var l = move(list, index, -1); if (l) { apply(l); save(); } } }, [icon('chevron-up')]),
+        h('button', { type: 'button', class: 'icon-btn', title: label + ' 아래로', 'aria-label': label + ' 아래로', disabled: index === list.length - 1 ? 'disabled' : null,
+          onclick: function () { var l = move(list, index, 1); if (l) { apply(l); save(); } } }, [icon('chevron-down')])]);
+    }
+    function draw() {
+      while (box.firstChild) box.removeChild(box.firstChild);
+      box.appendChild(h('p', { class: 'muted', text: '왼쪽 메뉴의 순서입니다. 모든 브라우저에 똑같이 적용됩니다. 꺼진 모듈은 보이지 않습니다.' }));
+      var mods = orderedMenu().filter(function (m) { return info[m.id] !== false; });
+      var groupIds = mods.map(function (m) { return m.id; });
+      mods.forEach(function (m, gi) {
+        var tabs = orderedItems(m).map(function (it) { return it.tab; });
+        var card = h('div', { class: 'nav-order-group' }, [
+          h('div', { class: 'about-row nav-order-head' }, [h('b', { text: m.title }),
+            arrows(groupIds, gi, function (l) { navOrder.groups = l; }, m.title)])]);
+        orderedItems(m).forEach(function (it, ii) {
+          card.appendChild(h('div', { class: 'nav-order-item' }, [h('span', { text: it.label }),
+            arrows(tabs, ii, function (l) { navOrder.items[m.id] = l; }, it.label)]));
+        });
+        box.appendChild(card);
+      });
+      box.appendChild(h('div', { class: 'user-add' }, [h('button', { type: 'button', class: 'btn', text: '기본 순서로', onclick: function () {
+        navOrder = { groups: [], items: {} };
+        save();
+      } })]));
+    }
+    draw();
+    return box;
+  }
   /** 설정 > 사용자 (YMPlayer 사용자 관리). 이 화면은 관리용이라 모든 사용자가 관리자다. */
   function usersPane() {
     var box = h('div', { class: 'users-box' });
@@ -434,6 +484,31 @@
     h('div', { class: 'crumbs' }, [h('span', { text: mod ? mod.title : '' }), h('span', { class: 'sep', text: '›' }), crumbTab])
   ]);
 
+  // ── 메뉴 순서 (설정 > 메뉴). 서버 값(ui_prefs.json의 nav)을 브라우저에도 적어 두어 다음에 열 때 바로 그 순서로 그린다 ──
+  var navOrder = (function () { var n = readJSON(NAV_KEY); return { groups: n.groups || [], items: n.items || {} }; })();
+  function byOrder(list, order, key) {  // order에 있는 것은 그 순서로 앞에, 없는 것(새 메뉴)은 원래 순서대로 뒤에
+    var rank = {};
+    (order || []).forEach(function (id, i) { rank[id] = i; });
+    return list.map(function (x, i) { return { x: x, i: i }; }).sort(function (a, b) {
+      var ra = key(a.x) in rank ? rank[key(a.x)] : order.length + a.i;
+      var rb = key(b.x) in rank ? rank[key(b.x)] : order.length + b.i;
+      return ra - rb;
+    }).map(function (o) { return o.x; });
+  }
+  function orderedMenu() { return byOrder(MENU, navOrder.groups, function (m) { return m.id; }); }
+  function orderedItems(m) { return byOrder(m.items, navOrder.items[m.id] || [], function (it) { return it.tab; }); }
+  function applyNavOrder() {
+    var foot = nav.querySelector('.nav-footer');
+    orderedMenu().forEach(function (m) {
+      var g = nav.querySelector('.nav-group[data-module="' + m.id + '"]');
+      if (g) nav.insertBefore(g, foot);
+      orderedItems(m).forEach(function (it) {
+        var link = m.itemsEl && m.itemsEl.querySelector('.nav-link[data-tab="' + CSS.escape(it.tab) + '"]');
+        if (link) m.itemsEl.appendChild(link);
+      });
+    });
+  }
+
   // ── 사이드바 ──
   var nav = h('nav', { id: 'nav', class: 'sidebar', 'aria-label': '메뉴' });
   var groups = [];
@@ -461,14 +536,14 @@
     }
     m.itemsEl.appendChild(link);
   }
-  MENU.forEach(function (m) {
+  orderedMenu().forEach(function (m) {
     var group = h('div', { class: 'nav-group', 'data-module': m.id });
     var head = h('button', { type: 'button', class: 'nav-head nav-toggle', title: m.title + ' 메뉴 펼치기/접기',
       onclick: function () { openGroup(group.classList.contains('collapsed') ? m.id : null); } },
       [h('span', { text: m.title }), icon('chevron-down', 'nav-chevron')]);
     var items = h('div', { class: 'nav-items' });
     m.itemsEl = items;
-    m.items.forEach(function (it) { addItem(m, it); });
+    orderedItems(m).forEach(function (it) { addItem(m, it); });
     group.appendChild(head);
     group.appendChild(items);
     groups.push(group);
@@ -530,9 +605,14 @@
       miniMenu.items.push(it);
       addItem(miniMenu, it);
     });
-    syncActive();
     info = m;
     if (m.ui) setDefaults(m.ui);
+    if (m.ui && m.ui.nav) {  // 다른 브라우저에서 바꾼 순서
+      navOrder = { groups: m.ui.nav.groups || [], items: m.ui.nav.items || {} };
+      storeSet(NAV_KEY, JSON.stringify(navOrder));
+    }
+    applyNavOrder();  // 서버에서 받은 게임 메뉴도 순서대로
+    syncActive();
     // 아이콘 배지: 지금 보는 화면의 모듈 버전 (드라이브 변경 감시 / 웹툰 다운로더 / 미니게임마다 다름)
     var ver = (m.versions && current && m.versions[current]) || m.version;
     if (ver) { verEl.textContent = ver; document.title = document.title + ' · v' + ver; }

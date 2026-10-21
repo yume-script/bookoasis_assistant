@@ -22,6 +22,7 @@ import json
 import logging
 import mimetypes
 import os
+import re
 import time
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -44,6 +45,7 @@ MAX_BODY = 2 * 1024 * 1024
 
 
 THEMES = ("dark", "light", "black", "navy", "auto")
+NAV_ID = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
 ACCENTS = ("amber", "blue", "green", "purple", "red", "pink", "teal")
 
 
@@ -59,7 +61,24 @@ def ui_prefs():
     except (OSError, ValueError):
         data = {}
     return {"theme": data.get("theme") if data.get("theme") in THEMES else "dark",
-            "accent": data.get("accent") if data.get("accent") in ACCENTS else "amber"}
+            "accent": data.get("accent") if data.get("accent") in ACCENTS else "amber",
+            "nav": _clean_nav(data.get("nav"))}
+
+
+def _clean_nav(raw):
+    """사이드 메뉴 순서 {"groups": [모듈 id…], "items": {모듈 id: [메뉴 id…]}}. 화면에서 온 값을 믿지 않고 정리한다.
+    목록에 없는 메뉴(새로 생긴 게임 등)는 화면이 기본 순서대로 뒤에 붙인다."""
+    def ids(values):
+        out = []
+        for v in values if isinstance(values, list) else []:
+            v = str(v)
+            if NAV_ID.match(v) and v not in out:
+                out.append(v)
+        return out[:200]
+    raw = raw if isinstance(raw, dict) else {}
+    items = raw.get("items") if isinstance(raw.get("items"), dict) else {}
+    return {"groups": [g for g in ids(raw.get("groups")) if g in ("gdw", "wtm", "mini")],
+            "items": {k: ids(v) for k, v in items.items() if k in ("gdw", "wtm", "mini")}}
 
 
 def module_versions():
@@ -242,9 +261,14 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 mcp.new_token()
             return self._send(200, {"success": True, "enabled": mcp.enabled(), "token": mcp.token()})
-        if path == "/api/ui-prefs":  # 설정 > 화면: 기본 테마 저장
-            prefs = {"theme": context.get("theme") if context.get("theme") in THEMES else "dark",
-                     "accent": context.get("accent") if context.get("accent") in ACCENTS else "amber"}
+        if path == "/api/ui-prefs":  # 설정 > 화면: 기본 테마 / 설정 > 메뉴: 사이드 메뉴 순서 (보낸 항목만 바꾼다)
+            prefs = ui_prefs()
+            if context.get("theme") in THEMES:
+                prefs["theme"] = context["theme"]
+            if context.get("accent") in ACCENTS:
+                prefs["accent"] = context["accent"]
+            if "nav" in context:
+                prefs["nav"] = _clean_nav(context.get("nav"))
             os.makedirs(config.data_dir(), exist_ok=True)
             tmp = _ui_prefs_path() + ".tmp"
             with open(tmp, "w", encoding="utf-8") as f:
