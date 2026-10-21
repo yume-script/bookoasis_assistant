@@ -521,7 +521,7 @@ def _needs_check(cfg, t, now=None):
     return False
 
 
-WAITFREE_TICK_MAX = 20   # 기다무 확인 한 번에 처리할 작품 수
+WAITFREE_TICK_MAX = 30   # 기다무 확인 한 번에 처리할 작품 수
 
 
 def waitfree_period(t):
