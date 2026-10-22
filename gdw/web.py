@@ -120,7 +120,10 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header(key, value)
         self.end_headers()
         if self.command != "HEAD":
-            self.wfile.write(data)
+            try:
+                self.wfile.write(data)
+            except (BrokenPipeError, ConnectionResetError):  # 브라우저가 응답 전에 닫음(새로고침·탭 닫기) - 무시
+                self.close_connection = True
 
     def _user(self):
         """로그인한 사용자 (세션 쿠키), 아니면 None"""
