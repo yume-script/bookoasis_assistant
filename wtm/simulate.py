@@ -96,8 +96,8 @@ def simulate(cfg, hours=24, per_title=10.0, full_dur=None, now=None, pause_full=
     nums = [n for n, _c in kp.accounts(cfg) if n == 1 or not job.get("kakao_cookie_expired_notified_%d" % n)]
     if not nums:
         return None
-    # 대상 작품: 실제 기다무 확인과 같은 조건 (충전 여부만 빼고 - 아주 먼 미래 시각으로 물어 본다)
-    cands = kp.waitfree_due_titles(cfg, now=now + 10 * 365 * 86400)
+    # 대상 작품: 실제 기다무 확인과 같은 조건 (충전 여부는 아래에서 따라감)
+    _nums, cands = kp._waitfree_candidates(cfg)
     st = {}
     for sid, t in cands.items():
         left = max(0, int(t.get("episode_count") or 0) - int(t.get("last_downloaded_no") or 0))
@@ -114,11 +114,48 @@ def simulate(cfg, hours=24, per_title=10.0, full_dur=None, now=None, pause_full=
                 blocks.append((s, s + full_dur))
             s += interval
 
-    win = kp._night_window(cfg)
+    win = kp._night_hour(cfg)   # '1일 이상 기다무는 새벽부터'의 시작 시 (끄면 None)
+    nstate = dict(job.get("waitfree_night") or {})
 
-    def ready(x, n, at):  # kakao_pipeline.ready_at과 같은 규칙 (긴 주기 기다무는 새벽 시간대로)
-        base = x["tick"][n] + x["period"] if x["tick"][n] else at
-        return kp._window_start(win, base) if win and x["period"] >= kp.NIGHT_MIN_PERIOD else base
+    def is_night(x):
+        return win is not None and x["period"] >= kp.NIGHT_MIN_PERIOD
+
+    def ready(x, n, at):  # kakao_pipeline.ready_at과 같은 규칙
+        if not is_night(x):
+            return x["tick"][n] + x["period"] if x["tick"][n] else at
+        base = max((x["tick"][m] + x["period"]) if x["tick"][m] else at for m in nums)   # 계정들이 모두 충전되면 같이
+        return kp._night_ready(base, info_at(at))
+
+    _info = {}
+
+    def info_at(at):  # night_info는 시각(분 단위)과 상태가 같으면 결과가 같다 - 작품마다 다시 구하지 않게
+        k = int(at // 60)
+        if k not in _info:
+            if len(_info) > 1000:
+                _info.clear()
+            _info[k] = kp.night_info(cfg, at, state=nstate)
+        return _info[k]
+
+    def update_night(at):  # kakao_pipeline.update_night과 같은 규칙
+        if win is None:
+            return
+        info = info_at(at)
+        if not info["active"]:
+            return
+        if nstate.get("start") != info["start"]:
+            bursts = nstate.get("bursts") or []
+            nstate.clear()
+            nstate.update({"start": info["start"], "done": False, "bursts": bursts})
+            _info.clear()
+        if at - info["start"] < 10 * 60:
+            return
+        charges = [(None if not all(x["tick"][n] for n in nums) else max(x["tick"][n] for n in nums) + x["period"],
+                    x["period"]) for x in st.values() if is_night(x)]
+        if kp._night_busy(charges, at, info):
+            return
+        _info.clear()
+        nstate.update({"done": True, "done_at": at, "bursts": (list(nstate.get("bursts") or []) + [[info["start"], at]])[-10:]})
+        night_ends.append((info["start"], at))
 
     def charged(x, at):
         return [n for n in nums if ready(x, n, at) <= at]
@@ -126,7 +163,7 @@ def simulate(cfg, hours=24, per_title=10.0, full_dur=None, now=None, pause_full=
     def key(item):
         x = item[1]
         known = [ready(x, n, t) for n in nums if x["tick"][n]]
-        night = 1 if win and x["period"] >= kp.NIGHT_MIN_PERIOD else 0   # waitfree_order와 같게: 새벽으로 미룬 작품은 뒤에
+        night = 1 if is_night(x) else 0   # waitfree_order와 같게: 새벽으로 미룬 작품은 뒤에
         return (night, 0 if known else 1, min(known) if known else 0)
 
     def next_charge(at):
@@ -138,6 +175,7 @@ def simulate(cfg, hours=24, per_title=10.0, full_dur=None, now=None, pause_full=
                     best = c
         return best
 
+    night_ends = []
     end = now + hours * 3600
     t = now
     visits, rounds = [], []
@@ -146,6 +184,7 @@ def simulate(cfg, hours=24, per_title=10.0, full_dur=None, now=None, pause_full=
         if blk:
             t = blk[1] + 60
             continue
+        update_night(t)
         due = sorted(((sid, x) for sid, x in st.items() if charged(x, t)), key=key)
         if not due:
             t += max(60, TICK) if fixed else waitfree_wait(cfg, t, next_charge(t), now=t)
@@ -158,10 +197,9 @@ def simulate(cfg, hours=24, per_title=10.0, full_dur=None, now=None, pause_full=
             for n in charged(x, t):
                 if x["left"] <= 0:
                     break
-                late = max(0, at - ready(x, n, at)) if x["tick"][n] else None
+                late = max(0, at - ready(x, n, t)) if x["tick"][n] else None
                 visits.append({"at": at, "sid": sid, "title": x["title"], "account": n,
-                               "night": bool(win and x["period"] >= kp.NIGHT_MIN_PERIOD),
-                               "outside": bool(win and x["period"] >= kp.NIGHT_MIN_PERIOD and not kp._in_window(win, at)),
+                               "night": is_night(x),
                                "period_min": x["period"] // 60, "late_sec": late, "queue": len(due), "pos": i + 1})
                 x["tick"][n] = at
                 x["left"] -= 1
@@ -173,7 +211,8 @@ def simulate(cfg, hours=24, per_title=10.0, full_dur=None, now=None, pause_full=
         else:
             t = done + (max(60, t + TICK - done) if fixed else waitfree_wait(cfg, t, next_charge(done), now=done))
     return {"now": now, "hours": hours, "nums": nums, "titles": cands, "visits": visits, "rounds": rounds,
-            "blocks": blocks, "per_title": per_title}
+            "blocks": blocks, "per_title": per_title, "win": win,
+            "night_ends": night_ends}
 
 
 def report(r, out=print, query=None):
@@ -228,11 +267,13 @@ def report(r, out=print, query=None):
             _dur(lt[-1])))
     if not per:
         out("  (계산할 대여권 사용 없음)")
-    nv = [v for v in visits if v.get("night") and (not clear or v["at"] >= clear)]
-    if nv:
-        out_n = sum(1 for v in nv if v["outside"])
-        out("  * 1일 이상 기다무는 새벽 시간대로 미루므로 위 지연에 그 대기가 포함됩니다. 시간대 안에서 쓰면 손해 없음 - "
-            "시간대 밖으로 넘친 대여권 %d장 / %d장%s" % (out_n, len(nv), "" if not out_n else " (시간대를 늘리거나 동시 처리 수를 올리세요)"))
+    if r["win"] is not None:
+        out("\n[1일 이상 기다무 새벽 사용] %d시 시작 · 끝 시각 없음 (풀린 작품과 이어서 충전되는 것까지 다 쓰면 끝)" % r["win"])
+        for a, b in r["night_ends"]:
+            out("  %s 시작 → %s 끝 (%s 동안)" % (_hm(a), time.strftime("%H:%M", time.localtime(b)), _dur(b - a)))
+        if not r["night_ends"]:
+            out("  (이 기간에 끝나는 새벽 사용 없음)")
+        out("  * 위 [주기별 지연]의 1일 이상 기다무 지연에는 시작 시각까지 기다린 시간이 들어가지 않습니다")
 
     if query:
         q = query.strip().lower()

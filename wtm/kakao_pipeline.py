@@ -584,43 +584,111 @@ def waitfree_label(t):
 NIGHT_MIN_PERIOD = 1440 * 60   # 새벽 시간대로 옮기는 기다무: 충전 주기 1일 이상 (1일·2일·3일·7일)
 
 
-def _night_window(cfg):
-    """긴 주기 기다무를 쓸 시간대 (시작 시, 끝 시) 또는 None(끔). 끝 시각은 포함하지 않음, 자정을 넘어가도 됨(23~5)"""
+NIGHT_GRACE = 30 * 60        # 새벽 사용 중: 이 안에 충전되는 1일 이상 기다무가 남아 있으면 아직 끝나지 않은 것으로 본다
+NIGHT_LATE_START = 6 * 3600  # 시작 시각에서 이만큼 지나도록 기록이 없으면(서버가 꺼져 있었음 등) 그날은 건너뛴 것으로 본다
+
+
+def _night_hour(cfg):
+    """1일 이상 기다무를 쓰기 시작하는 시(0~23) 또는 None(끔)"""
     if not cfg.get("WAITFREE_NIGHT_ENABLE"):
         return None
     try:
-        a = int(float(cfg.get("WAITFREE_NIGHT_START", 1))) % 24
-        b = int(float(cfg.get("WAITFREE_NIGHT_END", 7))) % 24
+        return int(float(cfg.get("WAITFREE_NIGHT_START", 1))) % 24
     except (TypeError, ValueError):
         return None
-    return (a, b) if a != b else None
 
 
 def _night_applies(cfg, t):
-    return _night_window(cfg) is not None and waitfree_period(t) >= NIGHT_MIN_PERIOD
+    return _night_hour(cfg) is not None and waitfree_period(t) >= NIGHT_MIN_PERIOD
 
 
-def _in_window(win, ts):
-    h = time.localtime(ts).tm_hour
-    a, b = win
-    return a <= h < b if a < b else (h >= a or h < b)
-
-
-def _window_start(win, ts):
-    """ts가 시간대 안이면 ts, 아니면 다음 시간대 시작 시각"""
-    if _in_window(win, ts):
-        return ts
+def _last_start(hour, ts):
+    """ts 이전(포함) 가장 최근의 '시작 시각' (오늘 또는 어제 hour:00)"""
     lt = time.localtime(ts)
-    start = time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday, win[0], 0, 0, 0, 0, -1))
-    return start if start > ts else time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday + 1, win[0], 0, 0, 0, 0, -1))
+    s = time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday, hour, 0, 0, 0, 0, -1))
+    return s if s <= ts else time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday - 1, hour, 0, 0, 0, 0, -1))
 
 
-def ready_at(cfg, t, account, now=None):
-    """이 계정이 이 작품에서 기다무 대여권을 쓸 수 있는 시각: 충전 시각, 단 '긴 주기 기다무는 새벽에'를 켰으면
-    그 시간대로 미룬다. 이 작품에서 쓴 적이 없으면 지금(또는 다음 시간대 시작)."""
-    used = _ticket_at(t, account)
-    at = used + waitfree_period(t) if used else (now or time.time())
-    return _window_start(_night_window(cfg), at) if _night_applies(cfg, t) else at
+def night_info(cfg, now=None, state=None):
+    """새벽 사용 상태 {"start": 최근 시작 시각, "next": 다음 시작 시각, "active": 지금 쓰는 중인지} 또는 None(끔).
+    끝 시각은 정하지 않는다 - 시작 시각에 풀린 작품을 다 쓰고, 이어서 충전되는 것(전날 이 무렵 쓴 것)까지 없어지면
+    그날 사용이 끝난다(update_night). 끝난 뒤 충전되는 것은 다음 시작 시각까지 기다린다."""
+    hour = _night_hour(cfg)
+    if hour is None:
+        return None
+    now = now or time.time()
+    start = _last_start(hour, now)
+    st = (ss.load_job_state().get("waitfree_night") or {}) if state is None else state
+    if st.get("start") == start:
+        active = not st.get("done")
+    else:
+        active = now - start < NIGHT_LATE_START   # 아직 시작 기록 전 (시작 시각 직후)
+    return {"start": start, "next": _last_start(hour, start + 26 * 3600), "active": active,
+            "bursts": [tuple(b) for b in (st.get("bursts") or [])]}
+
+
+def _night_busy(charges, now, info):
+    """새벽 사용을 이어가야 하는지. charges: 1일 이상 기다무의 (충전 시각 또는 None(쓴 적 없음), 충전 주기) 목록.
+    - 지금 쓸 수 있는 게 남았으면 계속
+    - 30분 안에 충전되는 것 중, 지난번에 새벽 사용 중에 썼던 것(어제 이 무렵 쓴 1일 기다무 등)이 있으면 계속
+      (그날그날 같은 순서로 다시 충전되므로 잠깐 비어도 끝내지 않는다)
+    그 밖의 것(낮에 충전되는 것)은 기다리지 않는다 - 그래서 처음 켠 날 이후로는 모두 새벽 무렵으로 모인다."""
+    for c, period in charges:
+        if c is None or _night_ready(c, info) <= now:
+            return True
+        if now < c <= now + NIGHT_GRACE and any(a <= c - period <= b for a, b in info["bursts"]):
+            return True
+    return False
+
+
+def _night_ready(c, info):
+    """충전 시각 c인 1일 이상 기다무를 쓸 수 있는 시각: 사용 중이면 그대로(시작 전에 충전됐으면 시작 시각),
+    사용이 끝났으면 다음 시작 시각"""
+    if info["active"]:
+        return max(c, info["start"])
+    return max(c, info["next"])
+
+
+def ready_at(cfg, t, account, now=None, night=None, nums=None):
+    """이 계정이 이 작품에서 기다무 대여권을 쓸 수 있는 시각: 충전 시각, 단 '1일 이상 기다무는 새벽부터'를 켰으면
+    night_info 규칙으로 미룬다. 이 작품에서 쓴 적이 없으면 지금(또는 미룬 시각). night: 미리 구한 night_info(반복 호출용).
+    1일 이상 기다무는 계정들(nums)이 모두 충전될 때 같이 쓴다 - 계정마다 따로 쓰면 새벽에 같은 작품을 두 번씩 열어
+    새벽 사용이 길어지고, 그날 쓴 시각이 매일 조금씩 뒤로 밀린다. 한 번 같이 쓰면 그 뒤로는 같은 시각에 충전된다."""
+    def charge(n):
+        used = _ticket_at(t, n)
+        return used + waitfree_period(t) if used else (now or time.time())
+    if not _night_applies(cfg, t):
+        return charge(account)
+    info = night if night is not None else night_info(cfg, now)
+    at = max(charge(n) for n in (nums or [account]))
+    return _night_ready(at, info) if info else at
+
+
+def update_night(cfg, log=print, now=None):
+    """새벽 사용이 끝났는지 기록한다 (기다무 확인 때마다): 시작 시각 뒤, 지금 쓸 수 있는 1일 이상 기다무가 없고
+    30분 안에 충전될 것도 없으면 끝. 끝난 것으로 기록되면 그 뒤 충전분은 다음 시작 시각까지 기다린다."""
+    now = now or time.time()
+    info = night_info(cfg, now)
+    if not info or not info["active"]:
+        return
+    st = ss.load_job_state().get("waitfree_night") or {}
+    if st.get("start") != info["start"]:   # 오늘 새벽 사용 시작 기록
+        st = {"start": info["start"], "done": False, "bursts": st.get("bursts") or []}
+        ss.save_job_state({"waitfree_night": st})
+    if now - info["start"] < 10 * 60:
+        return
+    nums, cands = _waitfree_candidates(cfg)
+    # 작품마다 계정들이 모두 충전되는 시각 (ready_at과 같게 - 계정들을 같이 쓴다). 쓴 적 없는 계정이 있으면 None(지금)
+    charges = [(None if not all(_ticket_at(t, n) for n in nums)
+                else max(_ticket_at(t, n) for n in nums) + waitfree_period(t), waitfree_period(t))
+               for t in cands.values() if _night_applies(cfg, t)]
+    if _night_busy(charges, now, info):
+        return
+    bursts = (list(st.get("bursts") or []) + [[info["start"], now]])[-10:]
+    ss.save_job_state({"waitfree_night": {"start": info["start"], "done": True, "done_at": now, "bursts": bursts}})
+    log("카카오 기다무: 1일 이상 기다무 새벽 사용 끝 (%s 시작, %s 동안) - 이후 충전분은 다음 %s부터" % (
+        time.strftime("%H:%M", time.localtime(info["start"])), late_text(now - info["start"]),
+        time.strftime("%m-%d %H:%M", time.localtime(info["next"]))))
 
 
 def waitfree_late(t, account, now=None, cfg=None):
@@ -671,7 +739,8 @@ def waitfree_due_titles(cfg, now=None):
     """기다무 대여권이 (어느 계정이든) 충전돼 지금 쓸 수 있는 작품 {sid: 작품}. 충전 전인 작품은 빠진다."""
     nums, cands = _waitfree_candidates(cfg)
     now = now or time.time()
-    return {sid: t for sid, t in cands.items() if any(ready_at(cfg, t, n, now) <= now for n in nums)}
+    night = night_info(cfg, now)
+    return {sid: t for sid, t in cands.items() if any(ready_at(cfg, t, n, now, night, nums) <= now for n in nums)}
 
 
 def next_charge_at(cfg, now=None):
@@ -679,9 +748,10 @@ def next_charge_at(cfg, now=None):
     nums, cands = _waitfree_candidates(cfg)
     now = now or time.time()
     best = None
+    night = night_info(cfg, now)
     for t in cands.values():
         for n in nums:
-            at = ready_at(cfg, t, n, now)
+            at = ready_at(cfg, t, n, now, night, nums)
             if at > now and (best is None or at < best):
                 best = at
     return best
@@ -694,10 +764,11 @@ def waitfree_order(cfg, due):
     '1일 이상 기다무는 새벽에'를 켰으면 새벽으로 미룬 작품(수백~천 개가 시간대 시작에 한꺼번에 풀림)은 다른 작품 뒤에 -
     이들은 시간대 안에서만 쓰면 손해가 없지만, 3시간 기다무는 늦어지는 만큼 대여권을 버린다."""
     nums = [n for n, _c in accounts(cfg)] or [1]
+    night = night_info(cfg)
 
     def key(kv):
         t = kv[1]
-        known = [ready_at(cfg, t, n) for n in nums if _ticket_at(t, n)]
+        known = [ready_at(cfg, t, n, night=night, nums=nums) for n in nums if _ticket_at(t, n)]
         return (1 if _night_applies(cfg, t) else 0, 0 if known else 1, min(known) if known else 0)
     return sorted(due.items(), key=key)
 
@@ -799,7 +870,8 @@ def waitfree_schedule(cfg, t):
     """계정마다 다음 기다무 대여권 사용 가능 시각 [(계정 번호, 시각)]"""
     if not t.get("waitfree"):
         return []
-    return [(n, ready_at(cfg, t, n)) for n, _c in accounts(cfg)]
+    nums = [n for n, _c in accounts(cfg)]
+    return [(n, ready_at(cfg, t, n, nums=nums)) for n in nums]
 
 
 def next_waitfree_at(cfg, t):
@@ -807,7 +879,7 @@ def next_waitfree_at(cfg, t):
     nums = [n for n, _c in accounts(cfg)]
     if not nums or not t.get("waitfree"):
         return None
-    return min(ready_at(cfg, t, n) for n in nums)
+    return min(ready_at(cfg, t, n, nums=nums) for n in nums)
 
 
 def _fill_missing_thumbnails(session, log=print, limit=THUMB_FILL_PER_SCAN, should_cancel=None):
@@ -1125,14 +1197,14 @@ def download_series(cfg, session, sid, log=print, full=False, cancel_check=None,
     # 작품이 기다무 확인에 걸려도 계정1부터 차례로 돌기 때문에, 예전엔 충전 안 된 계정도 시도해서
     # 카카오가 '상품 정보를 찾을 수 없습니다(-205)'로 거절했다. 기록된 충전 시각은 그대로 둔다.
     # 자동 실행에서는 '긴 주기 기다무는 새벽에'도 지킨다 (직접 누른 다운로드는 시간대와 상관없이 씀).
-    charge_at = (ready_at(cfg, t, account) if not (full or only is not None) else
+    charge_at = (ready_at(cfg, t, account, nums=[n for n, _c in accounts(cfg)]) if not (full or only is not None) else
                  (_ticket_at(t, account) + waitfree_period(t) if _ticket_at(t, account) else 0))
     if use_waitfree and has_cookie and charge_at > time.time():
         res["waitfree_none"] = False
         if any(ep["waitfree_ok"] for ep in locked_eps):
             night = _night_applies(cfg, t) and _ticket_at(t, account) + waitfree_period(t) <= time.time()
             log("%s: 기다무 대여권 %s (%s부터) - 이번엔 사용 안 함" % (
-                title, "새벽 시간대에 사용" if night else "충전 전",
+                title, "1일 이상 기다무는 새벽부터 사용" if night else "충전 전",
                 time.strftime("%m-%d %H:%M", time.localtime(charge_at))))
     elif use_waitfree and has_cookie:
         wait_ep = next((ep for ep in locked_eps if ep["waitfree_ok"]), None)

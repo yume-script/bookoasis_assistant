@@ -232,6 +232,7 @@ def _waitfree_once(cfg):
     job = _ss.load_job_state()
     if not job.get("running"):
         kakao_pipeline.flush_leftovers(cfg, log=_ss.append_log)  # 옮기다 만 zip 정리
+    kakao_pipeline.update_night(cfg, log=_ss.append_log)  # 1일 이상 기다무 새벽 사용이 끝났는지 (쓸 게 없어도 매번)
     if not kakao_pipeline.waitfree_due_titles(cfg):
         return False
     # 작업이 없으면 잠금을 잡아 화면에 '기다무 대여권 사용'으로 보이게, 다른 작업 중이면 잠금 없이 같이 돈다

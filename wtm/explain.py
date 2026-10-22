@@ -131,7 +131,7 @@ def explain(query, days=3, out=print):
         dead = {n for n, _c in accs if n > 1 and job.get("kakao_cookie_expired_notified_%d" % n)}
         for n, _c in accs:
             used = kp._ticket_at(t, n)
-            ready = kp.ready_at(cfg, t, n)  # '긴 주기 기다무는 새벽에'를 켰으면 그 시간대로 미룬 시각
+            ready = kp.ready_at(cfg, t, n, nums=[a for a, _c in accs])  # '긴 주기 기다무는 새벽에'를 켰으면 그 시간대로 미룬 시각
             state = "만료·로그인 안 됨으로 제외 중" if n in dead else ("지금 충전됨" if ready <= now else "충전 " + _t(ready))
             out("  계정%d: 마지막 사용(또는 확인) %s → %s" % (n, _t(used), state))
         if not t.get("has_locked"):
