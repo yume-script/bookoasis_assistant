@@ -610,24 +610,55 @@ def run_waitfree_tick(cfg, log=print):
         kakao_api.refresh_token(session, log=log)
     except kakao_api.KakaoAuthExpired as e:
         log("카카오페이지: %s" % e)
-    dead, sessions = set(), {}
+    dead, sessions = set(), []
+    lock = threading.Lock()
+    tls = threading.local()
 
-    def _session_for(n, cookie):  # 추가 계정 세션은 실행마다 한 번 (로그인 확인 포함)
-        if n not in sessions:
-            sessions[n] = account_session(cfg, n, cookie, log=log)
-        return sessions[n]
-    try:
-        for sid, t in due.items():
-            if ss.load_job_state().get("cancel_requested"):
-                break
-            ss.save_job_state({"message": "기다무 대여권 사용: %s" % t.get("title", sid)})
-            r = download_series_all(cfg, session, sid, log=log, dead=dead, session_for=_session_for,
-                                    cancel_check=lambda: bool(ss.load_job_state().get("cancel_requested")))
+    def _main_session():  # 작업 스레드마다 별도 세션 (requests.Session은 스레드 간 공유가 안전하지 않다)
+        if getattr(tls, "main", None) is None:
+            tls.main = session if threading.current_thread() is threading.main_thread() else build_session_from_cfg(cfg)
+            tls.accounts = {}
+        return tls.main
+
+    def _session_for(n, cookie):  # 추가 계정 세션도 스레드마다 한 번 (로그인 확인 포함)
+        _main_session()
+        if n not in tls.accounts:
+            tls.accounts[n] = account_session(cfg, n, cookie, log=log)
+            with lock:
+                sessions.append(tls.accounts[n])
+        return tls.accounts[n]
+
+    def _cancelled():
+        return bool(ss.load_job_state().get("cancel_requested"))
+
+    def _one(sid, t):
+        if _cancelled():
+            return
+        ss.save_job_state({"message": "기다무 대여권 사용: %s" % t.get("title", sid)})
+        r = download_series_all(cfg, _main_session(), sid, log=log, dead=dead, session_for=_session_for,
+                                cancel_check=_cancelled)
+        with lock:
             res["downloaded"] += r.get("downloaded", 0)
             res["waitfree_used"] += r.get("waitfree_used", 0)
+
+    # 작품 여러 개를 동시에 (설정 '동시 처리 작품 수', 카카오 전체 실행과 같은 값). 작품 하나가 회차 목록 조회·대여권·
+    # 이미지 받기로 10~20초씩 걸려, 하나씩 하면 30개에 5~10분이 걸린다.
+    workers = max(1, min(10, _num(cfg, "PARALLEL_TITLES", 2)))
+    try:
+        if workers == 1 or len(due) == 1:
+            for sid, t in due.items():
+                _one(sid, t)
+        else:
+            with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="wtm_waitfree") as ex:
+                futs = [ex.submit(_one, sid, t) for sid, t in due.items()]
+                for f in as_completed(futs):
+                    try:
+                        f.result()
+                    except Exception as e:  # noqa: BLE001
+                        log("기다무 확인 중 오류(다음 작품은 계속): %s" % e)
     finally:
         kakao_api.save_session_cookies(session)
-        for s in sessions.values():
+        for s in sessions:
             kakao_api.save_session_cookies(s)
     _notify_expired_accounts(cfg, dead, log=log)
     log("카카오 기다무: 대여권 %d장 사용 / 신규 %d화" % (res["waitfree_used"], res["downloaded"]))
