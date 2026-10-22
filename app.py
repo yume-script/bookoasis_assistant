@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""BookOasis 보조 프로그램 (독립형) 진입점 - 드라이브 변경 감시 + 웹툰 다운로더
+"""BookOasis 보조 프로그램 (독립형) 진입점 - 웹툰 다운로더 (+ 드라이브 변경 감시 · 미니게임)
 
   python3 app.py            관리 화면 + 작업 프로세스 감독 + DB 중복 확인 (상주)
   python3 app.py --check    설정만 점검하고 끝냄 (.env, rclone, BookOasis DB/토큰, 웹툰 경로)
 
-설정은 .env (env.example 참고). 모듈은 GDW_ENABLED / WTM_ENABLED로 켜고 끈다.
-각 모듈의 무거운 일은 따로 도는 작업 프로세스가 한다 (드라이브 감시: worker.py, 웹툰: wtm/worker_main.py).
+설정은 .env (env.example 참고). 모듈은 WTM_ENABLED / GDW_ENABLED / MINI_ENABLED로 켜고 끈다 (웹툰 다운로더가 기본·첫 화면).
+각 모듈의 무거운 일은 따로 도는 작업 프로세스가 한다 (웹툰: wtm/worker_main.py, 드라이브 감시: worker.py).
 """
 import ipaddress
 import logging
@@ -75,13 +75,14 @@ def check(svc):
     """설정 점검 결과를 출력한다. 문제가 있으면 종료 코드 1."""
     problems = 0
     mods = modules()
-    print(f"모듈            : 드라이브 변경 감시 {'켬' if mods['gdw'] else '끔'} · 웹툰 다운로더 {'켬' if mods['wtm'] else '끔'}"
+    print(f"모듈            : 웹툰 다운로더 {'켬' if mods['wtm'] else '끔'} · 드라이브 변경 감시 {'켬' if mods['gdw'] else '끔'}"
           f" · 미니게임 {'켬' if mods['mini'] else '끔'}")
     settings = config.settings()
     print(f".env            : {config.ENV_PATH}" + ("" if os.path.exists(config.ENV_PATH) else "  (없음 - env.example을 복사하세요)"))
     print(f"DATA_DIR        : {service.DATA_DIR}")
-    print(f"rclone          : {settings['rclone_path']}  (설정 파일: {settings['rclone_config'] or 'rclone 기본 위치'})")
-    if settings["rclone_config"] and not os.path.isfile(settings["rclone_config"]):
+    if mods["gdw"]:  # rclone은 드라이브 변경 감시에서만 쓴다
+        print(f"rclone          : {settings['rclone_path']}  (설정 파일: {settings['rclone_config'] or 'rclone 기본 위치'})")
+    if mods["gdw"] and settings["rclone_config"] and not os.path.isfile(settings["rclone_config"]):
         print("  ✗ rclone.conf를 찾을 수 없습니다.")
         problems += 1
     if bookoasis_db.configured():
@@ -98,15 +99,15 @@ def check(svc):
     else:
         libs = svc._manual_libraries() if os.path.exists(config.libraries_file()) else []
         print(f"보관함           : BookOasis DB 없음 → 보관함 파일 {config.libraries_file()} ({len(libs)}개)")
-        if not libs:
+        if not libs and mods["gdw"]:
             print("  ✗ 보관함이 없어 변경을 감지해도 스캔하지 않습니다.")
             problems += 1
+    if mods["wtm"]:
+        problems += check_wtm()
     if mods["gdw"]:
         ok, message = service._verify_token(settings["bookoasis_url"], settings["webhook_token"])
         print(f"스캔 요청        : {settings['bookoasis_url']}  {'✓' if ok else '✗'} {message}")
         problems += 0 if ok else 1
-    if mods["wtm"]:
-        problems += check_wtm()
     return 1 if problems else 0
 
 
@@ -155,7 +156,7 @@ def main():
     signal.signal(signal.SIGINT, on_signal)
     log.info("관리 화면: http://%s:%d/  (데이터: %s, 보관함: %s, 모듈: %s)", host, port, service.DATA_DIR,
              "BookOasis DB" if bookoasis_db.configured() else config.libraries_file(),
-             ", ".join(name for name, on in (("드라이브 변경 감시", mods["gdw"]), ("웹툰 다운로더", mods["wtm"]),
+             ", ".join(name for name, on in (("웹툰 다운로더", mods["wtm"]), ("드라이브 변경 감시", mods["gdw"]),
                                              ("미니게임", mods["mini"])) if on))
     if mods["wtm"]:  # 재시작 뒤 어떤 카카오 계정 쿠키가 살아 있는지 로그로 바로 확인할 수 있게
         try:

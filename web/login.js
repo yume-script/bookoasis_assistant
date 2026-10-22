@@ -50,7 +50,7 @@
     post(setup ? 'api/auth/setup' : 'api/auth/login', { username: username, password: password, remember: $('remember').checked })
       .then(function () {
         var next = decodeURIComponent((location.hash || '').slice(1));  // 로그인 전에 보던 화면
-        location.replace(/^(webtoon|games)?(#[\w%.-]*)?$/.test(next) ? './' + next : './');
+        location.replace(/^(webtoon|watch|games)?(#[\w%.-]*)?$/.test(next) ? './' + next : './');
       })
       .catch(function (err) { showError(err.message); $('password').select(); })
       .then(function () { btn.disabled = false; });

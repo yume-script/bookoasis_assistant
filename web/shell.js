@@ -39,13 +39,6 @@
     'palette': '<circle cx="13.5" cy="6.5" r="1.2" fill="currentColor"/><circle cx="17.5" cy="10.5" r="1.2" fill="currentColor"/><circle cx="8.5" cy="7.5" r="1.2" fill="currentColor"/><circle cx="6.5" cy="12.5" r="1.2" fill="currentColor"/><path d="M12 2a10 10 0 0 0 0 20 2 2 0 0 0 2-2c0-.5-.2-1-.5-1.3-.3-.4-.5-.8-.5-1.3a2 2 0 0 1 2-2h2.4A5.6 5.6 0 0 0 22 9.8C22 5.5 17.5 2 12 2z"/>'
   };
   var MENU = [
-    { id: 'gdw', title: '드라이브 변경 감시', icon: 'cloud-arrow-down', href: './', tabsSel: '.gdw-tabs',
-      items: [
-        { tab: 'events', label: '변경 기록', icon: 'list-check' },
-        { tab: 'setup', label: '감시 설정', icon: 'sliders' },
-        { tab: 'schedule', label: '스캔 일정', icon: 'calendar-days' },
-        { tab: 'log', label: '로그', icon: 'terminal' }
-      ] },
     { id: 'wtm', title: '웹툰 다운로더', icon: 'book-open-reader', href: 'webtoon', tabsSel: '.wtm-tabs',
       items: [
         { tab: 'all', label: '전체목록', icon: 'table-cells' },
@@ -58,6 +51,13 @@
         { tab: 'history', label: '다운로드 이력', icon: 'clock-rotate-left' },
         { tab: 'settings', label: '설정', icon: 'gear' },
         { tab: 'help', label: '도움말', icon: 'circle-question' }
+      ] },
+    { id: 'gdw', title: '드라이브 변경 감시', icon: 'cloud-arrow-down', href: 'watch', tabsSel: '.gdw-tabs',
+      items: [
+        { tab: 'events', label: '변경 기록', icon: 'list-check' },
+        { tab: 'setup', label: '감시 설정', icon: 'sliders' },
+        { tab: 'schedule', label: '스캔 일정', icon: 'calendar-days' },
+        { tab: 'log', label: '로그', icon: 'terminal' }
       ] },
     // 미니게임: 게임 목록은 서버(/api/modules의 games)에서 받아 채운다. 탭 막대 대신 주소의 #게임id로 고른다
     { id: 'mini', title: '미니게임', icon: 'gamepad', href: 'games', hashNav: true, items: [] }
@@ -269,7 +269,7 @@
             h('b', { text: (info.versions && info.versions[k] ? 'v' + info.versions[k] : '-') + (info[k] === false ? ' (꺼짐)' : '') })]));
         });
         list.appendChild(h('div', { class: 'about-row' }, [h('span', { text: '프로그램' }), h('b', { text: info.version ? 'v' + info.version : '-' })]));
-        return h('div', {}, [list, h('p', { class: 'muted', text: '모듈 켜기/끄기와 경로·토큰 같은 실행 환경은 .env에서 바꿉니다 (GDW_ENABLED / WTM_ENABLED / MINI_ENABLED).' })]);
+        return h('div', {}, [list, h('p', { class: 'muted', text: '모듈 켜기/끄기와 경로·토큰 같은 실행 환경은 .env에서 바꿉니다 (WTM_ENABLED / GDW_ENABLED / MINI_ENABLED).' })]);
       }
     };
     function show(name) {

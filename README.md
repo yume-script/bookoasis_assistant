@@ -1,12 +1,12 @@
 # BookOasis 보조 프로그램 · 독립형 (bookoasis_assistant)
 
 BookOasis 플러그인으로 쓰던 세 가지를 **BookOasis 밖에서 따로 도는 프로그램 하나**로 옮겼습니다. 관리 화면·포트·비밀번호·`.env`는 하나이고,
-각 모듈의 무거운 일은 모듈마다 따로 도는 작업 프로세스가 합니다(한쪽이 느려지거나 죽어도 다른 쪽은 영향 없음).
+각 모듈의 무거운 일은 모듈마다 따로 도는 작업 프로세스가 합니다. 중심은 웹툰 다운로더이고 관리 화면도 웹툰 다운로더로 열립니다(드라이브 변경 감시는 `/watch`) (한쪽이 느려지거나 죽어도 다른 쪽은 영향 없음).
 
 | 모듈 | 원본 | 하는 일 | 켜기 |
 |---|---|---|---|
-| **드라이브 변경 감시** | [gdrive_watch](https://github.com/yume-script/gdrive_watch) v1.18.8 | Google Drive·로컬 폴더 변경 감지 → rclone VFS 새로고침 → 바뀐 폴더만 BookOasis 부분 스캔 | `GDW_ENABLED=true` (기본) |
-| **웹툰 다운로더** | [webtoon_manager](https://github.com/yume-script/webtoon_manager) v1.39.3 | 네이버웹툰·카카오웹툰·카카오웹소설 구독/다운로드, kavita.yaml 등 | `WTM_ENABLED=true` |
+| **웹툰 다운로더** | [webtoon_manager](https://github.com/yume-script/webtoon_manager) v1.39.3 | 네이버웹툰·카카오웹툰·카카오웹소설 구독/다운로드, kavita.yaml 등 | `WTM_ENABLED=true` (기본 · 첫 화면) |
+| **드라이브 변경 감시** | [gdrive_watch](https://github.com/yume-script/gdrive_watch) v1.18.8 | Google Drive·로컬 폴더 변경 감지 → rclone VFS 새로고침 → 바뀐 폴더만 BookOasis 부분 스캔 | `GDW_ENABLED=true` (기본, rclone 마운트를 쓸 때) |
 | **미니게임** | [ym_mini_game](https://github.com/yume-script/ym_mini_game) v2.0.2 | 테트리스·지뢰찾기·오목·홀덤 등 12종 (브라우저에서만 돔, 서버 부하 없음) | `MINI_ENABLED=true` (기본) |
 
 감지·다운로드 로직과 화면은 플러그인과 같고, 플러그인이라서 생기던 제약만 걷어냈습니다.

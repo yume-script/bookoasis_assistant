@@ -88,7 +88,7 @@ def _write_cookie_file(key, value):
 
 
 def enabled():
-    return config.env_bool("WTM_ENABLED", False)
+    return config.env_bool("WTM_ENABLED", True)
 
 
 def _env_file_values():

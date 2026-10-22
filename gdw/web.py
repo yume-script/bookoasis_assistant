@@ -31,12 +31,12 @@ from . import auth, config, mcp, service
 
 log = logging.getLogger("gdw.web")
 WEB_DIR = os.path.join(config.ROOT, "web")
-STATIC = {"/": "index.html", "/index.html": "index.html", "/style.css": "style.css", "/script.js": "script.js",
+STATIC = {"/watch": "index.html", "/style.css": "style.css", "/script.js": "script.js",
           "/theme.css": "theme.css", "/shell.js": "shell.js", "/webtoon": "webtoon/index.html", "/webtoon/": "webtoon/index.html",
           "/webtoon/style.css": "webtoon/style.css", "/webtoon/script.js": "webtoon/script.js",
           "/login": "login.html", "/login.js": "login.js"}
 PUBLIC = {"/login", "/login.js", "/theme.css", "/shell.js", "/healthz", "/api/auth/state", "/api/auth/login", "/api/auth/setup"}
-PAGES = {"/", "/index.html", "/webtoon", "/webtoon/", "/games", "/games/"}  # 로그인 안 했으면 로그인 화면으로 보낼 주소
+PAGES = {"/", "/index.html", "/watch", "/webtoon", "/webtoon/", "/games", "/games/"}  # 로그인 안 했으면 로그인 화면으로 보낼 주소
 OFF_PAGE = """<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{title}</title><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
 <link rel="stylesheet" href="theme.css"></head><body data-module=""><main class="gdw-page"><div class="app-off"><h2>{title}: 꺼져 있음</h2>
@@ -94,7 +94,8 @@ def module_versions():
 
 
 def modules():
-    return {"gdw": config.env_bool("GDW_ENABLED", True), "wtm": config.env_bool("WTM_ENABLED", False),
+    # 웹툰 다운로더가 이 프로그램의 기본 모듈 (드라이브 변경 감시는 필요할 때 켜는 부가 모듈)
+    return {"wtm": config.env_bool("WTM_ENABLED", True), "gdw": config.env_bool("GDW_ENABLED", True),
             "mini": config.env_bool("MINI_ENABLED", True)}
 
 
@@ -183,9 +184,12 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(404, {"success": False, "error": "웹툰 다운로더가 꺼져 있습니다 (WTM_ENABLED)."})
             from wtm import service as wtm_service
             return self._send(200, wtm_service.dashboard())
-        if path in ("/", "/index.html") and not mods["gdw"]:
-            if mods["wtm"] or mods["mini"]:
-                return self._send(302, b"", extra={"Location": "webtoon" if mods["wtm"] else "games"})
+        if path in ("/", "/index.html"):  # 첫 화면: 웹툰 다운로더 → 드라이브 변경 감시 → 미니게임 순으로 켜진 것
+            first = next((p for k, p in (("wtm", "webtoon"), ("gdw", "watch"), ("mini", "games")) if mods[k]), None)
+            if first:
+                return self._send(302, b"", extra={"Location": first})
+            return self._send(200, OFF_PAGE.format(title="웹툰 다운로더", key="WTM_ENABLED").encode(), "text/html; charset=utf-8")
+        if path == "/watch" and not mods["gdw"]:
             return self._send(200, OFF_PAGE.format(title="드라이브 변경 감시", key="GDW_ENABLED").encode(), "text/html; charset=utf-8")
         if path in ("/webtoon", "/webtoon/") and not mods["wtm"]:
             return self._send(200, OFF_PAGE.format(title="웹툰 다운로더", key="WTM_ENABLED").encode(), "text/html; charset=utf-8")
