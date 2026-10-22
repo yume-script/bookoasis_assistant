@@ -4,6 +4,7 @@
     python3 -m wtm.simulate                 앞으로 24시간
     python3 -m wtm.simulate 48 "곤륜객잔"    48시간 + 이 작품이 언제 받는지
     python3 -m wtm.simulate 24 --csv /tmp/wf.csv   대여권 사용 예정을 한 줄씩 CSV로
+    python3 -m wtm.simulate 24 --full-min 120      전체 실행이 2시간 걸린다고 보고 (그동안 기다무 확인이 멈춤)
 
 서버에 저장된 작품 기록(계정별 마지막 대여권 사용 시각, 충전 주기, 남은 회차 수)과 실제 동작 규칙
 (5분마다 확인, 한 번에 30개, 충전 시각이 오래된 순서, 밀리면 1분 뒤 이어서, 전체 실행 중에는 못 돎)으로
@@ -221,7 +222,11 @@ def main(argv):
     from wtm import host, state_store as ss
     from wtm.webtoon_manager import DEFAULTS
     args = list(argv)
-    csv_path = None
+    csv_path, full_min = None, None
+    if "--full-min" in args:  # 전체 실행 소요(분)를 직접 지정 (job.log에 기록이 없을 때)
+        i = args.index("--full-min")
+        full_min = float(args[i + 1]) if i + 1 < len(args) else None
+        del args[i:i + 2]
     if "--csv" in args:
         i = args.index("--csv")
         csv_path = args[i + 1] if i + 1 < len(args) else None
@@ -236,6 +241,11 @@ def main(argv):
     per_title, samples, full_dur = measure(os.path.join(ss.DATA_DIR, "job.log"))
     if not samples:
         print("(job.log에 기다무 확인 기록이 없어 작품당 %.0f초로 가정)" % per_title)
+    if full_min is not None:
+        full_dur = full_min * 60
+    elif not full_dur:
+        print("(job.log에 전체 실행 시작~끝 기록이 없어 전체 실행 동안 멈추는 것은 빼고 계산 - "
+              "--full-min 분 으로 지정할 수 있음)")
     r = simulate(cfg, hours=hours, per_title=per_title, full_dur=full_dur)
     report(r, query=query)
     if csv_path and r:
