@@ -581,6 +581,26 @@ def waitfree_label(t):
     return n + " 기다무"
 
 
+def waitfree_late(t, account, now=None):
+    """이 계정의 기다무 대여권을 충전 예정 시각보다 몇 초 늦게 쓰는지. 이 작품에서 처음 쓰면(예정 시각 모름) None"""
+    used = _ticket_at(t, account)
+    if not used:
+        return None
+    return max(0, int((now or time.time()) - used - waitfree_period(t)))
+
+
+def late_text(sec):
+    """지연 시간 표시: '바로', '12분', '2시간 5분', '3일 4시간'"""
+    m = int(sec or 0) // 60
+    if m < 1:
+        return "바로"
+    if m < 60:
+        return "%d분" % m
+    if m < 1440:
+        return "%d시간%s" % (m // 60, " %d분" % (m % 60) if m % 60 else "")
+    return "%d일%s" % (m // 1440, " %d시간" % (m % 1440 // 60) if m % 1440 >= 60 else "")
+
+
 def waitfree_due_titles(cfg, now=None):
     """기다무 대여권이 (어느 계정이든) 충전돼 지금 쓸 수 있는 작품 {sid: 작품}.
     구독 중이거나 구매 작품이고, 대여권으로 열 회차가 남아 있는(has_locked) 기다무 작품만. 완결작도 포함."""
@@ -1139,6 +1159,7 @@ def download_series(cfg, session, sid, log=print, full=False, cancel_check=None,
             on_progress(i, len(targets), "%s %d화" % (title, ep["no"]))
         no, pid = ep["no"], ep["product_id"]
         opened = None   # 이 회차를 무엇으로 열었는지 (이력에 남김): 기다무 / 보유 대여권 이름
+        late = None     # 기다무: 충전 예정 시각보다 몇 초 늦게 썼는지 (처음 쓰는 작품은 예정 시각을 몰라 None)
 
         def _images(pid=pid):
             return kakao_api.fetch_episode_images(session, sid, pid)
@@ -1169,7 +1190,8 @@ def download_series(cfg, session, sid, log=print, full=False, cancel_check=None,
                     ticket_available = False       # 작품당 실행 1회에 1장
                     res["waitfree_used"] += 1
                     opened = waitfree_label(t)
-                    log("%s %d화: 기다무 대여권 사용" % (title, no))
+                    late = waitfree_late(t, account)
+                    log("%s %d화: 기다무 대여권 사용%s" % (title, no, "" if late is None else " (충전 후 %s)" % late_text(late)))
                 elif ep.get("use_owned") and any(v > 0 for v in owned.values()):
                     try:
                         ready, _raw = kakao_api.ready_ticket_types(session, pid)
@@ -1281,7 +1303,8 @@ def download_series(cfg, session, sid, log=print, full=False, cancel_check=None,
                            "unit": "words" if is_novel else "images",
                            # 어느 계정으로, 무엇으로 열었는지 (로그인 쿠키가 있을 때만)
                            "account": account if has_cookie else None,
-                           "via": opened or ("대여·소장" if ep.get("rented") else ("무료" if ep.get("free") else None))})
+                           "via": opened or ("대여·소장" if ep.get("rented") else ("무료" if ep.get("free") else None)),
+                           "late_sec": late})
         if no < kakao_api.SPECIAL_EP_BASE and (last_ok is None or no > last_ok):
             last_ok = no
         if no < kakao_api.SPECIAL_EP_BASE and prev_last_no is not None and no > prev_last_no:

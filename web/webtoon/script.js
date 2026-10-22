@@ -376,6 +376,14 @@
     return (m % 1440 === 0 ? (m / 1440) + '일' : (m % 60 === 0 ? (m / 60) + '시간' : m + '분')) + ' 기다무';
   }
 
+  function lateText(sec) {  // 기다무 지연: '정시', '12분 지연', '2시간 5분 지연'
+    var m = Math.floor((sec || 0) / 60);
+    if (m < 1) return '정시';
+    var t = m < 60 ? m + '분' : (m < 1440 ? Math.floor(m / 60) + '시간' + (m % 60 ? ' ' + (m % 60) + '분' : '')
+      : Math.floor(m / 1440) + '일' + (m % 1440 >= 60 ? ' ' + Math.floor(m % 1440 / 60) + '시간' : ''));
+    return t + ' 지연';
+  }
+
   function platformBadge(p) {
     var c = PLATFORM_COLORS[p] || '#888';
     return '<span class="wtm-badge" style="margin-right:6px;background:color-mix(in srgb, ' + c + ' 22%, transparent);' +
@@ -418,6 +426,8 @@
         if (h.account || h.via) {
           var via = h.via || '';
           if (via === '기다무') via = waitfreeLabel(h) || via;  // 예전 이력: 작품 정보의 충전 주기로 '3시간 기다무'
+          // 기다무: 충전 예정 시각보다 얼마나 늦게 썼는지 (처음 쓰는 작품은 기록 없음)
+          if (h.late_sec != null && /기다무/.test(via)) via += ' · ' + lateText(h.late_sec);
           var viaPaid = via && via !== '무료';
           text += ' <span class="wtm-badge' + (viaPaid ? ' up' : '') + '">' +
             escapeHtml((h.account ? '계정' + h.account : '') + (h.account && via ? ' · ' : '') + via) + '</span>';

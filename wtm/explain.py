@@ -151,8 +151,9 @@ def explain(query, days=3, out=print):
     hist = [h for h in ss.load_history(limit=3000) if str(h.get("title_id")) == tid][:5]
     out("\n[최근 다운로드 이력]")
     for h in hist:
-        out("  %s %s %s화 %s%s" % (_t(h.get("ts")), h.get("type"), h.get("episode_no"),
-                                  ("계정%s " % h["account"]) if h.get("account") else "", h.get("via") or h.get("error") or ""))
+        out("  %s %s %s화 %s%s%s" % (_t(h.get("ts")), h.get("type"), h.get("episode_no"),
+                                    ("계정%s " % h["account"]) if h.get("account") else "", h.get("via") or h.get("error") or "",
+                                    (" (충전 후 %s)" % kp.late_text(h["late_sec"])) if h.get("late_sec") is not None else ""))
     if not hist:
         out("  (없음)")
     log_path = os.path.join(ss.DATA_DIR, "job.log")
