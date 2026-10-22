@@ -1125,7 +1125,9 @@ def download_series(cfg, session, sid, log=print, full=False, cancel_check=None,
                 embed_cover=bool(cfg.get("KAVITA_YAML_EMBED_COVER", True)),
                 log=log, platform=yaml_platform(t))
 
-    idle_patch = _ticket_patch(sid, t, account, _waitfree_backoff(t)) if res.get("waitfree_none") else {}
+    # 대여권으로 열 회차가 없으면(남은 잠긴 회차가 기다무 대상이 아님 - 최신 회차 등) 충전 주기 한 번만큼 쉬었다 본다.
+    # 예전엔 1시간 뒤 다시 봐서, 이런 작품이 하루 24번씩 기다무 확인 줄에 다시 서 다른 작품을 밀어냈다.
+    idle_patch = _ticket_patch(sid, t, account, time.time()) if res.get("waitfree_none") else {}
     if not targets and extra:
         # 추가 계정으로도 열 회차가 없음 - 계정 1의 결과 문구는 그대로 둔다
         ss.upsert_kakao_title({sid: dict(idle_patch, **_locked_patch(t, locked_eps, only, incremental))})
@@ -1346,9 +1348,12 @@ def download_series(cfg, session, sid, log=print, full=False, cancel_check=None,
         done_patch["checked_no"] = max_checked
     if res["waitfree_used"]:
         done_patch.update(_ticket_patch(sid, t, account, time.time()))
-    elif res.get("waitfree_failed") or res.get("waitfree_none"):
-        # 아직 충전 전이거나 대여권으로 열 회차가 없음 - 기록하지 않으면 기다무 확인이 같은 작품을 계속 다시 붙잡는다
+    elif res.get("waitfree_failed"):
+        # 카카오가 거절(아직 충전 전 등) - 실제 충전 시각을 모르므로 최대 1시간 뒤 다시 본다
         done_patch.update(_ticket_patch(sid, t, account, _waitfree_backoff(t)))
+    elif res.get("waitfree_none"):
+        # 대여권으로 열 회차가 없음 - 충전 주기 한 번 쉰다 (기록하지 않으면 기다무 확인이 같은 작품을 계속 다시 붙잡는다)
+        done_patch.update(_ticket_patch(sid, t, account, time.time()))
     if only is None and not res.get("capped") and not res["cancelled"] and not res["auth_expired"]:
         # 이번에 끝까지 확인했으니, 새 회차가 올라오기 전까지는 다시 안 봐도 됨
         done_patch["checked_slide_dt"] = t.get("last_slide_added_dt") or ""
