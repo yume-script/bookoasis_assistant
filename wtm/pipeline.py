@@ -889,6 +889,7 @@ def run_download_cycle(cfg, log=print):
                         comicinfo_meta=_comicinfo_meta_for(t, ep, tid)
                         if cfg.get("GENERATE_COMICINFO_XML", True) else None)
                     if c_ok:
+                        log("%s %s화 완료 (%d장)" % (t.get("title", tid), ep["no"], img_count or 0))
                         consecutive_fail = 0
                         last_ok_no = ep["no"]
                         if prev_last_no is not None and ep["no"] > prev_last_no:
