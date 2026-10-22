@@ -140,6 +140,33 @@ def _waitfree_backoff(t):
     return time.time() - waitfree_period(t) + min(waitfree_period(t), 3600)
 
 
+def _locked_patch(t, locked, only, incremental):
+    """'잠긴 회차가 남았는지' 기록. 선택 회차 다운로드(고른 회차만 봄)는 건드리지 않고, 새 회차만 본 빠른 확인은
+    잠긴 회차를 새로 봤을 때만 켠다 - 예전엔 선택 회차 다운로드가 '없음'으로 덮어써 기다무 확인에서 빠졌다."""
+    if only is not None:
+        return {}
+    if incremental:
+        return {"has_locked": True} if locked else {}
+    return {"has_locked": bool(locked)}
+
+
+def _repair_has_locked_once(log=print):
+    """한 번만: 선택 회차 다운로드 버그로 '잠긴 회차 없음'이 잘못 기록된 기다무 작품을 다시 대상으로 (전체 회차 수가
+    받은 마지막 회차보다 많으면). 다음 기다무 확인이 회차 목록을 보고 실제 값으로 다시 기록한다."""
+    if ss.load_job_state().get("repaired_has_locked_v1"):
+        return 0
+    fix = {}
+    for sid, t in ss.load_kakao_titles().items():
+        if (t.get("waitfree") and not t.get("has_locked") and t.get("last_downloaded_no") is not None
+                and int(t.get("episode_count") or 0) > int(t.get("last_downloaded_no") or 0) + 1):
+            fix[sid] = {"has_locked": True}
+    if fix:
+        ss.upsert_kakao_title(fix)
+        log("카카오 기다무: '잠긴 회차 없음'으로 잘못 기록된 기다무 작품 %d개를 다시 확인 대상으로 돌렸습니다" % len(fix))
+    ss.save_job_state({"repaired_has_locked_v1": True})
+    return len(fix)
+
+
 def _adult_hashes(t):
     hashes = list(t.get("adult_block_hashes") or [])
     if t.get("adult_block_hash"):
@@ -592,6 +619,7 @@ def run_waitfree_tick(cfg, log=print):
     자동 실행 주기(기본 4시간)를 기다리지 않으므로 3시간 기다무도 충전될 때마다 1화씩 받는다.
     호출 쪽에서 작업 잠금(try_acquire_job)을 잡고 부른다."""
     flush_leftovers(cfg, log=log)
+    _repair_has_locked_once(log=log)
     due = waitfree_due_titles(cfg)
     res = {"titles": len(due), "downloaded": 0, "waitfree_used": 0}
     if not due:
@@ -1052,16 +1080,16 @@ def download_series(cfg, session, sid, log=print, full=False, cancel_check=None,
     idle_patch = _ticket_patch(sid, t, account, _waitfree_backoff(t)) if res.get("waitfree_none") else {}
     if not targets and extra:
         # 추가 계정으로도 열 회차가 없음 - 계정 1의 결과 문구는 그대로 둔다
-        ss.upsert_kakao_title({sid: dict(idle_patch, has_locked=bool(locked_eps))})
+        ss.upsert_kakao_title({sid: dict(idle_patch, **_locked_patch(t, locked_eps, only, incremental))})
         return res
     if not targets:
         msg = "받을 회차 없음(보유 %d화" % len(have)
         if locked_eps:
             msg += ", 유료 %d화는 건너뜀" % len(locked_eps)
         msg += ")"
-        ss.upsert_kakao_title({sid: dict(idle_patch, last_result=msg,
-                                         last_result_at=time.time(), has_locked=bool(locked_eps),
-                                         checked_slide_dt=t.get("last_slide_added_dt") or "")})
+        done = {} if only is not None else {"checked_slide_dt": t.get("last_slide_added_dt") or ""}
+        ss.upsert_kakao_title({sid: dict(idle_patch, last_result=msg, last_result_at=time.time(),
+                                         **dict(done, **_locked_patch(t, locked_eps, only, incremental)))})
         # 예전에 받아둔 회차만 있고 kavita.yaml이 없던 작품도 여기서 만들어진다
         _update_yaml()
         return res
@@ -1261,15 +1289,16 @@ def download_series(cfg, session, sid, log=print, full=False, cancel_check=None,
         if cur.get("last_downloaded_no") is not None and (last_ok is None or cur["last_downloaded_no"] > last_ok):
             last_ok = cur["last_downloaded_no"]
         max_checked = max(max_checked, int(cur.get("checked_no") or 0))
-    done_patch = {"last_downloaded_no": last_ok, "checked_no": max_checked,
-                  "last_result": summary, "last_result_at": time.time(),
-                  "has_locked": bool(res["locked"])}
+    done_patch = {"last_downloaded_no": last_ok, "last_result": summary, "last_result_at": time.time()}
+    done_patch.update(_locked_patch(t, [None] * max(0, res["locked"]), only, incremental))
+    if only is None:
+        done_patch["checked_no"] = max_checked
     if res["waitfree_used"]:
         done_patch.update(_ticket_patch(sid, t, account, time.time()))
     elif res.get("waitfree_failed") or res.get("waitfree_none"):
         # 아직 충전 전이거나 대여권으로 열 회차가 없음 - 기록하지 않으면 기다무 확인이 같은 작품을 계속 다시 붙잡는다
         done_patch.update(_ticket_patch(sid, t, account, _waitfree_backoff(t)))
-    if not res.get("capped") and not res["cancelled"] and not res["auth_expired"]:
+    if only is None and not res.get("capped") and not res["cancelled"] and not res["auth_expired"]:
         # 이번에 끝까지 확인했으니, 새 회차가 올라오기 전까지는 다시 안 봐도 됨
         done_patch["checked_slide_dt"] = t.get("last_slide_added_dt") or ""
     ss.upsert_kakao_title({sid: done_patch})
