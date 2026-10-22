@@ -1,6 +1,6 @@
 {
-  "version": "2.9.2",
+  "version": "2.9.3",
   "based_on_plugin": "1.18.8",
-  "webtoon_manager": "1.43.2",
+  "webtoon_manager": "1.43.3",
   "ym_mini_game": "2.0.2"
 }

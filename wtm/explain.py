@@ -132,13 +132,20 @@ def explain(query, days=3, out=print):
         for n, _c in accs:
             used = kp._ticket_at(t, n)
             ready = used + kp.waitfree_period(t)
-            state = "만료·로그인 안 됨으로 제외 중" if n in dead else ("지금 충전됨 - 다음 확인(5분 안)에 받음" if ready <= now else "충전 " + _t(ready))
+            state = "만료·로그인 안 됨으로 제외 중" if n in dead else ("지금 충전됨" if ready <= now else "충전 " + _t(ready))
             out("  계정%d: 마지막 사용(또는 확인) %s → %s" % (n, _t(used), state))
         if not t.get("has_locked"):
             out("  잠긴 회차가 없다고 기록돼 있어 기다무 확인 대상이 아닙니다 (새 회차가 잠긴 채 올라오면 다시 대상이 됨).")
         elif cfg.get("KAKAO_USE_WAITFREE"):
-            due = tid in kp.waitfree_due_titles(cfg, now)
-            out("  지금 기다무 확인 대상: %s" % ("예" if due else "아니오(충전 전)"))
+            due = kp.waitfree_due_titles(cfg, now)
+            if tid in due:
+                pos = [sid for sid, _t in kp.waitfree_order(cfg, due)].index(tid)
+                rounds = pos // kp.WAITFREE_TICK_MAX
+                out("  지금 기다무 확인 대상: 예 - 충전된 작품 %d개 중 %d번째%s" % (
+                    len(due), pos + 1, " (앞에 %d번 확인이 더 돌아야 차례, 한 번에 %d개씩)" % (rounds, kp.WAITFREE_TICK_MAX)
+                    if rounds else " (다음 확인 때 받음)"))
+            else:
+                out("  지금 기다무 확인 대상: 아니오(충전 전)")
 
     # ── 최근 이력·로그 ──
     hist = [h for h in ss.load_history(limit=3000) if str(h.get("title_id")) == tid][:5]

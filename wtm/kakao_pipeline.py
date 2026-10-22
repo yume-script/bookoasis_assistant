@@ -600,6 +600,15 @@ def waitfree_due_titles(cfg, now=None):
     return out
 
 
+def waitfree_order(cfg, due):
+    """기다무 확인 순서 [(sid, 작품)]: 충전 주기가 짧은 작품 먼저, 같은 주기면 충전된 지 오래된 것부터.
+    충전된 대여권은 쌓이지 않아 늦어지는 만큼 버려지는데, 3시간 기다무는 1시간 늦으면 1/3장, 1일 기다무는
+    1/24장을 버린다. 그래서 밀린 작품이 많을 때(예: 1일 기다무 수백 개) 짧은 주기 작품이 그 뒤에 줄서지 않게 한다."""
+    nums = [n for n, _c in accounts(cfg)] or [1]
+    return sorted(due.items(), key=lambda kv: (waitfree_period(kv[1]),
+                                               min(_ticket_at(kv[1], n) for n in nums)))
+
+
 def flush_leftovers(cfg, log=print):
     """재시작 등으로 옮기다 만 zip(임시 폴더 _outbox)을 라이브러리로 옮긴다 - 전체 실행(몇 시간마다)까지 기다리지 않게.
     이 프로세스에서 옮기는 중인 게 있으면 그쪽이 마저 옮기므로 건드리지 않는다. 반환: 옮긴 수"""
@@ -625,9 +634,8 @@ def run_waitfree_tick(cfg, log=print):
     if not due:
         return res
     # 한 번에 너무 많이 붙잡고 있으면 같은 스케줄러가 도는 네이버·전체 실행이 그동안 밀린다.
-    # 충전된 지 오래된 작품부터 WAITFREE_TICK_MAX개만 하고 나머지는 다음 확인(5분 뒤)에.
-    nums = [n for n, _c in accounts(cfg)] or [1]
-    order = sorted(due.items(), key=lambda kv: min(_ticket_at(kv[1], n) + waitfree_period(kv[1]) for n in nums))
+    # 순서(waitfree_order)대로 WAITFREE_TICK_MAX개만 하고 나머지는 다음 확인 때.
+    order = waitfree_order(cfg, due)
     if len(order) > WAITFREE_TICK_MAX:
         log("카카오 기다무: 대여권이 충전된 작품 %d개 중 %d개만 이번에 확인 (나머지는 다음 확인 때)" % (len(order), WAITFREE_TICK_MAX))
         order = order[:WAITFREE_TICK_MAX]
