@@ -1058,7 +1058,16 @@ def download_series(cfg, session, sid, log=print, full=False, cancel_check=None,
     # 기다무를 쓸 수 있는 계정인데 대여권으로 열 회차가 없는 작품(잠긴 회차가 기다무 대상이 아님 등)도
     # 확인한 시각을 남겨, 기다무 확인이 같은 작품을 1~5분마다 다시 붙잡지 않게 한다
     res["waitfree_none"] = bool(use_waitfree and has_cookie and only is None)
-    if use_waitfree and has_cookie:
+    # 이 계정 대여권이 아직 충전 전이면(마지막으로 쓴 시각 + 충전 주기 전) 시도하지 않는다. 다른 계정이 충전돼
+    # 작품이 기다무 확인에 걸려도 계정1부터 차례로 돌기 때문에, 예전엔 충전 안 된 계정도 시도해서
+    # 카카오가 '상품 정보를 찾을 수 없습니다(-205)'로 거절했다. 기록된 충전 시각은 그대로 둔다.
+    charge_at = _ticket_at(t, account) + waitfree_period(t) if _ticket_at(t, account) else 0
+    if use_waitfree and has_cookie and charge_at > time.time():
+        res["waitfree_none"] = False
+        if any(ep["waitfree_ok"] for ep in locked_eps):
+            log("%s: 기다무 대여권 충전 전 (%s 충전) - 이번엔 사용 안 함" % (
+                title, time.strftime("%m-%d %H:%M", time.localtime(charge_at))))
+    elif use_waitfree and has_cookie:
         wait_ep = next((ep for ep in locked_eps if ep["waitfree_ok"]), None)
         if wait_ep:
             res["waitfree_none"] = False
