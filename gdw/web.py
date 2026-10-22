@@ -99,7 +99,7 @@ def modules():
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "gdrive_watch_sa"
+    server_version = "bookoasis_assistant"
     svc = None  # make_server에서 지정 (드라이브 변경 감시를 끄면 None)
 
     def log_message(self, fmt, *args):  # 접근 로그는 디버그로만 (화면이 15초마다 상태를 묻는다)
@@ -305,7 +305,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(404, {"success": False, "error": "MCP가 꺼져 있습니다 (설정 > MCP에서 토큰을 만드세요)."})
         if not mcp.authorized(self.headers.get("Authorization")):
             return self._send(401, {"success": False, "error": "MCP 토큰이 필요합니다."},
-                              extra={"WWW-Authenticate": 'Bearer realm="gdrive_watch_sa"'})
+                              extra={"WWW-Authenticate": 'Bearer realm="bookoasis_assistant"'})
         origin = self.headers.get("Origin")
         if origin and origin.split("://", 1)[-1] != (self.headers.get("Host") or ""):
             return self._send(403, {"success": False, "error": "다른 사이트에서 온 요청입니다."})  # DNS 리바인딩 방지

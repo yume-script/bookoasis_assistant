@@ -1,4 +1,4 @@
-# BookOasis 보조 프로그램 · 독립형 (gdrive_watch_sa)
+# BookOasis 보조 프로그램 · 독립형 (bookoasis_assistant)
 
 BookOasis 플러그인으로 쓰던 세 가지를 **BookOasis 밖에서 따로 도는 프로그램 하나**로 옮겼습니다. 관리 화면·포트·비밀번호·`.env`는 하나이고,
 각 모듈의 무거운 일은 모듈마다 따로 도는 작업 프로세스가 합니다(한쪽이 느려지거나 죽어도 다른 쪽은 영향 없음).
@@ -36,8 +36,8 @@ BookOasis 플러그인으로 쓰던 세 가지를 **BookOasis 밖에서 따로 �
 
 ## 설치 (서버에 직접)
 ```bash
-git clone https://github.com/yume-script/gdrive_watch_sa.git /opt/gdrive_watch_sa
-cd /opt/gdrive_watch_sa
+git clone https://github.com/yume-script/bookoasis_assistant.git /opt/bookoasis_assistant
+cd /opt/bookoasis_assistant
 python3 -m venv venv && venv/bin/pip install -r requirements.txt
 cp env.example .env && chmod 600 .env    # 값 채우기 (아래 표)
 venv/bin/python app.py --check           # 설정 점검: rclone, BookOasis DB, WEBHOOK_TOKEN
@@ -45,10 +45,25 @@ venv/bin/python app.py                   # 관리 화면 http://127.0.0.1:5931/
 ```
 systemd로 상주시키기:
 ```bash
-sudo cp deploy/gdrive_watch_sa.service /etc/systemd/system/   # 경로·User 수정
-sudo systemctl daemon-reload && sudo systemctl enable --now gdrive_watch_sa
+sudo cp deploy/bookoasis_assistant.service /etc/systemd/system/   # 경로·User 수정
+sudo systemctl daemon-reload && sudo systemctl enable --now bookoasis_assistant
 ```
 종료 신호(SIGTERM)를 받으면 워커가 진행 중인 작업을 마치고 끝날 때까지 최대 40초 기다립니다 (`TimeoutStopSec=60`).
+
+## 이전 이름(gdrive_watch_sa)에서 옮기기
+저장소·서비스·설치 폴더 이름이 `gdrive_watch_sa` → `bookoasis_assistant`로 바뀌었습니다. 설정(`.env`)과 기록(`DATA_DIR=data`)은
+설치 폴더 안에 있으므로 폴더째 옮기면 그대로 이어집니다.
+```bash
+systemctl stop gdrive_watch_sa && systemctl disable gdrive_watch_sa
+mv /mnt/gdrive_watch_sa /mnt/bookoasis_assistant
+cd /mnt/bookoasis_assistant
+git remote set-url origin https://github.com/yume-script/bookoasis_assistant.git && git pull
+sed 's#gdrive_watch_sa#bookoasis_assistant#g' /etc/systemd/system/gdrive_watch_sa.service \
+  > /etc/systemd/system/bookoasis_assistant.service
+rm /etc/systemd/system/gdrive_watch_sa.service
+systemctl daemon-reload && systemctl enable --now bookoasis_assistant
+journalctl -u bookoasis_assistant -n 30 --no-pager
+```
 
 ## 설치 (도커)
 ```bash

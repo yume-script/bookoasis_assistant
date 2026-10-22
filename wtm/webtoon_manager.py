@@ -381,7 +381,7 @@ class WebtoonManagerMetadataProvider(BaseMetadataProvider):
         return tuple(parts) if parts else (0,)
 
     def _check_update_available(self):
-        """독립형: 업데이트는 저장소(gdrive_watch_sa)를 git pull로 받는다. 플러그인 시절의 GitHub 버전 배지는 쓰지 않는다."""
+        """독립형: 업데이트는 저장소(bookoasis_assistant)를 git pull로 받는다. 플러그인 시절의 GitHub 버전 배지는 쓰지 않는다."""
         return {"local_version": self._read_version(), "update_available": False}
 
     def _check_update_available_plugin(self):
