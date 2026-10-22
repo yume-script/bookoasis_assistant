@@ -254,8 +254,23 @@ def _waitfree_once(cfg):
     return backlog
 
 
+def waitfree_wait(cfg, started, next_charge, now=None):
+    """다음 기다무 확인까지 기다릴 초: 다음 충전 시각(+5초)까지, 단 1분 이상 · 설정한 최대 간격 이하"""
+    now = now or time.time()
+    try:
+        max_gap = min(30, max(1, int(float(cfg.get("WAITFREE_CHECK_MINUTES") or 5)))) * 60
+    except (TypeError, ValueError):
+        max_gap = WAITFREE_TICK_SECONDS
+    wait = started + max_gap - now
+    if next_charge:
+        wait = min(wait, next_charge + 5 - now)
+    return max(60, wait)
+
+
 def _waitfree_loop(get_cfg_func):
-    """기다무 확인: 전체 실행과 다른 스레드에서 5분마다 (밀린 작품이 남았으면 1분 뒤 이어서)."""
+    """기다무 확인: 전체 실행과 다른 스레드에서. 다음 대여권이 충전되는 시각에 맞춰 깨우고(1분 단위),
+    그래도 설정한 최대 간격(기본 5분)마다 한 번은 본다. 밀린 작품이 남았으면 1분 뒤 이어서.
+    예전엔 5분 간격 고정이라 충전 뒤 평균 2~3분 + 처리 시간만큼 늦게 썼다."""
     from . import state_store as _ss
     try:
         from . import downloader as _dl
@@ -268,11 +283,12 @@ def _waitfree_loop(get_cfg_func):
         try:
             cfg = get_cfg_func() or {}
             if str(cfg.get("ENABLE_SCHEDULER", "")).lower() in ("1", "true", "on", "y", "yes"):
+                from . import kakao_pipeline
                 started = time.time()
                 if _waitfree_once(cfg):
                     wait = 60
                 else:
-                    wait = max(60, WAITFREE_TICK_SECONDS - (time.time() - started))
+                    wait = waitfree_wait(cfg, started, kakao_pipeline.next_charge_at(cfg))
         except Exception as e:  # noqa: BLE001
             try:
                 _ss.append_log("기다무 확인 오류(무시): %s" % e)

@@ -4,10 +4,11 @@
     python3 -m wtm.simulate                 앞으로 24시간
     python3 -m wtm.simulate 48 "곤륜객잔"    48시간 + 이 작품이 언제 받는지
     python3 -m wtm.simulate 24 --csv /tmp/wf.csv   대여권 사용 예정을 한 줄씩 CSV로
+    python3 -m wtm.simulate 24 --fixed                       예전 동작: 충전 시각과 상관없이 5분 간격
     python3 -m wtm.simulate 24 --pause-full --full-min 120   예전 동작: 2시간 전체 실행 동안 기다무 확인이 멈춤
 
 서버에 저장된 작품 기록(계정별 마지막 대여권 사용 시각, 충전 주기, 남은 회차 수)과 실제 동작 규칙
-(5분마다 확인, 한 번에 30개, 충전 시각이 오래된 순서, 밀리면 1분 뒤 이어서, 전체 실행 중에도 돎)으로
+(다음 충전 시각에 맞춰 확인 - 1분 이상·최대 간격 이하, 한 번에 30개, 충전 시각이 오래된 순서, 밀리면 1분 뒤 이어서, 전체 실행 중에도 돎)으로
 앞으로 대여권을 언제 쓰게 되는지 따라가 본다. 한 번 확인에 걸리는 시간은 job.log의 최근 기록으로 잰다.
 
 가정 (실제와 다를 수 있는 부분)
@@ -86,7 +87,9 @@ def measure(log_path):
     return (sum(per) / len(per) if per else 10.0), len(per), (fulls[-1] if fulls else None)
 
 
-def simulate(cfg, hours=24, per_title=10.0, full_dur=None, now=None, pause_full=False):
+def simulate(cfg, hours=24, per_title=10.0, full_dur=None, now=None, pause_full=False, fixed=False):
+    """fixed=True: 예전 동작(5분 간격 고정)으로 계산 - 비교용"""
+    from wtm.scheduler import waitfree_wait
     from wtm import kakao_pipeline as kp, state_store as ss
     now = now or time.time()
     job = ss.load_job_state()
@@ -119,6 +122,15 @@ def simulate(cfg, hours=24, per_title=10.0, full_dur=None, now=None, pause_full=
         known = [x["tick"][n] + x["period"] for n in nums if x["tick"][n]]
         return (0, min(known)) if known else (1, 0)
 
+    def next_charge(at):
+        best = None
+        for x in st.values():
+            for n in nums:
+                c = x["tick"][n] + x["period"] if x["tick"][n] else 0
+                if c > at and (best is None or c < best):
+                    best = c
+        return best
+
     end = now + hours * 3600
     t = now
     visits, rounds = [], []
@@ -129,10 +141,7 @@ def simulate(cfg, hours=24, per_title=10.0, full_dur=None, now=None, pause_full=
             continue
         due = sorted(((sid, x) for sid, x in st.items() if charged(x, t)), key=key)
         if not due:
-            # 다음 충전 시각까지 5분 단위로 건너뛴다
-            nxt = min(min((x["tick"][n] + x["period"]) for n in nums if x["tick"][n]) for x in st.values()
-                      if any(x["tick"][n] for n in nums))
-            t += max(1, -(-(nxt - t) // TICK)) * TICK   # 다음 충전 뒤 첫 확인
+            t += max(60, TICK) if fixed else waitfree_wait(cfg, t, next_charge(t), now=t)
             continue
         batch = due[:kp.WAITFREE_TICK_MAX]
         dur = per_title * len(batch)
@@ -149,7 +158,11 @@ def simulate(cfg, hours=24, per_title=10.0, full_dur=None, now=None, pause_full=
                 x["left"] -= 1
             if x["left"] <= 0:
                 del st[sid]
-        t = t + dur + BACKLOG_GAP if len(due) > len(batch) else max(t + TICK, t + dur + BACKLOG_GAP)
+        done = t + dur
+        if len(due) > len(batch):
+            t = done + BACKLOG_GAP
+        else:
+            t = done + (max(60, t + TICK - done) if fixed else waitfree_wait(cfg, t, next_charge(done), now=done))
     return {"now": now, "hours": hours, "nums": nums, "titles": cands, "visits": visits, "rounds": rounds,
             "blocks": blocks, "per_title": per_title}
 
@@ -225,6 +238,9 @@ def main(argv):
     from wtm.webtoon_manager import DEFAULTS
     args = list(argv)
     csv_path, full_min = None, None
+    fixed = "--fixed" in args  # 예전 동작(5분 간격 고정)으로 계산
+    if fixed:
+        args.remove("--fixed")
     pause_full = "--pause-full" in args  # 예전 동작(전체 실행 동안 기다무 확인 멈춤)으로 계산
     if pause_full:
         args.remove("--pause-full")
@@ -251,7 +267,7 @@ def main(argv):
     elif not full_dur and pause_full:
         print("(job.log에 전체 실행 시작~끝 기록이 없어 전체 실행 동안 멈추는 것은 빼고 계산 - "
               "--full-min 분 으로 지정할 수 있음)")
-    r = simulate(cfg, hours=hours, per_title=per_title, full_dur=full_dur, pause_full=pause_full)
+    r = simulate(cfg, hours=hours, per_title=per_title, full_dur=full_dur, pause_full=pause_full, fixed=fixed)
     report(r, query=query)
     if csv_path and r:
         with open(csv_path, "w", newline="", encoding="utf-8-sig") as f:

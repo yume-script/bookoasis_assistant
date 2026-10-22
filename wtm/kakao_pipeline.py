@@ -601,18 +601,17 @@ def late_text(sec):
     return "%d일%s" % (m // 1440, " %d시간" % (m % 1440 // 60) if m % 1440 >= 60 else "")
 
 
-def waitfree_due_titles(cfg, now=None):
-    """기다무 대여권이 (어느 계정이든) 충전돼 지금 쓸 수 있는 작품 {sid: 작품}.
+def _waitfree_candidates(cfg):
+    """기다무 확인 대상 ([계정 번호], {sid: 작품}) - 충전 여부는 보지 않음.
     구독 중이거나 구매 작품이고, 대여권으로 열 회차가 남아 있는(has_locked) 기다무 작품만. 완결작도 포함."""
     if not (cfg.get("KAKAO_ENABLE") and cfg.get("KAKAO_USE_WAITFREE")):
-        return {}
+        return [], {}
     job = ss.load_job_state()
     # 쿠키 만료·로그인 안 됨으로 확인된 추가 계정은 빼고 센다 (그 계정 때문에 5분마다 다시 돌지 않게).
     # 다음 전체 실행에서 그 계정이 다시 로그인되면 표시가 풀린다.
     nums = [n for n, _c in accounts(cfg) if n == 1 or not job.get("kakao_cookie_expired_notified_%d" % n)]
     if not nums:
-        return {}
-    now = now or time.time()
+        return [], {}
     from . import pipeline as _pl
     out = {}
     for sid, t in ss.load_kakao_titles().items():
@@ -622,9 +621,30 @@ def waitfree_due_titles(cfg, now=None):
             continue
         if adult_block_reason_any(cfg, t) or _pl.bl_blocked(cfg, t):
             continue
-        if any(now - _ticket_at(t, n) >= waitfree_period(t) for n in nums):
-            out[sid] = t
-    return out
+        out[sid] = t
+    return nums, out
+
+
+def waitfree_due_titles(cfg, now=None):
+    """기다무 대여권이 (어느 계정이든) 충전돼 지금 쓸 수 있는 작품 {sid: 작품}. 충전 전인 작품은 빠진다."""
+    nums, cands = _waitfree_candidates(cfg)
+    now = now or time.time()
+    return {sid: t for sid, t in cands.items()
+            if any(now - _ticket_at(t, n) >= waitfree_period(t) for n in nums)}
+
+
+def next_charge_at(cfg, now=None):
+    """지금 이후 가장 먼저 충전되는 기다무 대여권 시각 (없으면 None) - 기다무 확인을 그 시각에 맞춰 깨우려고"""
+    nums, cands = _waitfree_candidates(cfg)
+    now = now or time.time()
+    best = None
+    for t in cands.values():
+        for n in nums:
+            used = _ticket_at(t, n)
+            if used and used + waitfree_period(t) > now:
+                at = used + waitfree_period(t)
+                best = at if best is None or at < best else best
+    return best
 
 
 def waitfree_order(cfg, due):

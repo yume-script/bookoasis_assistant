@@ -96,6 +96,7 @@ DEFAULTS = {
     "KAKAO_DOWNLOAD_ROOT": "",
     "KAKAO_AUTO": True,
     "KAKAO_USE_WAITFREE": False,
+    "WAITFREE_CHECK_MINUTES": 5,
     "NEW_EP_SCOPE": "today",
     "NAVER_TRY_OWNED_PAID": True,
     "KAKAO_USE_OWNED_TICKETS": False,
@@ -268,6 +269,9 @@ class WebtoonManagerMetadataProvider(BaseMetadataProvider):
          "hint": "하루 1번 보관함 > 구매 목록의 작품을 등록하고 구매·대여 회차를 받습니다(로그인 쿠키 필요)."},
         {"key": "KAKAO_USE_WAITFREE", "label": "기다무 대여권 자동 사용", "type": "checkbox", "default": False,
          "hint": "작품당 실행 1회에 1장. 계정의 대여권이 실제로 소모됩니다(웹툰·웹소설 공통)."},
+        {"key": "WAITFREE_CHECK_MINUTES", "label": "기다무 확인 최대 간격(분, 1~30)", "type": "number", "default": 5,
+         "hint": "다음 대여권이 충전되는 시각에 맞춰 바로 확인하고(1분 단위), 그 사이에도 이 간격마다 한 번은 확인합니다. "
+                 "새로 잠긴 회차가 생긴 작품을 얼마나 빨리 잡는지에만 영향이 있습니다."},
         {"key": "KAKAO_USE_OWNED_TICKETS", "label": "보유 대여권 자동 사용", "type": "checkbox", "default": False,
          "hint": "이벤트/선물/쿠폰으로 받은 대여권. 실제로 소모됩니다(웹툰·웹소설 공통)."},
         {"key": "KAKAO_USE_PAID_TICKETS", "label": "구매한 대여권도 사용", "type": "checkbox", "default": False,
@@ -1642,7 +1646,7 @@ class WebtoonManagerMetadataProvider(BaseMetadataProvider):
          "구매 작품 동기화도 모든 계정의 구매 목록을 모읍니다. 쿠키는 .env의 WTM_KAKAO_COOKIE_2~5에 저장됩니다. "
          "여러 계정으로 무료 혜택을 늘리는 것은 카카오 이용약관에 어긋날 수 있으니 본인·가족 계정으로만 쓰세요."),
         ("kakao", "다운로드", ("KAKAO_DOWNLOAD_ROOT", "KAKAO_DOWNLOAD_WAITFREE", "KAKAO_SYNC_PURCHASED")),
-        ("kakao", "대여권(웹툰·웹소설 공통)", ("KAKAO_USE_WAITFREE", "KAKAO_USE_OWNED_TICKETS",
+        ("kakao", "대여권(웹툰·웹소설 공통)", ("KAKAO_USE_WAITFREE", "WAITFREE_CHECK_MINUTES", "KAKAO_USE_OWNED_TICKETS",
                                             "KAKAO_USE_PAID_TICKETS")),
         ("kakao", "중복 확인", ("COMPARE_FOLDERS_KAKAO", "KAKAO_DOWNLOAD_OWNED")),
 
