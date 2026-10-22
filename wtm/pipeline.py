@@ -158,19 +158,31 @@ def kind_label(t, platform="naver"):
     return "·".join(parts)
 
 
+NAVER_RECHECK_HOURS = 20   # 네이버 작품은 자동 실행에서 하루 1번만 (실행 주기가 12시간이면 하루 2번 돌기 때문)
+
+
 def in_new_episode_scope(cfg, t, platform="naver", now=None):
-    """설정 NEW_EP_SCOPE가 'today'(기본)면 오늘(전후) 요일 연재작 + 매일+ + 기다무 +
-    아직 한 번도 받지 않은 작품만 새 회차를 확인한다. 'all'이면 구독작 전부."""
+    """자동 실행(실행 주기마다)에서 이 작품의 새 회차를 확인할지. 설정 NEW_EP_SCOPE가 'today'(기본)일 때:
+      - 아직 한 번도 받지 않은 작품: 바로
+      - 요일 연재작: 그 요일(전날 늦게 올라온 회차 보완으로 다음 날까지, 22시 이후엔 다음 날 연재분도)만
+      - 매일+: 매일
+      - 네이버는 위에 해당해도 작품당 하루 1번(NAVER_RECHECK_HOURS)만
+      - 카카오는 요일 목록 스캔에서 새 회차가 올라온 게 보인 작품도 (요일과 상관없이)
+    카카오 기다무 대여권은 여기서 다루지 않는다 - 5분마다 도는 기다무 확인이 작품별 충전 주기
+    (1시간·3시간·12시간·1일·2일·3일·7일 등)에 맞춰 충전된 작품만 따로 받는다.
+    'all'이면 구독작 전부."""
     if str(cfg.get("NEW_EP_SCOPE") or "today") == "all":
         return True
     if t.get("last_downloaded_no") is None:
         return True        # 새로 구독한 작품은 요일과 상관없이 바로 첫 다운로드
+    now = now or time.time()
+    if platform == "naver" and now - float(t.get("last_auto_check_at") or 0) < NAVER_RECHECK_HOURS * 3600:
+        return False
     wds = set(t.get("weekdays") or [])
     if "dailyPlus" in wds:
         return True
-    if platform == "kakao" and t.get("waitfree") and (
-            t.get("status") != "완결" or (cfg.get("KAKAO_USE_WAITFREE") and t.get("has_locked"))):
-        return True  # 기다무: 연재 중이거나, 완결이라도 대여권으로 열 회차가 남아 있으면
+    if platform == "kakao" and t.get("last_slide_added_dt") and t.get("checked_slide_dt") != t.get("last_slide_added_dt"):
+        return True        # 새 회차가 올라옴(요일 목록 스캔에서 확인)
     return bool(wds & target_weekdays(now))
 
 
@@ -755,6 +767,7 @@ def run_download_cycle(cfg, log=print):
         if _cancelled() or state["cookie_expired"]:
             state["cancelled"] = state["cancelled"] or _cancelled()
             return
+        ss.upsert_title({tid: {"last_auto_check_at": time.time()}})  # 하루 1번 확인 기준
         with lock:
             state["done"] += 1
             done_n = state["done"]

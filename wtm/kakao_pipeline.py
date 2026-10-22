@@ -535,11 +535,7 @@ def _needs_check(cfg, t, now=None):
     if (cfg.get("KAKAO_USE_OWNED_TICKETS") and t.get("has_locked")
             and now - float(t.get("last_checked_at") or 0) >= 24 * 3600):
         return True   # 보유 대여권이 새로 생겼을 수 있으니 하루 1번은 확인
-    if cfg.get("KAKAO_USE_WAITFREE") and t.get("waitfree") and t.get("has_locked"):
-        period = waitfree_period(t)
-        nums = [n for n, _c in accounts(cfg)] or [1]
-        if any(now - _ticket_at(t, n) >= period for n in nums):
-            return True
+    # 기다무 대여권은 여기서 보지 않는다 - 5분마다 도는 기다무 확인(run_waitfree_tick)이 충전된 작품만 받는다
     return False
 
 
@@ -1377,7 +1373,7 @@ def run_kakao_cycle(cfg, log=print, manage_job=False):
               if _pl.in_new_episode_scope(cfg, v, "kakao", now) and _needs_check(cfg, v, now)
               and not adult_block_reason_any(cfg, v) and not _pl.bl_blocked(cfg, v)}
     titles = _pl.filter_auto_targets(cfg, titles, "kakao", log=log, label="카카오페이지: ")
-    log("카카오페이지: 구독 %d개 중 이번에 확인할 작품 %d개(오늘 요일·기다무 중 새 회차/대여권 충전된 작품만)" %
+    log("카카오페이지: 구독 %d개 중 이번에 확인할 작품 %d개(오늘 요일 연재작·매일+·새 회차가 올라온 작품 - 기다무 대여권은 5분마다 따로)" %
         (all_count, len(titles)))
     items = sorted(titles.items(), key=lambda kv: str(kv[1].get("title") or ""))
     lock = threading.Lock()
