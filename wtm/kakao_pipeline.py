@@ -581,12 +581,54 @@ def waitfree_label(t):
     return n + " 기다무"
 
 
-def waitfree_late(t, account, now=None):
-    """이 계정의 기다무 대여권을 충전 예정 시각보다 몇 초 늦게 쓰는지. 이 작품에서 처음 쓰면(예정 시각 모름) None"""
-    used = _ticket_at(t, account)
-    if not used:
+NIGHT_MIN_PERIOD = 1440 * 60   # 새벽 시간대로 옮기는 기다무: 충전 주기 1일 이상 (1일·2일·3일·7일)
+
+
+def _night_window(cfg):
+    """긴 주기 기다무를 쓸 시간대 (시작 시, 끝 시) 또는 None(끔). 끝 시각은 포함하지 않음, 자정을 넘어가도 됨(23~5)"""
+    if not cfg.get("WAITFREE_NIGHT_ENABLE"):
         return None
-    return max(0, int((now or time.time()) - used - waitfree_period(t)))
+    try:
+        a = int(float(cfg.get("WAITFREE_NIGHT_START", 1))) % 24
+        b = int(float(cfg.get("WAITFREE_NIGHT_END", 7))) % 24
+    except (TypeError, ValueError):
+        return None
+    return (a, b) if a != b else None
+
+
+def _night_applies(cfg, t):
+    return _night_window(cfg) is not None and waitfree_period(t) >= NIGHT_MIN_PERIOD
+
+
+def _in_window(win, ts):
+    h = time.localtime(ts).tm_hour
+    a, b = win
+    return a <= h < b if a < b else (h >= a or h < b)
+
+
+def _window_start(win, ts):
+    """ts가 시간대 안이면 ts, 아니면 다음 시간대 시작 시각"""
+    if _in_window(win, ts):
+        return ts
+    lt = time.localtime(ts)
+    start = time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday, win[0], 0, 0, 0, 0, -1))
+    return start if start > ts else time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday + 1, win[0], 0, 0, 0, 0, -1))
+
+
+def ready_at(cfg, t, account, now=None):
+    """이 계정이 이 작품에서 기다무 대여권을 쓸 수 있는 시각: 충전 시각, 단 '긴 주기 기다무는 새벽에'를 켰으면
+    그 시간대로 미룬다. 이 작품에서 쓴 적이 없으면 지금(또는 다음 시간대 시작)."""
+    used = _ticket_at(t, account)
+    at = used + waitfree_period(t) if used else (now or time.time())
+    return _window_start(_night_window(cfg), at) if _night_applies(cfg, t) else at
+
+
+def waitfree_late(t, account, now=None, cfg=None):
+    """이 계정의 기다무 대여권을 쓸 수 있게 된 시각(충전, 새벽 시간대로 미뤘으면 그 시작)보다 몇 초 늦게 쓰는지.
+    이 작품에서 처음 쓰면(예정 시각 모름) None"""
+    if not _ticket_at(t, account):
+        return None
+    return max(0, int((now or time.time()) - ready_at(cfg or {}, t, account)))
 
 
 def late_text(sec):
@@ -629,8 +671,7 @@ def waitfree_due_titles(cfg, now=None):
     """기다무 대여권이 (어느 계정이든) 충전돼 지금 쓸 수 있는 작품 {sid: 작품}. 충전 전인 작품은 빠진다."""
     nums, cands = _waitfree_candidates(cfg)
     now = now or time.time()
-    return {sid: t for sid, t in cands.items()
-            if any(now - _ticket_at(t, n) >= waitfree_period(t) for n in nums)}
+    return {sid: t for sid, t in cands.items() if any(ready_at(cfg, t, n, now) <= now for n in nums)}
 
 
 def next_charge_at(cfg, now=None):
@@ -640,23 +681,24 @@ def next_charge_at(cfg, now=None):
     best = None
     for t in cands.values():
         for n in nums:
-            used = _ticket_at(t, n)
-            if used and used + waitfree_period(t) > now:
-                at = used + waitfree_period(t)
-                best = at if best is None or at < best else best
+            at = ready_at(cfg, t, n, now)
+            if at > now and (best is None or at < best):
+                best = at
     return best
 
 
 def waitfree_order(cfg, due):
     """기다무 확인 순서 [(sid, 작품)]: 충전 예정 시각이 오래된(가장 많이 늦어진) 것부터.
     이 작품에서 아직 대여권을 쓴 적이 없어 충전 시각을 모르는 작품은 그 뒤에 - 예전엔 이런 작품(수백 개)이
-    '아주 오래전 충전'으로 계산돼 맨 앞에 서는 바람에 이미 쓰던 3시간 기다무가 그 뒤에서 몇 시간씩 기다렸다."""
+    '아주 오래전 충전'으로 계산돼 맨 앞에 서는 바람에 이미 쓰던 3시간 기다무가 그 뒤에서 몇 시간씩 기다렸다.
+    '1일 이상 기다무는 새벽에'를 켰으면 새벽으로 미룬 작품(수백~천 개가 시간대 시작에 한꺼번에 풀림)은 다른 작품 뒤에 -
+    이들은 시간대 안에서만 쓰면 손해가 없지만, 3시간 기다무는 늦어지는 만큼 대여권을 버린다."""
     nums = [n for n, _c in accounts(cfg)] or [1]
 
     def key(kv):
         t = kv[1]
-        known = [_ticket_at(t, n) + waitfree_period(t) for n in nums if _ticket_at(t, n)]
-        return (0, min(known)) if known else (1, 0)
+        known = [ready_at(cfg, t, n) for n in nums if _ticket_at(t, n)]
+        return (1 if _night_applies(cfg, t) else 0, 0 if known else 1, min(known) if known else 0)
     return sorted(due.items(), key=key)
 
 
@@ -757,7 +799,7 @@ def waitfree_schedule(cfg, t):
     """계정마다 다음 기다무 대여권 사용 가능 시각 [(계정 번호, 시각)]"""
     if not t.get("waitfree"):
         return []
-    return [(n, _ticket_at(t, n) + waitfree_period(t)) for n, _c in accounts(cfg)]
+    return [(n, ready_at(cfg, t, n)) for n, _c in accounts(cfg)]
 
 
 def next_waitfree_at(cfg, t):
@@ -765,7 +807,7 @@ def next_waitfree_at(cfg, t):
     nums = [n for n, _c in accounts(cfg)]
     if not nums or not t.get("waitfree"):
         return None
-    return min(_ticket_at(t, n) for n in nums) + waitfree_period(t)
+    return min(ready_at(cfg, t, n) for n in nums)
 
 
 def _fill_missing_thumbnails(session, log=print, limit=THUMB_FILL_PER_SCAN, should_cancel=None):
@@ -1082,12 +1124,16 @@ def download_series(cfg, session, sid, log=print, full=False, cancel_check=None,
     # 이 계정 대여권이 아직 충전 전이면(마지막으로 쓴 시각 + 충전 주기 전) 시도하지 않는다. 다른 계정이 충전돼
     # 작품이 기다무 확인에 걸려도 계정1부터 차례로 돌기 때문에, 예전엔 충전 안 된 계정도 시도해서
     # 카카오가 '상품 정보를 찾을 수 없습니다(-205)'로 거절했다. 기록된 충전 시각은 그대로 둔다.
-    charge_at = _ticket_at(t, account) + waitfree_period(t) if _ticket_at(t, account) else 0
+    # 자동 실행에서는 '긴 주기 기다무는 새벽에'도 지킨다 (직접 누른 다운로드는 시간대와 상관없이 씀).
+    charge_at = (ready_at(cfg, t, account) if not (full or only is not None) else
+                 (_ticket_at(t, account) + waitfree_period(t) if _ticket_at(t, account) else 0))
     if use_waitfree and has_cookie and charge_at > time.time():
         res["waitfree_none"] = False
         if any(ep["waitfree_ok"] for ep in locked_eps):
-            log("%s: 기다무 대여권 충전 전 (%s 충전) - 이번엔 사용 안 함" % (
-                title, time.strftime("%m-%d %H:%M", time.localtime(charge_at))))
+            night = _night_applies(cfg, t) and _ticket_at(t, account) + waitfree_period(t) <= time.time()
+            log("%s: 기다무 대여권 %s (%s부터) - 이번엔 사용 안 함" % (
+                title, "새벽 시간대에 사용" if night else "충전 전",
+                time.strftime("%m-%d %H:%M", time.localtime(charge_at))))
     elif use_waitfree and has_cookie:
         wait_ep = next((ep for ep in locked_eps if ep["waitfree_ok"]), None)
         if wait_ep:
@@ -1226,7 +1272,7 @@ def download_series(cfg, session, sid, log=print, full=False, cancel_check=None,
                     ticket_available = False       # 작품당 실행 1회에 1장
                     res["waitfree_used"] += 1
                     opened = waitfree_label(t)
-                    late = waitfree_late(t, account)
+                    late = waitfree_late(t, account, cfg=cfg)
                     log("%s %d화: 기다무 대여권 사용%s" % (title, no, "" if late is None else " (충전 후 %s)" % late_text(late)))
                 elif ep.get("use_owned") and any(v > 0 for v in owned.values()):
                     try:

@@ -114,19 +114,26 @@ def simulate(cfg, hours=24, per_title=10.0, full_dur=None, now=None, pause_full=
                 blocks.append((s, s + full_dur))
             s += interval
 
+    win = kp._night_window(cfg)
+
+    def ready(x, n, at):  # kakao_pipeline.ready_at과 같은 규칙 (긴 주기 기다무는 새벽 시간대로)
+        base = x["tick"][n] + x["period"] if x["tick"][n] else at
+        return kp._window_start(win, base) if win and x["period"] >= kp.NIGHT_MIN_PERIOD else base
+
     def charged(x, at):
-        return [n for n in nums if not x["tick"][n] or x["tick"][n] + x["period"] <= at]
+        return [n for n in nums if ready(x, n, at) <= at]
 
     def key(item):
         x = item[1]
-        known = [x["tick"][n] + x["period"] for n in nums if x["tick"][n]]
-        return (0, min(known)) if known else (1, 0)
+        known = [ready(x, n, t) for n in nums if x["tick"][n]]
+        night = 1 if win and x["period"] >= kp.NIGHT_MIN_PERIOD else 0   # waitfree_order와 같게: 새벽으로 미룬 작품은 뒤에
+        return (night, 0 if known else 1, min(known) if known else 0)
 
     def next_charge(at):
         best = None
         for x in st.values():
             for n in nums:
-                c = x["tick"][n] + x["period"] if x["tick"][n] else 0
+                c = ready(x, n, at)
                 if c > at and (best is None or c < best):
                     best = c
         return best
@@ -151,8 +158,10 @@ def simulate(cfg, hours=24, per_title=10.0, full_dur=None, now=None, pause_full=
             for n in charged(x, t):
                 if x["left"] <= 0:
                     break
-                late = (at - x["tick"][n] - x["period"]) if x["tick"][n] else None
+                late = max(0, at - ready(x, n, at)) if x["tick"][n] else None
                 visits.append({"at": at, "sid": sid, "title": x["title"], "account": n,
+                               "night": bool(win and x["period"] >= kp.NIGHT_MIN_PERIOD),
+                               "outside": bool(win and x["period"] >= kp.NIGHT_MIN_PERIOD and not kp._in_window(win, at)),
                                "period_min": x["period"] // 60, "late_sec": late, "queue": len(due), "pos": i + 1})
                 x["tick"][n] = at
                 x["left"] -= 1
@@ -219,6 +228,11 @@ def report(r, out=print, query=None):
             _dur(lt[-1])))
     if not per:
         out("  (계산할 대여권 사용 없음)")
+    nv = [v for v in visits if v.get("night") and (not clear or v["at"] >= clear)]
+    if nv:
+        out_n = sum(1 for v in nv if v["outside"])
+        out("  * 1일 이상 기다무는 새벽 시간대로 미루므로 위 지연에 그 대기가 포함됩니다. 시간대 안에서 쓰면 손해 없음 - "
+            "시간대 밖으로 넘친 대여권 %d장 / %d장%s" % (out_n, len(nv), "" if not out_n else " (시간대를 늘리거나 동시 처리 수를 올리세요)"))
 
     if query:
         q = query.strip().lower()

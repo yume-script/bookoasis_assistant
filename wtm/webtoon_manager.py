@@ -97,6 +97,9 @@ DEFAULTS = {
     "KAKAO_AUTO": True,
     "KAKAO_USE_WAITFREE": False,
     "WAITFREE_CHECK_MINUTES": 5,
+    "WAITFREE_NIGHT_ENABLE": False,
+    "WAITFREE_NIGHT_START": 1,
+    "WAITFREE_NIGHT_END": 7,
     "NEW_EP_SCOPE": "today",
     "NAVER_TRY_OWNED_PAID": True,
     "KAKAO_USE_OWNED_TICKETS": False,
@@ -272,6 +275,13 @@ class WebtoonManagerMetadataProvider(BaseMetadataProvider):
         {"key": "WAITFREE_CHECK_MINUTES", "label": "기다무 확인 최대 간격(분, 1~30)", "type": "number", "default": 5,
          "hint": "다음 대여권이 충전되는 시각에 맞춰 바로 확인하고(1분 단위), 그 사이에도 이 간격마다 한 번은 확인합니다. "
                  "새로 잠긴 회차가 생긴 작품을 얼마나 빨리 잡는지에만 영향이 있습니다."},
+        {"key": "WAITFREE_NIGHT_ENABLE", "label": "1일 이상 기다무는 새벽 시간대에 사용", "type": "checkbox", "default": False,
+         "hint": "1일·2일·3일·7일 기다무는 충전돼도 아래 시간대가 될 때까지 기다렸다 씁니다(3시간·12시간 기다무는 그대로). "
+                 "한 번 시간대 안에서 쓰면 다음 충전도 그 시간대라 매일 같은 시간에 받게 됩니다. 처음 옮길 때 한 번만 "
+                 "최대 하루 가까이 늦어집니다. 직접 누른 다운로드는 시간대와 상관없이 씁니다."},
+        {"key": "WAITFREE_NIGHT_START", "label": "새벽 시간대 시작(0~23시)", "type": "number", "default": 1},
+        {"key": "WAITFREE_NIGHT_END", "label": "새벽 시간대 끝(0~23시, 이 시각 전까지)", "type": "number", "default": 7,
+         "hint": "1일 기다무 작품 수 × 6초쯤 걸립니다(1,500개면 약 2.5시간). 시간대가 그보다 짧으면 다 못 쓰고 다음 날로 넘어갑니다."},
         {"key": "KAKAO_USE_OWNED_TICKETS", "label": "보유 대여권 자동 사용", "type": "checkbox", "default": False,
          "hint": "이벤트/선물/쿠폰으로 받은 대여권. 실제로 소모됩니다(웹툰·웹소설 공통)."},
         {"key": "KAKAO_USE_PAID_TICKETS", "label": "구매한 대여권도 사용", "type": "checkbox", "default": False,
@@ -1646,7 +1656,8 @@ class WebtoonManagerMetadataProvider(BaseMetadataProvider):
          "구매 작품 동기화도 모든 계정의 구매 목록을 모읍니다. 쿠키는 .env의 WTM_KAKAO_COOKIE_2~5에 저장됩니다. "
          "여러 계정으로 무료 혜택을 늘리는 것은 카카오 이용약관에 어긋날 수 있으니 본인·가족 계정으로만 쓰세요."),
         ("kakao", "다운로드", ("KAKAO_DOWNLOAD_ROOT", "KAKAO_DOWNLOAD_WAITFREE", "KAKAO_SYNC_PURCHASED")),
-        ("kakao", "대여권(웹툰·웹소설 공통)", ("KAKAO_USE_WAITFREE", "WAITFREE_CHECK_MINUTES", "KAKAO_USE_OWNED_TICKETS",
+        ("kakao", "대여권(웹툰·웹소설 공통)", ("KAKAO_USE_WAITFREE", "WAITFREE_CHECK_MINUTES", "WAITFREE_NIGHT_ENABLE",
+                                            "WAITFREE_NIGHT_START", "WAITFREE_NIGHT_END", "KAKAO_USE_OWNED_TICKETS",
                                             "KAKAO_USE_PAID_TICKETS")),
         ("kakao", "중복 확인", ("COMPARE_FOLDERS_KAKAO", "KAKAO_DOWNLOAD_OWNED")),
 
