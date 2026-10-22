@@ -137,7 +137,7 @@ def _is_finished_scan_due(job, target_hour):
 
 
 WAITFREE_TICK_SECONDS = 300
-_wf_state = {"checked": 0.0}
+_wf_gen = {"n": 0}   # 기다무 확인 스레드 세대 - 스케줄러를 다시 시작하면 예전 스레드는 끝난다
 
 
 def _loop(get_cfg_func, run_full_cycle_func, run_finished_scan_func):
@@ -213,29 +213,6 @@ def _loop(get_cfg_func, run_full_cycle_func, run_finished_scan_func):
                         except Exception as e:  # noqa: BLE001
                             _ss.append_log("스케줄러(완결 스캔) 실행 오류: %s" % e)
 
-        # 기다무 대여권: 자동 실행 주기와 별도로 5분마다 충전된 작품이 있는지 보고 바로 쓴다
-        # (3시간 기다무를 4시간 주기에 맞추면 매번 1시간씩 버려진다)
-        if enabled and time.time() - _wf_state["checked"] >= WAITFREE_TICK_SECONDS:
-            _wf_state["checked"] = time.time()
-            try:
-                from . import kakao_pipeline
-                if not _ss.load_job_state().get("running"):
-                    kakao_pipeline.flush_leftovers(cfg, log=_ss.append_log)  # 옮기다 만 zip 정리
-                if kakao_pipeline.waitfree_due_titles(cfg) and _ss.try_acquire_job({
-                        "stage": "waitfree", "message": "스케줄러: 충전된 기다무 대여권 사용",
-                        "started_at": time.time(), "cancel_requested": False, "last_error": None}):
-                    try:
-                        r = kakao_pipeline.run_waitfree_tick(cfg, log=_ss.append_log)
-                        msg = "기다무 대여권 %d장 사용 / 신규 %d화" % (r["waitfree_used"], r["downloaded"])
-                        if r["titles"] > kakao_pipeline.WAITFREE_TICK_MAX:
-                            _wf_state["checked"] = 0.0  # 밀린 작품이 남았으면 5분 기다리지 않고 다음 순환(1분 뒤)에 이어서
-                    except Exception as e:  # noqa: BLE001
-                        msg = "기다무 대여권 사용 오류: %s" % e
-                        _ss.append_log(msg)
-                    _ss.save_job_state({"running": False, "stage": "done", "finished_at": time.time(), "message": msg})
-            except Exception as e:  # noqa: BLE001
-                _ss.append_log("기다무 확인 오류(무시): %s" % e)
-
         # 쿠키 자동 갱신은 예약 다운로드를 꺼 둬도 따로 돈다(기본 6시간마다).
         try:
             from . import cookie_keeper
@@ -244,6 +221,64 @@ def _loop(get_cfg_func, run_full_cycle_func, run_finished_scan_func):
         except Exception as e:  # noqa: BLE001
             _ss.append_log("쿠키 자동 갱신 오류(무시): %s" % e)
         time.sleep(60)
+
+
+def _waitfree_once(cfg):
+    """충전된 기다무 대여권이 있으면 쓴다. 다른 작업(전체 실행 등)이 도는 중이어도 같이 돈다 -
+    예전엔 작업 잠금을 못 잡아 전체 실행(1~2시간) 동안 3시간 기다무가 그만큼 늦어졌다.
+    같은 작품을 동시에 받지 않는 건 kakao_pipeline.download_series_all이 막는다.
+    반환: 밀린 작품이 남았는지"""
+    from . import state_store as _ss, kakao_pipeline
+    job = _ss.load_job_state()
+    if not job.get("running"):
+        kakao_pipeline.flush_leftovers(cfg, log=_ss.append_log)  # 옮기다 만 zip 정리
+    if not kakao_pipeline.waitfree_due_titles(cfg):
+        return False
+    # 작업이 없으면 잠금을 잡아 화면에 '기다무 대여권 사용'으로 보이게, 다른 작업 중이면 잠금 없이 같이 돈다
+    owned = _ss.try_acquire_job({"stage": "waitfree", "message": "스케줄러: 충전된 기다무 대여권 사용",
+                                 "started_at": time.time(), "cancel_requested": False, "last_error": None})
+    if not owned and job.get("stage") == "waitfree":
+        return False   # 이전 확인이 아직 도는 중
+    if not owned:
+        _ss.append_log("카카오 기다무: 다른 작업(%s) 중이지만 충전된 대여권은 따로 씁니다" % (job.get("stage") or "실행 중"))
+    backlog = False
+    try:
+        r = kakao_pipeline.run_waitfree_tick(cfg, log=_ss.append_log, show_status=owned)
+        msg = "기다무 대여권 %d장 사용 / 신규 %d화" % (r["waitfree_used"], r["downloaded"])
+        backlog = r["titles"] > kakao_pipeline.WAITFREE_TICK_MAX
+    except Exception as e:  # noqa: BLE001
+        msg = "기다무 대여권 사용 오류: %s" % e
+        _ss.append_log(msg)
+    if owned:
+        _ss.save_job_state({"running": False, "stage": "done", "finished_at": time.time(), "message": msg})
+    return backlog
+
+
+def _waitfree_loop(get_cfg_func):
+    """기다무 확인: 전체 실행과 다른 스레드에서 5분마다 (밀린 작품이 남았으면 1분 뒤 이어서)."""
+    from . import state_store as _ss
+    try:
+        from . import downloader as _dl
+        _dl.lower_thread_priority(10)
+    except Exception:  # noqa: BLE001
+        pass
+    gen = _wf_gen["n"]
+    while _started_in_process and gen == _wf_gen["n"]:
+        wait = WAITFREE_TICK_SECONDS
+        try:
+            cfg = get_cfg_func() or {}
+            if str(cfg.get("ENABLE_SCHEDULER", "")).lower() in ("1", "true", "on", "y", "yes"):
+                started = time.time()
+                if _waitfree_once(cfg):
+                    wait = 60
+                else:
+                    wait = max(60, WAITFREE_TICK_SECONDS - (time.time() - started))
+        except Exception as e:  # noqa: BLE001
+            try:
+                _ss.append_log("기다무 확인 오류(무시): %s" % e)
+            except Exception:  # noqa: BLE001
+                pass
+        time.sleep(wait)
 
 
 def ensure_started(get_cfg_func, run_full_cycle_func, run_finished_scan_func):
@@ -261,6 +296,9 @@ def ensure_started(get_cfg_func, run_full_cycle_func, run_finished_scan_func):
         _write_lock()
         t = threading.Thread(target=_loop, args=(get_cfg_func, run_full_cycle_func, run_finished_scan_func),
                               name="webtoon_manager_scheduler", daemon=True)
-        t.start()
         _started_in_process = True
+        _wf_gen["n"] += 1
+        t.start()
+        threading.Thread(target=_waitfree_loop, args=(get_cfg_func,), name="webtoon_manager_waitfree",
+                         daemon=True).start()
         return True

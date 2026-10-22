@@ -4,16 +4,16 @@
     python3 -m wtm.simulate                 앞으로 24시간
     python3 -m wtm.simulate 48 "곤륜객잔"    48시간 + 이 작품이 언제 받는지
     python3 -m wtm.simulate 24 --csv /tmp/wf.csv   대여권 사용 예정을 한 줄씩 CSV로
-    python3 -m wtm.simulate 24 --full-min 120      전체 실행이 2시간 걸린다고 보고 (그동안 기다무 확인이 멈춤)
+    python3 -m wtm.simulate 24 --pause-full --full-min 120   예전 동작: 2시간 전체 실행 동안 기다무 확인이 멈춤
 
 서버에 저장된 작품 기록(계정별 마지막 대여권 사용 시각, 충전 주기, 남은 회차 수)과 실제 동작 규칙
-(5분마다 확인, 한 번에 30개, 충전 시각이 오래된 순서, 밀리면 1분 뒤 이어서, 전체 실행 중에는 못 돎)으로
+(5분마다 확인, 한 번에 30개, 충전 시각이 오래된 순서, 밀리면 1분 뒤 이어서, 전체 실행 중에도 돎)으로
 앞으로 대여권을 언제 쓰게 되는지 따라가 본다. 한 번 확인에 걸리는 시간은 job.log의 최근 기록으로 잰다.
 
 가정 (실제와 다를 수 있는 부분)
   - 충전된 계정은 차례가 오면 모두 대여권을 쓴다 (기다무로 열 회차가 없거나 카카오가 거절하는 경우는 모름)
   - 남은 회차 = 전체 회차 - 받은 마지막 회차. 다 받으면 대상에서 빠진다
-  - 전체 실행이 쓰는 대여권은 따로 세지 않는다 (전체 실행 동안 기다무 확인이 멈추는 것만 반영)
+  - 전체 실행이 쓰는 대여권은 따로 세지 않는다 (전체 실행과 같이 돌 때 느려지는 것도 반영하지 않음)
 """
 import csv
 import os
@@ -86,7 +86,7 @@ def measure(log_path):
     return (sum(per) / len(per) if per else 10.0), len(per), (fulls[-1] if fulls else None)
 
 
-def simulate(cfg, hours=24, per_title=10.0, full_dur=None, now=None):
+def simulate(cfg, hours=24, per_title=10.0, full_dur=None, now=None, pause_full=False):
     from wtm import kakao_pipeline as kp, state_store as ss
     now = now or time.time()
     job = ss.load_job_state()
@@ -103,7 +103,8 @@ def simulate(cfg, hours=24, per_title=10.0, full_dur=None, now=None):
     # 전체 실행 구간 (그동안 기다무 확인은 작업 잠금을 못 잡아 쉰다)
     interval = max(10.0, float(cfg.get("INTERVAL_MINUTES") or 240)) * 60
     blocks = []
-    if full_dur and str(cfg.get("ENABLE_SCHEDULER", "")).lower() in ("1", "true", "on", "y", "yes"):
+    # v2.10.4부터 기다무 확인은 전체 실행 중에도 따로 돈다 - --pause-full로 예전 동작(멈춤)을 비교해 볼 수 있다
+    if full_dur and pause_full and str(cfg.get("ENABLE_SCHEDULER", "")).lower() in ("1", "true", "on", "y", "yes"):
         s = (job.get("last_scan_at") or now)
         while s < now + hours * 3600:
             if s + full_dur > now:
@@ -163,9 +164,10 @@ def report(r, out=print, query=None):
         by_p[int(t.get("waitfree_period_min") or 1440)] += 1
     out("■ 기다무 확인 예상 (%s부터 %d시간, 계정 %s)" % (_hm(now), r["hours"], ", ".join(map(str, r["nums"]))))
     out("  대상 작품 %d개: %s" % (len(r["titles"]), " · ".join("%s %d" % (_period_label(m), c) for m, c in sorted(by_p.items()))))
-    out("  한 번 확인: 작품당 %.1f초 (30개면 약 %s) · 전체 실행 중 멈춤: %s" % (
+    out("  한 번 확인: 작품당 %.1f초 (30개면 약 %s) · 전체 실행 중: %s" % (
         r["per_title"], _dur(r["per_title"] * 30 + BACKLOG_GAP),
-        ", ".join("%s~%s" % (_hm(a), time.strftime("%H:%M", time.localtime(b))) for a, b in r["blocks"]) or "없음"))
+        ("멈춤 " + ", ".join("%s~%s" % (_hm(a), time.strftime("%H:%M", time.localtime(b))) for a, b in r["blocks"]))
+        if r["blocks"] else "따로 계속 돎"))
     if not rounds:
         out("  이 기간에 확인할 작품이 없습니다.")
         return
@@ -223,6 +225,9 @@ def main(argv):
     from wtm.webtoon_manager import DEFAULTS
     args = list(argv)
     csv_path, full_min = None, None
+    pause_full = "--pause-full" in args  # 예전 동작(전체 실행 동안 기다무 확인 멈춤)으로 계산
+    if pause_full:
+        args.remove("--pause-full")
     if "--full-min" in args:  # 전체 실행 소요(분)를 직접 지정 (job.log에 기록이 없을 때)
         i = args.index("--full-min")
         full_min = float(args[i + 1]) if i + 1 < len(args) else None
@@ -243,10 +248,10 @@ def main(argv):
         print("(job.log에 기다무 확인 기록이 없어 작품당 %.0f초로 가정)" % per_title)
     if full_min is not None:
         full_dur = full_min * 60
-    elif not full_dur:
+    elif not full_dur and pause_full:
         print("(job.log에 전체 실행 시작~끝 기록이 없어 전체 실행 동안 멈추는 것은 빼고 계산 - "
               "--full-min 분 으로 지정할 수 있음)")
-    r = simulate(cfg, hours=hours, per_title=per_title, full_dur=full_dur)
+    r = simulate(cfg, hours=hours, per_title=per_title, full_dur=full_dur, pause_full=pause_full)
     report(r, query=query)
     if csv_path and r:
         with open(csv_path, "w", newline="", encoding="utf-8-sig") as f:

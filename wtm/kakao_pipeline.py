@@ -654,10 +654,10 @@ def flush_leftovers(cfg, log=print):
         return 0
 
 
-def run_waitfree_tick(cfg, log=print):
+def run_waitfree_tick(cfg, log=print, show_status=True):
     """충전된 기다무 대여권만 바로 쓰는 가벼운 실행 (스케줄러가 몇 분마다 부름).
     자동 실행 주기(기본 4시간)를 기다리지 않으므로 3시간 기다무도 충전될 때마다 1화씩 받는다.
-    호출 쪽에서 작업 잠금(try_acquire_job)을 잡고 부른다."""
+    전체 실행 등 다른 작업 중에도 불린다(작업 잠금 없이) - 같은 작품을 동시에 받는 건 download_series_all이 막는다."""
     flush_leftovers(cfg, log=log)
     _repair_has_locked_once(log=log)
     due = waitfree_due_titles(cfg)
@@ -701,7 +701,8 @@ def run_waitfree_tick(cfg, log=print):
     def _one(sid, t):
         if _cancelled():
             return
-        ss.save_job_state({"message": "기다무 대여권 사용: %s" % t.get("title", sid)})
+        if show_status:  # 전체 실행 중에 같이 돌 때는 그쪽 진행 표시를 덮어쓰지 않는다
+            ss.save_job_state({"message": "기다무 대여권 사용: %s" % t.get("title", sid)})
         r = download_series_all(cfg, _main_session(), sid, log=log, dead=dead, session_for=_session_for,
                                 cancel_check=_cancelled)
         with lock:
@@ -1384,7 +1385,28 @@ def account_session(cfg, n, cookie, log=print):
     return s
 
 
+_busy = set()
+_busy_lock = threading.Lock()
+
+
 def download_series_all(cfg, session, sid, log=print, session_for=None, dead=None, **kw):
+    """같은 작품을 두 작업이 동시에 받지 않게 한다 - 기다무 확인은 전체 실행 중에도 따로 돌기 때문.
+    이미 다른 작업(전체 실행·기다무 확인·작품 다운로드)이 이 작품을 처리 중이면 건너뛴다(busy=True)."""
+    sid = str(sid)
+    with _busy_lock:
+        if sid in _busy:
+            log("%s: 다른 작업이 이 작품을 처리 중이라 이번엔 건너뜀" % ((ss.get_kakao_title(sid) or {}).get("title") or sid))
+            return {"downloaded": 0, "locked": 0, "failures": [], "waitfree_used": 0, "tickets_used": 0,
+                    "cancelled": False, "auth_expired": False, "busy": True}
+        _busy.add(sid)
+    try:
+        return _download_series_all(cfg, session, sid, log=log, session_for=session_for, dead=dead, **kw)
+    finally:
+        with _busy_lock:
+            _busy.discard(sid)
+
+
+def _download_series_all(cfg, session, sid, log=print, session_for=None, dead=None, **kw):
     """계정 1로 받은 뒤, 아직 잠긴 회차가 남았거나 성인 인증으로 막혔으면 추가 계정으로 차례로 다시 시도한다.
     session_for(n, cookie): 추가 계정 세션을 주는 함수(없으면 매번 만든다). dead: 이번 실행에서 만료로 뺀 계정 번호 집합.
     force(선택 회차 다시 받기)는 계정 1에만 적용한다 - 추가 계정은 force 없이 아직 없는 회차만 채운다
