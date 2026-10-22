@@ -796,6 +796,10 @@ def run_download_cycle(cfg, log=print):
         notice_eps = []
         consecutive_fail = 0
         owned_mode = naver_try_owned_paid(cfg)
+        # 대여·소장 여부를 보려고 유료 회차를 하나씩 열어 보는 건 작품당 하루 1번만.
+        # (매일+ 작품은 유료 회차가 수십 개라 매 실행마다 열어 보면 오래 걸리고 거의 다 '미구매'다.
+        #  구매한 회차는 아래 하루 1번 '구매 회차 확인'이 목록 전체에서 따로 찾는다)
+        probe_paid = owned_mode and time.time() - float(t.get("paid_probe_at") or 0) >= 24 * 3600
         tried_paid = set()
         paid_probe = {"n": 0}
         for ep in capped:
@@ -803,12 +807,15 @@ def run_download_cycle(cfg, log=print):
                 log("titleId=%s: 취소 요청 확인됨 - 남은 회차는 다음 실행 때 이어받습니다" % tid)
                 state["cancelled"] = True
                 break
-            if ep.get("charge") and not naver_try_owned_paid(cfg):
+            if ep.get("charge") and not probe_paid:
                 # 목록 API가 이미 유료(charge=true)라고 알려주는 회차를 만나면,
                 # 그 뒤 회차들도 순서대로 계속 유료일 가능성이 매우 높다("매일
                 # 하나씩 풀기" 방식은 오래된 순서대로 풀리므로). 남은 회차를
                 # 하나씩 다 확인하지 말고 이 작품은 여기서 접고 다음 작품으로.
                 # last_ok_no는 그대로 둬서 다음 스캔 때 이 회차부터 다시 확인한다.
+                if owned_mode:
+                    # 오늘 이미 대여·소장 여부를 확인한 작품 - 조용히 넘어간다 (매 실행 이력·로그가 쌓이지 않게)
+                    break
                 log("titleId=%s %s화: 유료(charge=true) 회차, 목록 API 기준 - 이후 회차도 유료로 보고 이 작품은 중단" % (tid, ep["no"]))
                 ss.append_history({
                     "type": "skipped_paid", "source": "auto", "title_id": tid,
@@ -836,7 +843,7 @@ def run_download_cycle(cfg, log=print):
                 state["cookie_expired"] = True
                 break
             except naver_api.NaverPaidEpisode as e:
-                if ep.get("charge") and owned_mode:
+                if ep.get("charge") and probe_paid:
                     # 구매(소장/대여)하지 않은 유료 회차 - 뒤쪽에 띄엄띄엄 구매한 회차가
                     # 있을 수 있으니 멈추지 않고 다음 유료 회차를 계속 확인한다(상한 있음)
                     tried_paid.add(ep["no"])
@@ -945,6 +952,8 @@ def run_download_cycle(cfg, log=print):
             ss.upsert_title({tid: {"paid_sweep_at": time.time()}})
 
         patch = {"up_flag": rest_needed, "initial_limit_done": True}
+        if paid_probe["n"]:
+            patch["paid_probe_at"] = time.time()
         if last_ok_no != t.get("last_downloaded_no"):
             patch["last_downloaded_no"] = last_ok_no
         ss.upsert_title({tid: patch})
