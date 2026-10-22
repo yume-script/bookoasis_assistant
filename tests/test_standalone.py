@@ -148,14 +148,15 @@ class TelegramUploadTest(unittest.TestCase):
         self.assertFalse(tu.enqueue(os.path.join(b, "작품B 0002화.zip")))       # 📤를 켜지 않은 작품
         ss.upsert_title({"111": {"telegram_upload": True}})
         added, total, _ = tu.add_title("naver", "111", ss.get_title("111"))
-        self.assertEqual((added, total), (2, 2))                                   # 회차 파일만
+        self.assertEqual((added, total), (2, 2))                                   # 회차 수 (작품 정보 yaml은 따로)
         self.assertTrue(tu.enqueue(os.path.join(a, "작품A 0011화.zip")))          # 켠 작품의 새 회차
         self.assertEqual(tu.add_title("naver", "111", ss.get_title("111"))[0], 0)  # 이미 대기열에 있는 것은 다시 안 넣음
         db = tu._db()
         order = [os.path.basename(r[0]) for r in db.execute("SELECT path FROM upload ORDER BY id")]
         db.close()
-        self.assertEqual(order, ["작품A 0002화.zip", "작품A 0010화.zip", "작품A 0011화.zip"])
-        self.assertEqual(tu.remove_title("naver", "111", ss.get_title("111")), 3)  # 끄면 대기 중인 것 취소
+        self.assertEqual(order, ["kavita.yaml", "작품A 0002화.zip", "작품A 0010화.zip", "작품A 0011화.zip"])  # 작품 정보 먼저
+        self.assertEqual(tu.upload_name(os.path.join(a, "kavita.yaml")), "작품A.yaml")   # 채널에는 '작품명.yaml'로
+        self.assertEqual(tu.remove_title("naver", "111", ss.get_title("111")), 4)  # 끄면 대기 중인 것 취소
         self.assertEqual(tu.caption_for("/mnt/w/작품 이름 (1부)/작품 0001화.zip"), "#작품_이름_1부\n작품 0001화")
 
 

@@ -36,6 +36,7 @@ from . import host
 log = logging.getLogger("wtm.telegram")
 DB_PATH = os.path.join(host.DATA_DIR, "telegram_upload.db")
 UPLOAD_EXTS = {".zip", ".cbz", ".epub"}
+YAML_NAME = "kavita.yaml"   # kavita_yaml.YAML_NAME - 작품 정보. 채널에는 '작품명.yaml'로 올린다
 DEFAULT_API = "https://api.telegram.org"
 OFFICIAL_LIMIT_MB = 50
 MAX_ATTEMPTS = 8
@@ -103,6 +104,27 @@ def title_of(path, cfg=None):
     return None
 
 
+def _series_name(series_dir):
+    """작품 폴더 이름 '제목 (작품ID)' → '제목'"""
+    return _ID_RE.sub("", os.path.basename(os.path.normpath(series_dir))).strip() or os.path.basename(series_dir)
+
+
+def upload_name(path):
+    """채널에 올릴 파일 이름: kavita.yaml은 '작품명.yaml', 회차 파일은 그대로"""
+    if os.path.basename(path) == YAML_NAME:
+        name = re.sub(r'[\\/:*?"<>|\x00-\x1f]+', "_", _series_name(os.path.dirname(path))).strip(" .") or "kavita"
+        return name + ".yaml"
+    return os.path.basename(path)
+
+
+def _yaml_once(db, series_dir):
+    """작품 정보(kavita.yaml)를 아직 대기열에 넣은 적이 없으면 넣는다 (작품당 한 번). 반환: 넣었는지"""
+    path = os.path.join(series_dir, YAML_NAME)
+    if not os.path.isfile(path):
+        return False
+    return _insert(db, [path]) > 0
+
+
 def _insert(db, paths):
     now, added = time.time(), 0
     for path in paths:
@@ -125,6 +147,7 @@ def enqueue(path):
     db = _db()
     try:
         with db:
+            _yaml_once(db, os.path.dirname(path))  # 새 작품이면 첫 회차와 함께 작품 정보도 (이미 넣었으면 그대로)
             return _insert(db, [path]) > 0
     except sqlite3.Error as error:
         log.warning("텔레그램 업로드 대기열에 넣지 못함: %s", error)
@@ -156,6 +179,7 @@ def add_title(platform, tid, t, cfg=None):
     db = _db()
     try:
         with db:
+            _yaml_once(db, series_dir)   # 작품 정보(작품명.yaml)를 회차보다 먼저
             added = _insert(db, [os.path.join(series_dir, n) for n in names])
     finally:
         db.close()
@@ -182,9 +206,9 @@ def _hashtag(text):
 
 
 def caption_for(path):
-    """캡션: #작품명 해시태그(채널에서 작품별로 찾기) + 파일 이름."""
+    """캡션: #작품명 해시태그(채널에서 작품별로 찾기) + 파일 이름 (작품 정보는 '작품 정보')."""
     series = os.path.basename(os.path.dirname(path))
-    name = os.path.splitext(os.path.basename(path))[0]
+    name = "작품 정보" if os.path.basename(path) == YAML_NAME else os.path.splitext(os.path.basename(path))[0]
     parts = [p for p in (_hashtag(series), html.escape(name)) if p]
     return "\n".join(parts)[:1000]
 
@@ -204,7 +228,7 @@ def _send(s, path):
         with open(path, "rb") as f:
             r = requests.post(url, data={"chat_id": s["chat"], "caption": caption_for(path), "parse_mode": "HTML",
                                          "disable_notification": "true"},
-                              files={"document": (os.path.basename(path), f)}, timeout=(15, 600))
+                              files={"document": (upload_name(path), f)}, timeout=(15, 600))
     except requests.RequestException as e:
         return "retry", "연결 오류: %s" % e, None, 0
     try:
