@@ -628,12 +628,16 @@ def waitfree_due_titles(cfg, now=None):
 
 
 def waitfree_order(cfg, due):
-    """기다무 확인 순서 [(sid, 작품)]: 충전 주기가 짧은 작품 먼저, 같은 주기면 충전된 지 오래된 것부터.
-    충전된 대여권은 쌓이지 않아 늦어지는 만큼 버려지는데, 3시간 기다무는 1시간 늦으면 1/3장, 1일 기다무는
-    1/24장을 버린다. 그래서 밀린 작품이 많을 때(예: 1일 기다무 수백 개) 짧은 주기 작품이 그 뒤에 줄서지 않게 한다."""
+    """기다무 확인 순서 [(sid, 작품)]: 충전 예정 시각이 오래된(가장 많이 늦어진) 것부터.
+    이 작품에서 아직 대여권을 쓴 적이 없어 충전 시각을 모르는 작품은 그 뒤에 - 예전엔 이런 작품(수백 개)이
+    '아주 오래전 충전'으로 계산돼 맨 앞에 서는 바람에 이미 쓰던 3시간 기다무가 그 뒤에서 몇 시간씩 기다렸다."""
     nums = [n for n, _c in accounts(cfg)] or [1]
-    return sorted(due.items(), key=lambda kv: (waitfree_period(kv[1]),
-                                               min(_ticket_at(kv[1], n) for n in nums)))
+
+    def key(kv):
+        t = kv[1]
+        known = [_ticket_at(t, n) + waitfree_period(t) for n in nums if _ticket_at(t, n)]
+        return (0, min(known)) if known else (1, 0)
+    return sorted(due.items(), key=key)
 
 
 def flush_leftovers(cfg, log=print):
