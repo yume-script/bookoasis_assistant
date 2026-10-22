@@ -758,6 +758,8 @@ def run_download_cycle(cfg, log=print):
         with lock:
             state["done"] += 1
             done_n = state["done"]
+        if done_n % 20 == 0:  # 조용히 지나가는 작품이 많아 진행 상황을 로그로도 남긴다
+            log("진행 %d/%d개 작품 (지금까지 신규 %d화)" % (done_n, len(subscribed), state["downloaded"]))
         _naver_status(done_n, len(subscribed), "%s - 새 회차 확인 중" % t.get("title", tid), t=t)
         session = _thread_session()
         try:
@@ -953,6 +955,8 @@ def run_download_cycle(cfg, log=print):
 
         patch = {"up_flag": rest_needed, "initial_limit_done": True}
         if paid_probe["n"]:
+            log("%s: 유료 회차 %d개의 대여·소장 여부 확인 - 받을 수 있는 회차 없음 (다음 확인은 24시간 뒤)" % (
+                t.get("title", tid), paid_probe["n"]))
             patch["paid_probe_at"] = time.time()
         if last_ok_no != t.get("last_downloaded_no"):
             patch["last_downloaded_no"] = last_ok_no
