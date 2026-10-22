@@ -363,6 +363,19 @@
     return tt && tt.novel ? 'kakao_novel' : 'kakao';
   }
 
+  var _wfMap = { src: null, map: {} };
+  function waitfreeLabel(h) {  // 카카오 작품의 기다무 충전 주기 → '3시간 기다무' (작품 목록에 없으면 '')
+    if (_wfMap.src !== state.titles) {
+      _wfMap = { src: state.titles, map: {} };
+      (state.titles || []).forEach(function (x) {
+        if (x.platform === 'kakao' && x.waitfree) _wfMap.map[String(x.titleId)] = x.waitfree_period_min || 1440;
+      });
+    }
+    var m = _wfMap.map[String(h.title_id)];
+    if (!m) return '';
+    return (m % 1440 === 0 ? (m / 1440) + '일' : (m % 60 === 0 ? (m / 60) + '시간' : m + '분')) + ' 기다무';
+  }
+
   function platformBadge(p) {
     var c = PLATFORM_COLORS[p] || '#888';
     return '<span class="wtm-badge" style="margin-right:6px;background:color-mix(in srgb, ' + c + ' 22%, transparent);' +
@@ -403,9 +416,11 @@
         text = '<b>' + title + '</b> - ' + historyEpLabel(h) + ' (' + (h.image_count || 0) + unit + ')';
         // 카카오: 어느 계정으로, 무엇(기다무·대여권·대여/소장·무료)으로 연 회차인지
         if (h.account || h.via) {
-          var viaPaid = h.via && h.via !== '무료';
+          var via = h.via || '';
+          if (via === '기다무') via = waitfreeLabel(h) || via;  // 예전 이력: 작품 정보의 충전 주기로 '3시간 기다무'
+          var viaPaid = via && via !== '무료';
           text += ' <span class="wtm-badge' + (viaPaid ? ' up' : '') + '">' +
-            escapeHtml((h.account ? '계정' + h.account : '') + (h.account && h.via ? ' · ' : '') + (h.via || '')) + '</span>';
+            escapeHtml((h.account ? '계정' + h.account : '') + (h.account && via ? ' · ' : '') + via) + '</span>';
         }
       } else if (h.type === 'skipped_paid') {
         text = '<b>' + title + '</b> - ' + historyEpLabel(h) + ': 유료라 건너뜀' +

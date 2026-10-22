@@ -574,6 +574,13 @@ def waitfree_period(t):
     return max(60, int(t.get("waitfree_period_min") or 1440)) * 60
 
 
+def waitfree_label(t):
+    """'3시간 기다무', '1일 기다무' (다운로드 이력에 어느 기다무로 열었는지 표시)"""
+    m = max(1, int(t.get("waitfree_period_min") or 1440))
+    n = ("%d일" % (m // 1440)) if m % 1440 == 0 else (("%d시간" % (m // 60)) if m % 60 == 0 else "%d분" % m)
+    return n + " 기다무"
+
+
 def waitfree_due_titles(cfg, now=None):
     """기다무 대여권이 (어느 계정이든) 충전돼 지금 쓸 수 있는 작품 {sid: 작품}.
     구독 중이거나 구매 작품이고, 대여권으로 열 회차가 남아 있는(has_locked) 기다무 작품만. 완결작도 포함."""
@@ -1161,7 +1168,7 @@ def download_series(cfg, session, sid, log=print, full=False, cancel_check=None,
                         raise
                     ticket_available = False       # 작품당 실행 1회에 1장
                     res["waitfree_used"] += 1
-                    opened = "기다무"
+                    opened = waitfree_label(t)
                     log("%s %d화: 기다무 대여권 사용" % (title, no))
                 elif ep.get("use_owned") and any(v > 0 for v in owned.values()):
                     try:
