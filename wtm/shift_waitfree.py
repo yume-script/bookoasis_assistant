@@ -4,6 +4,10 @@
     systemctl stop bookoasis_assistant
     python3 -m wtm.shift_waitfree            미리 보기 (아무것도 안 바꿈)
     python3 -m wtm.shift_waitfree --apply    적용 (kakao_titles.json.bak-날짜시각 으로 백업한 뒤)
+    python3 -m wtm.shift_waitfree --spread 1 11 [--apply]
+        실제로 대여권을 쓰는 작품(구독·구매 + 잠긴 회차 남음)만 01:00~10:59에 고르게 나눈다
+        (지금 충전 순서는 유지, 한 작품의 계정들은 같은 시각으로 맞춤 - 한 번 열 때 같이 씀.
+         실제 충전보다 앞당기지는 않는다 - 늦은 계정의 충전 시각 이후로만 옮김)
     systemctl start bookoasis_assistant
 
 기다무 대여권은 '마지막으로 쓴 시각 + 충전 주기'에 충전되고, 쓴 시각 + 주기마다 다시 충전되므로, 마지막 사용 시각을
@@ -63,6 +67,51 @@ def _hm(ts):
     return time.strftime("%m-%d %H:%M", time.localtime(ts))
 
 
+def spread(cfg, data, nums, now, start_h, end_h):
+    """대여권을 실제로 쓰는 작품만 start_h~end_h(끝 미포함)에 고르게. 반환 (전 분포, 후 분포, 작품 수, 예시)"""
+    from wtm import kakao_pipeline as kp
+    from wtm.webtoon_manager import DEFAULTS
+    full = dict(DEFAULTS)
+    full.update({k: v for k, v in cfg.items() if v not in (None, "")})
+    _n, cands = kp._waitfree_candidates(full)
+    items = []
+    for sid in cands:
+        t = data.get(sid)
+        if not isinstance(t, dict) or int(t.get("waitfree_period_min") or 1440) not in PERIODS:
+            continue
+        period = int(t.get("waitfree_period_min") or 1440) * 60
+        cur = max((kp._ticket_at(t, n) + period) if kp._ticket_at(t, n) else now for n in nums)
+        items.append((max(cur, now), sid, period))
+    span = ((end_h - start_h) % 24 or 24) * 3600
+
+    def window(cur):
+        """cur 이후 처음 쓸 수 있는 시간대의 시작 (cur가 시간대 안이면 그날 시간대의 시작)"""
+        w = _at(cur, start_h)
+        if w > cur:
+            w = _at(cur, start_h, -1)
+        return w if cur - w < span else _at(cur, start_h, 1) if _at(cur, start_h) <= cur else _at(cur, start_h)
+
+    # 시간대 안에서의 위치(시작 후 몇 초) 순서로 줄 세워, 그 순서대로 시간대 전체에 고르게 다시 놓는다.
+    # 날짜(2일·3일 기다무는 며칠 뒤)는 그대로 두고 시각만 바꾼다. 실제 충전보다 앞당길 수는 없다(카카오가 거절).
+    placed = sorted(((max(0.0, cur - window(cur)), window(cur), cur, sid, period) for cur, sid, period in items))
+    before, after, samples = Counter(), Counter(), []
+    for i, (_pos, w, cur, sid, period) in enumerate(placed):
+        slot = max(w + span * (i + 0.5) / len(placed), cur)
+        before[time.localtime(cur).tm_hour] += 1
+        after[time.localtime(slot).tm_hour] += 1
+        t = data[sid]
+        t["last_ticket_at"] = slot - period
+        acc = dict(t.get("ticket_at_acc") or {})
+        for n in nums:
+            if n != 1:
+                acc[str(n)] = slot - period
+        if acc:
+            t["ticket_at_acc"] = acc
+        if i % max(1, len(placed) // 6) == 0 and len(samples) < 8:
+            samples.append("  %s: 충전 %s → %s" % (t.get("title") or sid, _hm(cur), _hm(slot)))
+    return before, after, len(items), samples
+
+
 def main(argv):
     from wtm import host, kakao_pipeline as kp, state_store as ss, worker_ctl
     apply = "--apply" in argv
@@ -76,6 +125,24 @@ def main(argv):
     with open(path, encoding="utf-8") as f:
         data = json.load(f)
     now = time.time()
+    if "--spread" in argv:
+        i = argv.index("--spread")
+        try:
+            start_h, end_h = int(argv[i + 1]) % 24, int(argv[i + 2]) % 24
+        except (IndexError, ValueError):
+            print("사용법: python3 -m wtm.shift_waitfree --spread 시작시 끝시 [--apply]   (예: --spread 1 11)")
+            return 2
+        before, after, count, samples = spread(cfg, data, nums, now, start_h, end_h)
+        print("■ 대여권을 쓰는 1일·2일·3일 기다무 %d개를 %02d:00~%02d:59에 고르게 (지금 %s, 계정 %s)" % (
+            count, start_h, (end_h - 1) % 24, _hm(now), ", ".join(map(str, nums))))
+        print("  (구독·구매 중이고 잠긴 회차가 남은 작품만. 나머지는 대여권을 쓰지 않으므로 그대로)")
+        print("\n  다음 충전 시각(시) 분포      바꾸기 전 → 바꾼 뒤")
+        for h in range(24):
+            if before[h] or after[h]:
+                print("    %02d시  %5d → %5d" % (h, before[h], after[h]))
+        print("\n  예:")
+        print("\n".join(samples) or "  (없음)")
+        return _save(path, data, apply, ss, "--spread %d %d" % (start_h, end_h))
     before, after, moved, kept, samples = Counter(), Counter(), 0, 0, []
     per_period = Counter()
     for sid, t in data.items():
@@ -115,10 +182,14 @@ def main(argv):
             print("    %02d시  %5d → %5d" % (h, before[h], after[h]))
     print("\n  예:")
     print("\n".join(samples) or "  (없음)")
+    return _save(path, data, apply, ss, "")
+
+
+def _save(path, data, apply, ss, args):
     if not apply:
-        print("\n미리 보기입니다. 적용하려면: python3 -m wtm.shift_waitfree --apply")
+        print("\n미리 보기입니다. 적용하려면: python3 -m wtm.shift_waitfree %s--apply" % (args + " " if args else ""))
         return 0
-    backup = path + ".bak-" + time.strftime("%Y%m%d%H%M")
+    backup = path + ".bak-" + time.strftime("%Y%m%d%H%M%S")
     shutil.copy2(path, backup)
     ss.write_json(path, data)
     print("\n적용했습니다. 백업: %s (되돌리려면 서비스를 멈추고 이 파일을 kakao_titles.json으로 복사)" % backup)
