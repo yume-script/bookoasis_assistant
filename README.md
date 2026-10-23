@@ -203,6 +203,11 @@ venv\Scripts\python app.py
   쿠키는 브라우저에서 **'로그인 상태 유지'를 체크하고 로그인**한 뒤 가져오세요. 체크하지 않은 쿠키(NID_AUT가 세션 쿠키)는 브라우저를 닫으면
   끝나는 쿠키라 금방 만료되며, 화면에 경고가 뜹니다. 쿠키를 가져온 브라우저에서 로그아웃하면 쿠키도 같이 무효가 됩니다.
 
+- **kavita.yaml 표지 크기**: yaml에 넣는 표지(base64)를 가로 `KAVITA_YAML_COVER_WIDTH`(기본 300px, 0이면 원본) JPEG로 줄여 넣습니다
+  ([설정 > 공통 > 저장 파일], Pillow 필요 - `venv/bin/pip install -r requirements.txt`). yaml이 작아져 회차가 늘 때마다 원격 마운트에서
+  읽고·쓰고·업로드하는 양이 줄어듭니다. 이미 만든 yaml은 다음 갱신 때 줄어들고, 한 번에 줄이려면:
+  `python3 -m wtm.shrink_yaml_covers` (미리 보기) → `python3 -m wtm.shrink_yaml_covers --apply` (표지 한 줄만 바꿈, 서비스 멈출 필요 없음)
+
 **설정이 저장되는 곳** — 화면의 [설정 저장]이 알아서 나눠 씁니다.
 | 어디 | 무엇 |
 |---|---|

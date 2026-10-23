@@ -287,6 +287,59 @@ def _dedupe(items):
     return out
 
 
+# 표지 축소: kavita.yaml은 표지를 base64로 통째로 담아(평균 71KB, 큰 것은 300KB) 회차가 늘 때마다 원격 마운트에서
+# 읽고·쓰고·업로드했다. 가로 KAVITA_YAML_COVER_WIDTH(기본 300px)로 줄인 JPEG로 바꿔 넣는다(Pillow 필요 - 없으면 원본).
+# 이미 작은 표지(아래 크기 이하)는 건드리지 않아, 한 번 줄인 뒤로는 다시 계산하지 않는다.
+COVER_SMALL_B64 = 40 * 1024
+COVER_QUALITY = 82
+_cover_cfg = {"at": 0.0, "width": 300}
+_pil_warned = [False]
+
+
+def cover_width():
+    """설정의 표지 가로 크기(px, 0이면 줄이지 않음). 설정 파일은 1분에 한 번만 다시 읽는다."""
+    if time.time() - _cover_cfg["at"] > 60:
+        try:
+            from . import host
+            _cover_cfg["width"] = max(0, int(float(host.load_settings().get("KAVITA_YAML_COVER_WIDTH", 300) or 0)))
+        except Exception:  # noqa: BLE001
+            pass
+        _cover_cfg["at"] = time.time()
+    return _cover_cfg["width"]
+
+
+def shrink_cover(b64, width=None, log=None):
+    """base64 표지 → 가로 width px 이하 JPEG base64. 이미 작거나, 줄여도 안 작아지거나, Pillow가 없으면 그대로."""
+    width = cover_width() if width is None else width
+    if not b64 or not width or len(b64) <= COVER_SMALL_B64:
+        return b64
+    try:
+        import io
+        from PIL import Image
+    except ImportError:
+        if not _pil_warned[0] and log:
+            log("kavita.yaml 표지 축소: Pillow가 없어 원본 크기로 넣습니다 (venv/bin/pip install Pillow)")
+        _pil_warned[0] = True
+        return b64
+    try:
+        img = Image.open(io.BytesIO(base64.b64decode(b64)))
+        img.load()
+        if img.width <= width and img.format == "JPEG":
+            return b64          # 이미 줄인 표지 - 다시 압축하면 화질만 나빠짐
+        if img.width > width:
+            img = img.resize((width, max(1, round(img.height * width / img.width))), Image.LANCZOS)
+        if img.mode not in ("RGB", "L"):
+            bg = Image.new("RGB", img.size, (255, 255, 255))
+            bg.paste(img, mask=img.convert("RGBA").split()[-1])
+            img = bg
+        out = io.BytesIO()
+        img.save(out, "JPEG", quality=COVER_QUALITY, optimize=True, progressive=True)
+        small = base64.b64encode(out.getvalue()).decode("ascii")
+        return small if len(small) < len(b64) else b64
+    except Exception:  # noqa: BLE001 - 깨진 이미지 등은 원본 그대로
+        return b64
+
+
 def _cover_b64(session, thumbnail_url, log=None):
     if not thumbnail_url:
         return None
@@ -729,6 +782,7 @@ def _write_kavita_yaml_impl(download_root, title_id, session=None, embed_cover=T
                 cover = _cover_b64(session, t.get("thumbnail"), log=log)
             if not cover and old:
                 cover = _first_cover_in(old)
+            cover = shrink_cover(cover, log=log)   # 예전에 큰 표지로 만든 yaml도 다음 갱신 때 작아짐
 
         text = dump_yaml(build_data(t, tid, archives, cover_b64=cover, platform=platform))
 

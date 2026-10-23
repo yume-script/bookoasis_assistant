@@ -3,3 +3,5 @@
 PyMySQL>=1.1
 # 웹툰 다운로더:
 requests>=2.28
+# kavita.yaml 표지 축소 (없으면 원본 크기로 넣음):
+Pillow>=9.0
