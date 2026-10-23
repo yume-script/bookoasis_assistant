@@ -68,48 +68,21 @@ def _hm(ts):
 
 
 def spread(cfg, data, nums, now, start_h, end_h):
-    """대여권을 실제로 쓰는 작품만 start_h~end_h(끝 미포함)에 고르게. 반환 (전 분포, 후 분포, 작품 수, 예시)"""
+    """대여권을 실제로 쓰는 작품만 start_h~end_h(끝 미포함)에 고르게 (kakao_pipeline.spread_plan - 매일 자동으로
+    하는 것과 같은 계산). data(파일에서 읽은 작품 기록)를 고친다. 반환 (전 분포, 후 분포, 작품 수, 예시)"""
     from wtm import kakao_pipeline as kp
     from wtm.webtoon_manager import DEFAULTS
     full = dict(DEFAULTS)
     full.update({k: v for k, v in cfg.items() if v not in (None, "")})
-    _n, cands = kp._waitfree_candidates(full)
-    items = []
-    for sid in cands:
-        t = data.get(sid)
-        if not isinstance(t, dict) or int(t.get("waitfree_period_min") or 1440) not in PERIODS:
-            continue
-        period = int(t.get("waitfree_period_min") or 1440) * 60
-        cur = max((kp._ticket_at(t, n) + period) if kp._ticket_at(t, n) else now for n in nums)
-        items.append((max(cur, now), sid, period))
-    span = ((end_h - start_h) % 24 or 24) * 3600
-
-    def window(cur):
-        """cur 이후 처음 쓸 수 있는 시간대의 시작 (cur가 시간대 안이면 그날 시간대의 시작)"""
-        w = _at(cur, start_h)
-        if w > cur:
-            w = _at(cur, start_h, -1)
-        return w if cur - w < span else _at(cur, start_h, 1) if _at(cur, start_h) <= cur else _at(cur, start_h)
-
-    # 시간대 안에서의 위치(시작 후 몇 초) 순서로 줄 세워, 그 순서대로 시간대 전체에 고르게 다시 놓는다.
-    # 날짜(2일·3일 기다무는 며칠 뒤)는 그대로 두고 시각만 바꾼다. 실제 충전보다 앞당길 수는 없다(카카오가 거절).
-    placed = sorted(((max(0.0, cur - window(cur)), window(cur), cur, sid, period) for cur, sid, period in items))
+    plan = kp.spread_plan(full, data, start_h, end_h, now)
     before, after, samples = Counter(), Counter(), []
-    for i, (_pos, w, cur, sid, period) in enumerate(placed):
-        slot = max(w + span * (i + 0.5) / len(placed), cur)
+    for i, (sid, (patch, cur, slot)) in enumerate(sorted(plan.items(), key=lambda kv: kv[1][2])):
         before[time.localtime(cur).tm_hour] += 1
         after[time.localtime(slot).tm_hour] += 1
-        t = data[sid]
-        t["last_ticket_at"] = slot - period
-        acc = dict(t.get("ticket_at_acc") or {})
-        for n in nums:
-            if n != 1:
-                acc[str(n)] = slot - period
-        if acc:
-            t["ticket_at_acc"] = acc
-        if i % max(1, len(placed) // 6) == 0 and len(samples) < 8:
-            samples.append("  %s: 충전 %s → %s" % (t.get("title") or sid, _hm(cur), _hm(slot)))
-    return before, after, len(items), samples
+        data[sid].update(patch)
+        if i % max(1, len(plan) // 6) == 0 and len(samples) < 8:
+            samples.append("  %s: 충전 %s → %s" % (data[sid].get("title") or sid, _hm(cur), _hm(slot)))
+    return before, after, len(plan), samples
 
 
 def main(argv):

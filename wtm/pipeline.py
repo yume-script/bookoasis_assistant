@@ -1032,6 +1032,11 @@ def run_finished_scan_job(cfg, log=print):
     ss.save_job_state({"running": True, "started_at": time.time(), "last_error": None})
     try:
         result = run_scan_finished(cfg, log=log)
+        try:   # 하루 1번: 1·2·3일 기다무 충전 시각을 정해 둔 시간대에 고르게 (설정에서 켰을 때)
+            from . import kakao_pipeline
+            kakao_pipeline.spread_waitfree(cfg, log=log)
+        except Exception as e:  # noqa: BLE001
+            log("기다무 시간대 고르게 하기 실패(무시): %s" % e)
         ss.save_job_state({"running": False, "stage": "done", "finished_at": time.time(),
                             "message": "완결 스캔 완료: %d개" % result["scanned"]})
         return result

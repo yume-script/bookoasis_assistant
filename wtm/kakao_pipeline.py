@@ -757,6 +757,94 @@ def next_charge_at(cfg, now=None):
     return best
 
 
+SPREAD_PERIODS = (1440, 2880, 4320)   # 시간대에 고르게 펴는 기다무: 1일·2일·3일 (분)
+
+
+def _at_hour(ts, hour, day_offset=0):
+    lt = time.localtime(ts)
+    return time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday + day_offset, hour, 0, 0, 0, 0, -1))
+
+
+def spread_plan(cfg, titles, start_h, end_h, now=None):
+    """1일·2일·3일 기다무 중 대여권을 실제로 쓰는 작품(구독·구매 + 잠긴 회차 남음)의 다음 충전을 start_h~end_h
+    (끝 미포함)에 같은 간격으로 다시 놓는 계획. 반환 {sid: (patch, 지금 충전 시각, 옮길 시각)}.
+    - 시간대 안에서의 순서는 지금 그대로, 날짜(2일·3일 기다무는 며칠 뒤)도 그대로 두고 시각만 바꾼다
+    - 실제 충전보다 앞당기지 않는다(카카오가 거절) - 자리가 충전보다 이르면 충전 시각 그대로
+    - 한 작품의 계정들은 같은 시각으로(한 번 열 때 같이 씀), 가장 늦게 충전되는 계정 기준
+    대여권은 '쓴 시각 + 주기'에 다시 충전되므로 마지막 사용 시각을 (옮길 시각 - 주기)로 바꿔 둔다."""
+    now = now or time.time()
+    nums, cands = _waitfree_candidates(cfg)
+    if not nums:
+        return {}
+    span = ((end_h - start_h) % 24 or 24) * 3600
+
+    def window(cur):
+        """cur 이후 처음 쓸 수 있는 시간대의 시작 (cur가 시간대 안이면 그날 시간대의 시작)"""
+        w = _at_hour(cur, start_h)
+        if w > cur:
+            w = _at_hour(cur, start_h, -1)
+        if cur - w < span:
+            return w
+        nxt = _at_hour(cur, start_h)
+        return nxt if nxt > cur else _at_hour(cur, start_h, 1)
+
+    items = []
+    for sid, t0 in cands.items():
+        t = titles.get(sid) or t0
+        pm = int(t.get("waitfree_period_min") or 1440)
+        if pm not in SPREAD_PERIODS:
+            continue
+        period = pm * 60
+        cur = max(now, max((_ticket_at(t, n) + period) if _ticket_at(t, n) else now for n in nums))
+        w = window(cur)
+        items.append((max(0.0, cur - w), w, cur, sid, period, t))
+    items.sort(key=lambda x: (x[0], x[3]))
+    plan = {}
+    for i, (_pos, w, cur, sid, period, t) in enumerate(items):
+        slot = max(w + span * (i + 0.5) / len(items), cur)
+        stamp = slot - period
+        patch = {"last_ticket_at": stamp}
+        if any(n != 1 for n in nums):
+            patch["ticket_at_acc"] = dict(t.get("ticket_at_acc") or {}, **{str(n): stamp for n in nums if n != 1})
+        plan[sid] = (patch, cur, slot)
+    return plan
+
+
+def spread_waitfree(cfg, log=print, now=None):
+    """[설정] '1·2·3일 기다무 시간대에 고르게'가 켜져 있으면 매일 목록 수집(완결 스캔) 때 부른다.
+    반환: 옮긴 작품 수 (꺼져 있으면 None)"""
+    if not cfg.get("WAITFREE_SPREAD_ENABLE") or not (cfg.get("KAKAO_ENABLE") and cfg.get("KAKAO_USE_WAITFREE")):
+        return None
+    try:
+        start_h = int(float(cfg.get("WAITFREE_SPREAD_START", 1))) % 24
+        end_h = int(float(cfg.get("WAITFREE_SPREAD_END", 11))) % 24
+    except (TypeError, ValueError):
+        return None
+    now = now or time.time()
+    titles = ss.load_kakao_titles()
+    plan = spread_plan(cfg, titles, start_h, end_h, now)
+    nums = [n for n, _c in accounts(cfg)] or [1]
+    patches, moved = {}, 0
+    with _busy_lock:
+        busy = set(_busy)
+    for sid, (patch, cur, slot) in plan.items():
+        if sid in busy or abs(slot - cur) < 60:
+            continue    # 지금 받는 중인 작품(대여권 시각이 바뀌는 중)과 거의 그대로인 것은 건드리지 않음
+        cur_t = ss.get_kakao_title(sid) or {}
+        if any(_ticket_at(cur_t, n) != _ticket_at(titles.get(sid) or {}, n) for n in nums):
+            continue    # 계획을 세우는 사이에 대여권을 썼음
+        patches[sid] = patch
+        moved += 1
+    if patches:
+        ss.upsert_kakao_title(patches)
+        ss.flush_titles()
+    hours = max(1, (end_h - start_h) % 24 or 24)
+    log("카카오 기다무: 1·2·3일 기다무 %d개를 %02d~%02d시에 고르게 (옮김 %d개, 시간당 약 %d개)" % (
+        len(plan), start_h, (end_h - 1) % 24, moved, round(len(plan) / hours)))
+    ss.save_job_state({"waitfree_spread_at": now})
+    return moved
+
+
 def waitfree_order(cfg, due):
     """기다무 확인 순서 [(sid, 작품)]: 충전 예정 시각이 오래된(가장 많이 늦어진) 것부터.
     이 작품에서 아직 대여권을 쓴 적이 없어 충전 시각을 모르는 작품은 그 뒤에 - 예전엔 이런 작품(수백 개)이
