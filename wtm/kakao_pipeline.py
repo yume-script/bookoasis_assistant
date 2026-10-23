@@ -863,6 +863,7 @@ def run_waitfree_tick(cfg, log=print, show_status=True):
             kakao_api.save_session_cookies(s)
     _notify_expired_accounts(cfg, dead, log=log)
     ss.flush_titles()   # 큰 작품 기록 파일은 30초마다만 쓰므로, 확인이 끝나면 바로 저장해 화면에 보이게
+    kavita_yaml.flush_all()
     log("카카오 기다무: 대여권 %d장 사용 / 신규 %d화" % (res["waitfree_used"], res["downloaded"]))
     return res
 
@@ -1037,7 +1038,7 @@ def _existing_nos(series_dir):
 
 
 def download_series(cfg, session, sid, log=print, full=False, cancel_check=None,
-                    on_progress=None, only_nos=None, force=False, account=1, extra=False, skip_nos=None):
+                    on_progress=None, only_nos=None, force=False, account=1, extra=False, skip_nos=None, yaml=True):
     """작품 하나의 볼 수 있는 미보유 회차를 받는다.
     full=True(수동 '지금 다운로드'): 미보유 회차를 전부 시도.
     full=False(자동): 새 회차 + 이미 대여/소장 표시된 회차 + (옵션)기다무만 시도.
@@ -1257,8 +1258,12 @@ def download_series(cfg, session, sid, log=print, full=False, cancel_check=None,
     res["paid_total"] = len(locked_eps)
     res["tickets_used"] = 0
 
-    def _update_yaml():
-        # 회차 zip이 하나라도 있으면 kavita.yaml 생성/갱신(내용이 같으면 파일은 그대로)
+    def _update_yaml(final=True):
+        # 회차 zip이 하나라도 있으면 kavita.yaml 생성/갱신(내용이 같으면 파일은 그대로).
+        # 여러 계정으로 받는 중(yaml=False)이면 작품 처리 끝에 한 번만 쓰도록 표시만 한다(download_series_all)
+        if final and not yaml:
+            res["yaml_due"] = True
+            return
         if cfg.get("GENERATE_KAVITA_YAML", True):
             kavita_yaml.write_kavita_yaml(
                 root, sid, session=session,
@@ -1449,7 +1454,7 @@ def download_series(cfg, session, sid, log=print, full=False, cancel_check=None,
         # 예전엔 회차 하나 받을 때마다 갱신(표지 다운로드 포함)해서 너무 잦았다.
         # 이제는 작품 처리가 끝날 때 1번 + 긴 다운로드 대비 20화마다 1번만.
         if res["downloaded"] % 20 == 0:
-            _update_yaml()
+            _update_yaml(final=False)
         ss.append_history({"type": "download",
                            "source": "manual" if (full or only_nos) else "auto",
                            "platform": yaml_platform(t),
@@ -1550,10 +1555,13 @@ def _download_series_all(cfg, session, sid, log=print, session_for=None, dead=No
     session_for(n, cookie): 추가 계정 세션을 주는 함수(없으면 매번 만든다). dead: 이번 실행에서 만료로 뺀 계정 번호 집합.
     force(선택 회차 다시 받기)는 계정 1에만 적용한다 - 추가 계정은 force 없이 아직 없는 회차만 채운다
     (계정 1이 방금 다시 받은 회차를 또 지우고 받지 않게)."""
-    res = download_series(cfg, session, sid, log=log, **kw)
     extras = extra_accounts(cfg)
+    # 계정이 여럿이면 kavita.yaml은 계정마다 쓰지 않고 작품 처리가 끝난 뒤 한 번만 쓴다
+    # (예전엔 계정 1·2가 각각 회차를 받고 각각 yaml을 다시 써서, 작품 하나에 yaml 쓰기·업로드가 두 번이었다)
+    res = download_series(cfg, session, sid, log=log, yaml=not extras, **kw)
     if not extras:
         return res
+    yaml_due = bool(res.get("yaml_due"))
     kw = dict(kw, force=False)
     cancel_check = kw.get("cancel_check")
     for n, cookie in extras:
@@ -1572,8 +1580,9 @@ def _download_series_all(cfg, session, sid, log=print, session_for=None, dead=No
                 dead.add(n)
             res.setdefault("expired_accounts", []).append(n)
             continue
-        r = download_series(acfg, s, sid, log=log, account=n, extra=True,
+        r = download_series(acfg, s, sid, log=log, account=n, extra=True, yaml=False,
                             skip_nos=set(res.get("done_nos") or []), **kw)
+        yaml_due = yaml_due or bool(r.get("yaml_due"))
         res["done_nos"] = list(res.get("done_nos") or []) + list(r.get("done_nos") or [])
         if not session_for:
             kakao_api.save_session_cookies(s)
@@ -1589,7 +1598,19 @@ def _download_series_all(cfg, session, sid, log=print, session_for=None, dead=No
             if dead is not None:
                 dead.add(n)
             res.setdefault("expired_accounts", []).append(n)
+    if yaml_due:
+        update_yaml(cfg, sid, session, log=log)
     return res
+
+
+def update_yaml(cfg, sid, session, log=print):
+    """작품의 kavita.yaml 생성/갱신 (download_series 안의 _update_yaml과 같음)"""
+    t = ss.get_kakao_title(sid)
+    if not t or not cfg.get("GENERATE_KAVITA_YAML", True):
+        return
+    kavita_yaml.write_kavita_yaml(series_root(cfg, t), sid, session=session,
+                                  embed_cover=bool(cfg.get("KAVITA_YAML_EMBED_COVER", True)),
+                                  log=log, platform=yaml_platform(t))
 
 
 def _notify_expired_accounts(cfg, expired, log=print):
@@ -1720,6 +1741,7 @@ def run_kakao_cycle(cfg, log=print, manage_job=False):
             kakao_api.save_session_cookies(s)
         ss.save_job_state({"kakao": None})
         ss.flush_titles()
+        kavita_yaml.flush_all()
     _notify_expired_accounts(cfg, dead, log=log)
 
     # 쿠키 만료 알림은 만료가 처음 감지됐을 때 1번만 보내고, 정상으로 돌아오면

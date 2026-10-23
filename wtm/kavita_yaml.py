@@ -190,12 +190,18 @@ def _epub_cache():
     return _epub_words
 
 
-def flush_epub_cache():
+_epub_flushed_at = [0.0]
+
+
+def flush_epub_cache(force=True):
     global _epub_words_dirty
     with ss._lock:
+        if not force and time.time() - _epub_flushed_at[0] < _STATE_FLUSH_SEC:
+            return
         if _epub_words_dirty and _epub_words is not None:
             ss.write_json(EPUB_WORDS_PATH, _epub_words)
             _epub_words_dirty = False
+            _epub_flushed_at[0] = time.time()
 
 
 def remember_epub_words(path, words=None):
@@ -552,6 +558,7 @@ def flush_state(force=True):
 
 import atexit as _atexit
 _atexit.register(flush_state)
+_atexit.register(lambda: flush_epub_cache(force=True))
 
 
 def _save_state(series_dir, archives, sig, dir_mtime=None):
@@ -707,25 +714,27 @@ def _write_kavita_yaml_impl(download_root, title_id, session=None, embed_cover=T
         # 돌려주는 이미지 바이트/주소가 수시로 달라져서, 매번 새로 받으면 새 회차가
         # 없어도 파일이 바뀌었다. 새로 받는 건 표지가 아직 없을 때와
         # [전체 작품 kavita.yaml 생성/갱신](force_info) 때뿐.
+        # 기존 파일은 한 번만 읽는다 (원격 마운트라 읽기마다 느림 - 예전엔 표지 꺼내기와 비교로 두 번 읽었다)
+        old = None
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                old = f.read()
+        except OSError:
+            pass
         cover = None
         if embed_cover:
-            if not force_info and os.path.exists(path):
-                cover = _existing_first_cover(path)
+            if not force_info and old:
+                cover = _first_cover_in(old)
             if not cover:
                 cover = _cover_b64(session, t.get("thumbnail"), log=log)
-            if not cover and os.path.exists(path):
-                cover = _existing_first_cover(path)
+            if not cover and old:
+                cover = _first_cover_in(old)
 
         text = dump_yaml(build_data(t, tid, archives, cover_b64=cover, platform=platform))
 
-        if os.path.exists(path):
-            try:
-                with open(path, "r", encoding="utf-8") as f:
-                    if f.read() == text:
-                        _save_state(series_dir, archives, _meta_sig(t, platform, embed_cover))
-                        return "unchanged"
-            except OSError:
-                pass
+        if old is not None and old == text:
+            _save_state(series_dir, archives, _meta_sig(t, platform, embed_cover))
+            return "unchanged"
 
         tmp_path = path + ".tmp"
         with open(tmp_path, "w", encoding="utf-8", newline="\n") as f:
@@ -741,34 +750,53 @@ def _write_kavita_yaml_impl(download_root, title_id, session=None, embed_cover=T
         return "error"
 
 
+def _first_cover_in(text):
+    """kavita.yaml 내용에서 files 블록 첫 항목의 cover 값(base64)"""
+    for line in text.splitlines():
+        s = line.strip()
+        if s.startswith("cover:"):
+            val = s[len("cover:"):].strip()
+            if val.startswith('"'):
+                try:
+                    val = json.loads(val)
+                except ValueError:
+                    return None
+            return None if val in ("", "FIRST") else val
+    return None
+
+
 def _existing_first_cover(path):
     """기존 kavita.yaml에서 files 블록 첫 항목의 cover 값(base64)을 읽는다."""
     try:
         with open(path, "r", encoding="utf-8") as f:
-            for line in f:
-                s = line.strip()
-                if s.startswith("cover:"):
-                    val = s[len("cover:"):].strip()
-                    if val.startswith('"'):
-                        try:
-                            val = json.loads(val)
-                        except ValueError:
-                            return None
-                    return None if val in ("", "FIRST") else val
+            return _first_cover_in(f.read())
     except OSError:
-        pass
-    return None
+        return None
 
 
 def write_kavita_yaml(*args, **kwargs):
     try:
         return _write_kavita_yaml_impl(*args, **kwargs)
     finally:
+        # 기록 파일(kavita_state.json·epub_words.json, 수백 KB~수 MB)은 10초에 한 번만 쓴다 - 예전엔 yaml 하나마다
+        # 통째로 다시 써서 yaml 만드는 CPU의 절반이 여기 들었다. 작업이 끝날 때·종료할 때 flush_all()로 바로 쓴다.
         try:
-            flush_state(force=not kwargs.get("quick"))   # 일괄 점검 중에는 10초에 한 번만 저장
+            flush_state(force=False)
         except Exception:  # noqa: BLE001
             pass
         try:
-            flush_epub_cache()
+            flush_epub_cache(force=False)
         except Exception:  # noqa: BLE001
             pass
+
+
+def flush_all():
+    """모아 둔 kavita 기록을 지금 저장 (작업 끝·종료 때)"""
+    try:
+        flush_state(force=True)
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        flush_epub_cache(force=True)
+    except Exception:  # noqa: BLE001
+        pass
