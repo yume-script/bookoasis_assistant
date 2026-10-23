@@ -280,10 +280,12 @@ class WebtoonManagerMetadataProvider(BaseMetadataProvider):
         {"key": "WAITFREE_CHECK_MINUTES", "label": "기다무 확인 최대 간격(분, 1~30)", "type": "number", "default": 5,
          "hint": "다음 대여권이 충전되는 시각에 맞춰 바로 확인하고(1분 단위), 그 사이에도 이 간격마다 한 번은 확인합니다. "
                  "새로 잠긴 회차가 생긴 작품을 얼마나 빨리 잡는지에만 영향이 있습니다."},
-        {"key": "WAITFREE_SPREAD_ENABLE", "label": "1·2·3일 기다무를 시간대에 고르게 (매일)", "type": "checkbox", "default": False,
+        {"key": "WAITFREE_SPREAD_ENABLE", "label": "기다무 충전 시각 고르게 (매일)", "type": "checkbox", "default": False,
          "hint": "매일 완결 목록 수집 때, 대여권을 쓰는 1일·2일·3일 기다무 작품의 다음 충전 시각을 아래 시간대에 같은 간격으로 다시 "
                  "놓습니다(시간당 비슷한 수). 앞당기지는 않고 늦출 수만 있어서, 처음 켤 때 일부 작품의 대여권이 한 번 늦어집니다. "
-                 "한 작품의 계정들은 같은 시각으로 맞춥니다. 직접 한 번 하려면 python3 -m wtm.shift_waitfree --spread 1 11."},
+                 "한 작품의 계정들은 같은 시각으로 맞춥니다. 1·2·3·12시간처럼 하루보다 짧은 기다무는 시간대에 몰 수 없으므로 "
+                 "주기별로 한 주기 안에 고르게 퍼뜨립니다(예: 3시간 기다무 240개면 45초마다 하나씩). "
+                 "직접 한 번 하려면 python3 -m wtm.shift_waitfree --spread 1 11."},
         {"key": "WAITFREE_SPREAD_START", "label": "고르게 펼 시간대 시작(0~23시)", "type": "number", "default": 1},
         {"key": "WAITFREE_SPREAD_END", "label": "고르게 펼 시간대 끝(0~23시, 이 시각 전까지)", "type": "number", "default": 11},
         {"key": "WAITFREE_NIGHT_ENABLE", "label": "1일 이상 기다무는 새벽부터 사용", "type": "checkbox", "default": False,

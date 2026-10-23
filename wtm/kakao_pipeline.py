@@ -810,6 +810,49 @@ def spread_plan(cfg, titles, start_h, end_h, now=None):
     return plan
 
 
+def spread_short_plan(cfg, titles, now=None):
+    """1시간·2시간·3시간·12시간처럼 하루보다 짧은 기다무는 시간대에 몰 수 없으므로(주기마다 다시 충전), 주기별로 묶어
+    한 주기 안에 같은 간격으로 퍼뜨린다 - 예: 3시간 기다무 240개면 45초마다 하나씩 충전되게(한꺼번에 몰리지 않게).
+    순서는 지금 그대로, 앞당기지 않고(카카오가 거절), 한 작품의 계정들은 같은 시각으로. 반환은 spread_plan과 같다."""
+    now = now or time.time()
+    nums, cands = _waitfree_candidates(cfg)
+    if not nums:
+        return {}
+    groups = {}
+    for sid, t0 in cands.items():
+        t = titles.get(sid) or t0
+        pm = int(t.get("waitfree_period_min") or 1440)
+        if pm >= 1440:
+            continue
+        period = pm * 60
+        cur = max(now, max((_ticket_at(t, n) + period) if _ticket_at(t, n) else now for n in nums))
+        groups.setdefault(period, []).append((cur, sid, t))
+    plan = {}
+    for period, items in groups.items():
+        # 주기를 원으로 보고(충전 시각 = 지금 기준 0~주기), 가장 넓게 빈 곳 다음부터 한 바퀴 돌며 앞 작품과
+        # 최소 (주기 / 작품 수)만큼 떨어지게 민다. 몰려 있는 것만 조금씩 늦어지고(최대 한 주기 미만), 고른 것은 그대로.
+        items.sort(key=lambda x: (x[0], x[1]))
+        n_items = len(items)
+        gap = period / n_items
+        xs = [cur - now for cur, _sid, _t in items]
+        gaps = [(xs[(j + 1) % n_items] + (period if j == n_items - 1 else 0)) - xs[j] for j in range(n_items)]
+        start = (max(range(n_items), key=lambda j: gaps[j]) + 1) % n_items
+        prev = None
+        for k in range(n_items):
+            j = (start + k) % n_items
+            cur, sid, t = items[j]
+            u = xs[j] + (period if j < start else 0)
+            new_u = u if prev is None else max(u, prev + gap)
+            prev = new_u
+            slot = cur + (new_u - u)
+            stamp = slot - period
+            patch = {"last_ticket_at": stamp}
+            if any(n != 1 for n in nums):
+                patch["ticket_at_acc"] = dict(t.get("ticket_at_acc") or {}, **{str(n): stamp for n in nums if n != 1})
+            plan[sid] = (patch, cur, slot)
+    return plan
+
+
 def spread_waitfree(cfg, log=print, now=None):
     """[설정] '1·2·3일 기다무 시간대에 고르게'가 켜져 있으면 매일 목록 수집(완결 스캔) 때 부른다.
     반환: 옮긴 작품 수 (꺼져 있으면 None)"""
@@ -823,6 +866,9 @@ def spread_waitfree(cfg, log=print, now=None):
     now = now or time.time()
     titles = ss.load_kakao_titles()
     plan = spread_plan(cfg, titles, start_h, end_h, now)
+    short = spread_short_plan(cfg, titles, now)   # 1·2·3·12시간 기다무는 주기 안에서 고르게
+    long_n = len(plan)
+    plan.update(short)
     nums = [n for n, _c in accounts(cfg)] or [1]
     patches, moved = {}, 0
     with _busy_lock:
@@ -839,8 +885,8 @@ def spread_waitfree(cfg, log=print, now=None):
         ss.upsert_kakao_title(patches)
         ss.flush_titles()
     hours = max(1, (end_h - start_h) % 24 or 24)
-    log("카카오 기다무: 1·2·3일 기다무 %d개를 %02d~%02d시에 고르게 (옮김 %d개, 시간당 약 %d개)" % (
-        len(plan), start_h, (end_h - 1) % 24, moved, round(len(plan) / hours)))
+    log("카카오 기다무: 1·2·3일 기다무 %d개를 %02d~%02d시에 고르게(시간당 약 %d개), 하루보다 짧은 기다무 %d개는 "
+        "주기 안에서 고르게 - 옮김 %d개" % (long_n, start_h, (end_h - 1) % 24, round(long_n / hours), len(short), moved))
     ss.save_job_state({"waitfree_spread_at": now})
     return moved
 

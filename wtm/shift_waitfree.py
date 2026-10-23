@@ -75,6 +75,11 @@ def spread(cfg, data, nums, now, start_h, end_h):
     full = dict(DEFAULTS)
     full.update({k: v for k, v in cfg.items() if v not in (None, "")})
     plan = kp.spread_plan(full, data, start_h, end_h, now)
+    short = kp.spread_short_plan(full, data, now)   # 1·2·3·12시간 기다무: 주기 안에서 고르게 (분포 표에는 넣지 않음)
+    for sid, (patch, cur, slot) in short.items():
+        data[sid].update(patch)
+    if short:
+        print("  하루보다 짧은 기다무 %d개는 각자 주기 안에서 고르게 (예: 3시간 기다무 N개 → 3시간/N 간격)" % len(short))
     before, after, samples = Counter(), Counter(), []
     for i, (sid, (patch, cur, slot)) in enumerate(sorted(plan.items(), key=lambda kv: kv[1][2])):
         before[time.localtime(cur).tm_hour] += 1
