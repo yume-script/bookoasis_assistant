@@ -6,7 +6,7 @@ BookOasis 플러그인으로 쓰던 세 가지를 **BookOasis 밖에서 따로 �
 | 모듈 | 원본 | 하는 일 | 켜기 |
 |---|---|---|---|
 | **웹툰 다운로더** | [webtoon_manager](https://github.com/yume-script/webtoon_manager) v1.39.3 | 네이버웹툰·카카오웹툰·카카오웹소설 구독/다운로드, kavita.yaml 등 | `WTM_ENABLED=true` (기본 · 첫 화면) |
-| **드라이브 변경 감시** | [gdrive_watch](https://github.com/yume-script/gdrive_watch) v1.18.8 | Google Drive·로컬 폴더 변경 감지 → rclone VFS 새로고침 → 바뀐 폴더만 BookOasis 부분 스캔 | `GDW_ENABLED=true` (기본, rclone 마운트를 쓸 때) |
+| **드라이브 변경 감시** | [gdrive_watch](https://github.com/yume-script/gdrive_watch) v1.18.8 | Google Drive·로컬 폴더 변경 감지 → rclone VFS 새로고침 → 바뀐 폴더만 BookOasis 부분 스캔 | `GDW_ENABLED=true` (기본, rclone 마운트를 쓸 때) · **리눅스 전용 - 윈도우에서는 사용 불가** |
 | **미니게임** | [ym_mini_game](https://github.com/yume-script/ym_mini_game) v2.0.2 | 테트리스·지뢰찾기·오목·홀덤 등 12종 (브라우저에서만 돔, 서버 부하 없음) | `MINI_ENABLED=true` (기본) |
 
 감지·다운로드 로직과 화면은 플러그인과 같고, 플러그인이라서 생기던 제약만 걷어냈습니다.
@@ -259,6 +259,10 @@ venv\Scripts\python app.py
 테스트: `python3 -m unittest discover -s tests`
 
 ## 드라이브 변경 감시 기능 (플러그인과 동일)
+
+> ⚠️ **윈도우에서는 사용할 수 없습니다 (리눅스 전용).** 경로를 `/`로 시작하는 리눅스 경로로만 다루고, 실시간 감지(inotify)와
+> 마운트 정보(`/proc`)도 리눅스 기능이라 윈도우 경로(`D:\…`)를 인식하지 못합니다. 윈도우에서는 자동으로 꺼지며,
+> `GDW_ENABLED=true`로 켜도 시작할 때 경고를 남기고 끕니다. 웹툰 다운로더·미니게임은 윈도우에서도 쓸 수 있습니다.
 ### 동작
 ```
 Drive Changes/Activity 확인 (기본 60초)

@@ -40,7 +40,7 @@ PAGES = {"/", "/index.html", "/watch", "/webtoon", "/webtoon/", "/games", "/game
 OFF_PAGE = """<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{title}</title><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
 <link rel="stylesheet" href="theme.css"></head><body data-module=""><main class="gdw-page"><div class="app-off"><h2>{title}: 꺼져 있음</h2>
-<p>.env에 <code>{key}=true</code>를 넣고 다시 시작하세요.</p></div></main><script src="shell.js"></script></body></html>"""
+<p>{note}</p></div></main><script src="shell.js"></script></body></html>"""
 MAX_BODY = 2 * 1024 * 1024
 
 
@@ -177,7 +177,7 @@ class Handler(BaseHTTPRequestHandler):
         mods = modules()
         if path == "/api/modules":
             info = dict(mods, version=service._plugin_version(), versions=module_versions(), ui=ui_prefs(),
-                        user=user["username"])
+                        user=user["username"], windows=os.name == "nt")
             if mods["mini"]:
                 from mini import bundle
                 info["games"] = bundle.menu()
@@ -193,11 +193,13 @@ class Handler(BaseHTTPRequestHandler):
             first = next((p for k, p in (("wtm", "webtoon"), ("gdw", "watch"), ("mini", "games")) if mods[k]), None)
             if first:
                 return self._send(302, b"", extra={"Location": first})
-            return self._send(200, OFF_PAGE.format(title="웹툰 다운로더", key="WTM_ENABLED").encode(), "text/html; charset=utf-8")
+            return self._send(200, OFF_PAGE.format(title="웹툰 다운로더", note=".env에 <code>WTM_ENABLED=true</code>를 넣고 다시 시작하세요.").encode(), "text/html; charset=utf-8")
         if path == "/watch" and not mods["gdw"]:
-            return self._send(200, OFF_PAGE.format(title="드라이브 변경 감시", key="GDW_ENABLED").encode(), "text/html; charset=utf-8")
+            return self._send(200, OFF_PAGE.format(title="드라이브 변경 감시", note=(
+                "드라이브 변경 감시는 리눅스 전용이라 윈도우에서는 사용할 수 없습니다." if os.name == "nt"
+                else ".env에 <code>GDW_ENABLED=true</code>를 넣고 다시 시작하세요.")).encode(), "text/html; charset=utf-8")
         if path in ("/webtoon", "/webtoon/") and not mods["wtm"]:
-            return self._send(200, OFF_PAGE.format(title="웹툰 다운로더", key="WTM_ENABLED").encode(), "text/html; charset=utf-8")
+            return self._send(200, OFF_PAGE.format(title="웹툰 다운로더", note=".env에 <code>WTM_ENABLED=true</code>를 넣고 다시 시작하세요.").encode(), "text/html; charset=utf-8")
         if path == "/webtoon/":
             return self._send(302, b"", extra={"Location": "/webtoon"})
         name = STATIC.get(path)
@@ -215,7 +217,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def _games(self, path, mods):
         if not mods["mini"]:
-            return self._send(200, OFF_PAGE.format(title="미니게임", key="MINI_ENABLED").encode(), "text/html; charset=utf-8")
+            return self._send(200, OFF_PAGE.format(title="미니게임", note=".env에 <code>MINI_ENABLED=true</code>를 넣고 다시 시작하세요.").encode(), "text/html; charset=utf-8")
         from mini import bundle
         if path in ("/games", "/games/"):
             if path == "/games/":

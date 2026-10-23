@@ -263,13 +263,15 @@
       'MCP': mcpPane,
       '정보': function () {
         var list = h('div', { class: 'about-list' });
-        var names = { gdw: '드라이브 변경 감시', wtm: '웹툰 다운로더', mini: '미니게임' };
+        var names = { wtm: '웹툰 다운로더', gdw: '드라이브 변경 감시', mini: '미니게임' };
         Object.keys(names).forEach(function (k) {
           list.appendChild(h('div', { class: 'about-row' }, [h('span', { text: names[k] }),
-            h('b', { text: (info.versions && info.versions[k] ? 'v' + info.versions[k] : '-') + (info[k] === false ? ' (꺼짐)' : '') })]));
+            h('b', { text: (info.versions && info.versions[k] ? 'v' + info.versions[k] : '-') +
+              (k === 'gdw' && info.windows ? ' (윈도우에서는 사용 불가)' : (info[k] === false ? ' (꺼짐)' : '')) })]));
         });
         list.appendChild(h('div', { class: 'about-row' }, [h('span', { text: '프로그램' }), h('b', { text: info.version ? 'v' + info.version : '-' })]));
-        return h('div', {}, [list, h('p', { class: 'muted', text: '모듈 켜기/끄기와 경로·토큰 같은 실행 환경은 .env에서 바꿉니다 (WTM_ENABLED / GDW_ENABLED / MINI_ENABLED).' })]);
+        return h('div', {}, [list, h('p', { class: 'muted', text: '모듈 켜기/끄기와 경로·토큰 같은 실행 환경은 .env에서 바꿉니다 (WTM_ENABLED / GDW_ENABLED / MINI_ENABLED). ' +
+          '드라이브 변경 감시는 리눅스 전용이라 윈도우에서는 사용할 수 없습니다.' })]);
       }
     };
     function show(name) {
