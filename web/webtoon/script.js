@@ -404,9 +404,14 @@
   function renderHistory() {
     var box = el('[data-el="history-list"]');
     if (!box) return;
-    var list = (state.history || []).filter(function (h) {
+    // '전체'는 플랫폼마다 최근 200개씩 받아 섞은 것이라, 많이 받는 플랫폼(카카오)의 200개가 끝나는 시각보다 오래된
+    // 것은 빼고 보여 준다 (그 아래로는 다른 플랫폼만 남아 이력이 끊긴 것처럼 보였다). 더 이전 것은 플랫폼 탭에서.
+    var cutoff = historyFilter === 'all' ? (state.history_cutoff || 0) : 0;
+    var all = (state.history || []).filter(function (h) {
       return historyFilter === 'all' || historyPlatform(h) === historyFilter;
     });
+    var list = all.filter(function (h) { return !cutoff || (h.ts || 0) >= cutoff; });
+    var hidden = all.length - list.length;
     if (!list.length) { box.innerHTML = '<div class="wtm-hint">다운로드 이력이 없습니다.</div>'; return; }
     box.innerHTML = list.map(function (h) {
       var isFail = (h.type || '').indexOf('fail') >= 0;
@@ -442,7 +447,8 @@
       }
       return '<div class="wtm-history-item' + (isFail ? ' fail' : '') + '">' +
         sourceBadge + platformBadge(plat) + '<span>' + fmtDate(h.ts) + '</span> &middot; ' + text + '</div>';
-    }).join('');
+    }).join('') + (hidden > 0 ? '<div class="wtm-hint">' + fmtDate(cutoff) + ' 이전 이력 ' + hidden +
+      '개는 네이버웹툰·카카오웹툰·카카오웹소설 탭에서 볼 수 있습니다 (전체 탭은 플랫폼마다 최근 200개를 섞어 보여 주므로 그보다 오래된 것은 뺌).</div>' : '');
   }
 
 
@@ -667,6 +673,7 @@
     state.kakao_queue = data.kakao_queue || [];
     state.log_tail = data.log_tail || state.log_tail;
     state.history = data.history || state.history;
+    if (data.history_cutoff !== undefined) state.history_cutoff = data.history_cutoff;
     state.speed = data.speed || state.speed;
     if (data.titles_rev && data.titles_rev !== state.titles_rev) {
       // 다운로드 중에는 작품 정보가 몇 초마다 바뀐다. 그때마다 수천 개 목록을 다시

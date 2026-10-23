@@ -43,8 +43,8 @@ UPDATE_CHECK_PATH = os.path.join(DATA_DIR, "update_check.json")
 
 _lock = threading.RLock()
 
-MAX_HISTORY_LINES = 12000  # 독립형: 카카오 회차가 몰려도 네이버 이력이 밀려 지워지지 않게 (예전 2000)
-MAX_LOG_LINES = 500
+MAX_HISTORY_LINES = 20000  # 독립형: 카카오 회차가 몰려도 네이버 이력이 밀려 지워지지 않게 (예전 2000 → 12000)
+MAX_LOG_LINES = 20000      # 작업 로그 (예전 500줄 - 기다무로 회차가 몰리면 10분치도 안 남았다)
 
 
 def ensure_dirs():
@@ -336,15 +336,23 @@ def save_authors_tags(data):
 # ---- history.jsonl (append-only, capped) ---------------------------------
 def _append_capped(path, line, max_lines, trim_bytes):
     """파일 끝에 한 줄만 덧붙인다(예전처럼 매번 전체를 읽고 다시 쓰지 않음).
-    파일이 trim_bytes를 넘으면 그때만 마지막 max_lines줄로 줄인다."""
+    파일이 trim_bytes를 넘으면 그때만 마지막 max_lines줄(그리고 trim_bytes의 3/4 이하)로 줄인다.
+    예전엔 max_lines줄이 trim_bytes보다 커서(이력 12000줄 ≈ 4.2MB > 4MB), 한 번 넘은 뒤로는 줄을 추가할
+    때마다 파일 전체를 읽고 다시 썼다."""
     ensure_dirs()
     with open(path, "a", encoding="utf-8") as f:
         f.write(line)
     try:
         if os.path.getsize(path) > trim_bytes:
             with open(path, "r", encoding="utf-8", errors="replace") as f:
-                lines = f.readlines()
-            _atomic_write(path, "".join(lines[-max_lines:]))
+                lines = f.readlines()[-max_lines:]
+            keep, size = 0, 0
+            for ln in reversed(lines):
+                size += len(ln.encode("utf-8"))
+                if size > trim_bytes * 3 // 4:
+                    break
+                keep += 1
+            _atomic_write(path, "".join(lines[len(lines) - keep:]))
     except OSError:
         pass
 
@@ -354,10 +362,24 @@ def append_history(entry):
         entry = dict(entry)
         entry.setdefault("ts", time.time())
         _append_capped(HISTORY_PATH, json.dumps(entry, ensure_ascii=False) + "\n",
-                       MAX_HISTORY_LINES, 4 * 1024 * 1024)
+                       MAX_HISTORY_LINES, 8 * 1024 * 1024)
 
 
 _hist_cache = {}
+
+
+def history_cutoff(entries, limit=200):
+    """플랫폼마다 최근 limit개씩 받은 이력을 '전체'로 섞어 보여 줄 때, 이 시각보다 오래된 것은 빼야 끊겨 보이지 않는다.
+    카카오처럼 많이 받는 쪽은 limit개가 몇 시간치뿐이라, 그 아래로는 네이버만 남아 카카오 이력이 끊긴 것처럼 보였다.
+    반환: limit개를 다 채운 플랫폼들의 가장 오래된 시각 중 가장 늦은 것 (없으면 0)"""
+    oldest, count = {}, {}
+    for e in entries:
+        b = history_bucket(e)
+        count[b] = count.get(b, 0) + 1
+        ts = float(e.get("ts") or 0)
+        oldest[b] = min(oldest.get(b, ts), ts)
+    full = [oldest[b] for b in count if count[b] >= limit]
+    return max(full) if full else 0
 
 
 def history_bucket(entry):
@@ -601,7 +623,7 @@ def kakao_queue_list():
 def append_log(line):
     with _lock:
         ts = time.strftime("%Y-%m-%d %H:%M:%S")
-        _append_capped(JOB_LOG_PATH, "[%s] %s\n" % (ts, line), MAX_LOG_LINES, 256 * 1024)
+        _append_capped(JOB_LOG_PATH, "[%s] %s\n" % (ts, line), MAX_LOG_LINES, 4 * 1024 * 1024)
 
 
 # ---- update_check.json (GitHub 원격 버전 확인 결과 캐시) -------------------

@@ -502,6 +502,7 @@ class WebtoonManagerMetadataProvider(BaseMetadataProvider):
             "titles": items_list,
             "authors_tags": ss.load_authors_tags(),
             "history": ss.load_history(limit=200, per_platform=True),
+            "history_cutoff": ss.history_cutoff(ss.load_history(limit=200, per_platform=True), 200),
             "job": ss.load_job_state(),
             "title_job": ss.load_title_job_state(),
             "kakao_queue": ss.kakao_queue_list(),
@@ -766,6 +767,7 @@ class WebtoonManagerMetadataProvider(BaseMetadataProvider):
             "titles_rev": ss.titles_rev(),
             "log_tail": ss.tail_log(60),
             "history": ss.load_history(limit=200, per_platform=True),
+            "history_cutoff": ss.history_cutoff(ss.load_history(limit=200, per_platform=True), 200),
             "speed": self._speed_info(cfg, worker),
         }, ensure_ascii=False)
 
