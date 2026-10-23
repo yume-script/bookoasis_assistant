@@ -84,7 +84,7 @@ def _write_cookie_file(key, value):
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w", encoding="utf-8") as f:
         f.write(value.strip() + "\n")
-    os.replace(tmp, path)
+    config.replace_file(tmp, path)
 
 
 def enabled():
@@ -151,7 +151,7 @@ def save_settings(cfg):
         fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(cfg, f, ensure_ascii=False, indent=2)
-        os.replace(tmp, SETTINGS_PATH)
+        config.replace_file(tmp, SETTINGS_PATH)
         if env_patch:
             config.save_env(env_patch)
             _ENV_CACHE["mtime"] = None

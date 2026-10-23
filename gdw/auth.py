@@ -49,7 +49,7 @@ def _write_private(path, data):
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "wb") as f:
         f.write(data)
-    os.replace(tmp, path)
+    config.replace_file(tmp, path)
 
 
 def secret_key():

@@ -20,6 +20,7 @@ if ROOT not in sys.path:
 from gdw import config  # noqa: E402
 
 config.load_env()
+config.utf8_console()
 os.environ.setdefault("WTM_HOST", "1")
 
 WD_NAMES = {"mon": "월", "tue": "화", "wed": "수", "thu": "목", "fri": "금", "sat": "토", "sun": "일",

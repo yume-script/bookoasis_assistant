@@ -19,6 +19,29 @@ _LOADED = set()  # .env에서 읽어 os.environ에 넣은 키 (실제 환경변�
 _ESCAPES = {"\\": "\\", '"': '"', "n": "\n", "r": "\r"}
 
 
+def replace_file(src, dst, tries=40):
+    """os.replace + 윈도우 대비: 윈도우에서는 다른 프로세스(관리 화면·작업 프로세스)가 대상 파일을 읽는 순간
+    교체가 '액세스 거부(PermissionError)'로 실패한다. 잠깐씩 쉬며 다시 시도한다(최대 약 2초)."""
+    for i in range(tries):
+        try:
+            return os.replace(src, dst)
+        except PermissionError:
+            if os.name != "nt" or i == tries - 1:
+                raise
+            import time
+            time.sleep(0.05)
+
+
+def utf8_console():
+    """윈도우 콘솔·리다이렉트(> 파일)에서 한글·기호(✓ → ■ 등)를 찍다가 cp949 인코딩 오류로 죽지 않게"""
+    import sys
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError):
+            pass
+
+
 def _unquote(value):
     if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
         inner = value[1:-1]

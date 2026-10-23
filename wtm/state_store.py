@@ -53,13 +53,25 @@ def ensure_dirs():
     os.makedirs(TMP_DOWNLOAD_DEFAULT_DIR, exist_ok=True)
 
 
+def replace_file(src, dst, tries=40):
+    """os.replace + 윈도우 대비: 윈도우에서는 다른 프로세스(관리 화면·작업 프로세스)가 대상 파일을 읽는 순간
+    교체가 '액세스 거부(PermissionError)'로 실패한다. 잠깐씩 쉬며 다시 시도한다(최대 약 2초)."""
+    for i in range(tries):
+        try:
+            return os.replace(src, dst)
+        except PermissionError:
+            if os.name != "nt" or i == tries - 1:
+                raise
+            time.sleep(0.05)
+
+
 def _atomic_write(path, text):
     ensure_dirs()
     fd, tmp_path = tempfile.mkstemp(dir=os.path.dirname(path), prefix=".tmp_")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(text)
-        os.replace(tmp_path, path)
+        replace_file(tmp_path, path)
     finally:
         if os.path.exists(tmp_path):
             try:

@@ -95,7 +95,9 @@ def module_versions():
 
 def modules():
     # 웹툰 다운로더가 이 프로그램의 기본 모듈 (드라이브 변경 감시는 필요할 때 켜는 부가 모듈)
-    return {"wtm": config.env_bool("WTM_ENABLED", True), "gdw": config.env_bool("GDW_ENABLED", True),
+    # 드라이브 변경 감시는 리눅스 전용(경로를 /로 시작하는 리눅스 경로로 다루고, 실시간 감지는 inotify) -
+    # 윈도우에서는 기본으로 끈다
+    return {"wtm": config.env_bool("WTM_ENABLED", True), "gdw": config.env_bool("GDW_ENABLED", os.name != "nt"),
             "mini": config.env_bool("MINI_ENABLED", True)}
 
 
@@ -280,7 +282,7 @@ class Handler(BaseHTTPRequestHandler):
             tmp = _ui_prefs_path() + ".tmp"
             with open(tmp, "w", encoding="utf-8") as f:
                 json.dump(prefs, f)
-            os.replace(tmp, _ui_prefs_path())
+            config.replace_file(tmp, _ui_prefs_path())
             return self._send(200, {"success": True, "ui": prefs})
         if path == "/api/wtm/action":
             if isinstance(context.get("gz"), str):  # 큰 요청(쿠키 JSON 등)은 화면이 gzip+base64로 줄여 보낸다 (프록시 크기 제한 회피)

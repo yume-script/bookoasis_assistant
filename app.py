@@ -112,6 +112,7 @@ def check(svc):
 
 
 def main():
+    config.utf8_console()
     level = getattr(logging, config.env("LOG_LEVEL", "INFO").upper(), logging.INFO)
     logging.basicConfig(level=level, format="%(asctime)s %(levelname)s %(name)s %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
     os.makedirs(service.DATA_DIR, exist_ok=True)
@@ -122,6 +123,10 @@ def main():
         log.info("플러그인 시절 watch.json의 실행 환경을 .env로 옮겼습니다: %s", ", ".join(moved))
     if "--check" in sys.argv:
         return check(svc)
+    if mods["gdw"] and os.name == "nt":
+        log.warning("드라이브 변경 감시는 리눅스 전용이라 윈도우에서는 끕니다 (.env의 GDW_ENABLED=false로 이 경고를 없앨 수 있음).")
+        mods["gdw"] = False
+        os.environ["GDW_ENABLED"] = "false"
     if not mods["gdw"]:
         svc = None
 

@@ -190,7 +190,7 @@ def remove_title(platform, tid, t, cfg=None):
     """📤를 껐을 때: 아직 올리지 않은 회차를 대기열에서 뺀다. 반환: 뺀 수."""
     if not os.path.exists(DB_PATH):
         return 0
-    prefix = series_dir_for(platform, tid, t, cfg).rstrip("/") + "/"
+    prefix = series_dir_for(platform, tid, t, cfg).rstrip("/\\") + os.sep   # 윈도우 경로 구분자(\)도
     db = _db()
     try:
         with db:

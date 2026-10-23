@@ -98,7 +98,7 @@ def _write_if_changed(path, data, private=False):
             os.chmod(tmp, 0o600)     # 쿠키가 들어 있음
         except OSError:
             pass
-    os.replace(tmp, path)
+    ss.replace_file(tmp, path)
     _last_written[path] = h
 
 
@@ -413,7 +413,7 @@ def run_worker():
         os.chmod(tmp, 0o600)
     except OSError:
         pass
-    os.replace(tmp, PORT_PATH)
+    ss.replace_file(tmp, PORT_PATH)
     threading.Thread(target=server.serve_forever, name="wtm_worker_socket", daemon=True).start()
 
     def _state(extra=None):

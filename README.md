@@ -75,6 +75,25 @@ docker compose up -d --build
 - compose의 `environment:`에 적은 키는 `.env`보다 우선합니다. 화면에서 바꿀 값(RCLONE_*, BOOKOASIS_URL, WEBHOOK_TOKEN, AUTO_START)은 적지 마세요.
 - rclone.conf는 파일이 아니라 **디렉터리째** 마운트하세요 (파일 단위 바인드 마운트는 rclone이 토큰을 저장할 때 `device or resource busy`).
 
+## 설치 (윈도우)
+웹툰 다운로더와 미니게임은 윈도우에서도 돕니다. **드라이브 변경 감시는 리눅스 전용**이라(리눅스 경로·inotify·/proc 사용)
+윈도우에서는 자동으로 꺼집니다.
+```bat
+git clone https://github.com/yume-script/bookoasis_assistant.git C:\bookoasis_assistant
+cd C:\bookoasis_assistant
+py -3 -m venv venv
+venv\Scripts\pip install -r requirements.txt
+copy env.example .env
+rem .env: GDW_ENABLED=false, WTM_DOWNLOAD_ROOT=D:\Webtoon\naver 처럼 윈도우 경로로
+venv\Scripts\python app.py --check
+venv\Scripts\python app.py
+```
+- 계속 켜 두려면 작업 스케줄러(로그온 시 / 시스템 시작 시, "가장 높은 수준의 권한으로 실행")에
+  `C:\bookoasis_assistant\venv\Scripts\python.exe app.py`, 시작 위치 `C:\bookoasis_assistant`로 등록하세요
+  (서비스로 돌리려면 NSSM 같은 도구를 씁니다).
+- 경로가 260자를 넘을 수 있으면(긴 작품 제목 + 깊은 폴더) 윈도우의 "긴 경로 사용"(LongPathsEnabled)을 켜 두세요.
+- 명령 결과를 파일로 저장할 때(`python -m wtm.simulate > out.txt`)도 UTF-8로 써서 한글이 깨지지 않습니다.
+
 ## .env
 | 변수 | 기본값 | 설명 |
 |---|---|---|

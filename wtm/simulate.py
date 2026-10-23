@@ -30,6 +30,7 @@ if ROOT not in sys.path:
 from gdw import config  # noqa: E402
 
 config.load_env()
+config.utf8_console()
 os.environ.setdefault("WTM_HOST", "1")
 
 TICK = 300          # scheduler.WAITFREE_TICK_SECONDS

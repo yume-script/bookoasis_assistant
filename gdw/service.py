@@ -59,7 +59,7 @@ def _write_json(name, data):
         os.chmod(tmp, 0o600)
     except OSError:
         pass
-    os.replace(tmp, _path(name))
+    config.replace_file(tmp, _path(name))
 
 
 # ─────────────────────────── 워커 프로세스 ───────────────────────────
@@ -1810,7 +1810,7 @@ class Service:
         tmp = path + ".tmp"
         with open(tmp, "w", encoding="utf-8") as handle:
             json.dump(raw, handle, ensure_ascii=False, indent=2)
-        os.replace(tmp, path)
+        config.replace_file(tmp, path)
 
     def migrate_plugin_env(self):
         """플러그인 데이터 폴더를 그대로 옮겨 온 경우: watch.json에 남아 있던 실행 환경을 .env로 옮긴다

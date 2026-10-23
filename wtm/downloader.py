@@ -13,7 +13,7 @@ import requests
 
 from . import naver_api
 
-_SAFE_RE = re.compile(r'[\\/:*?"<>|]')
+_SAFE_RE = re.compile(r'[\\/:*?"<>|\x00-\x1f]')   # 윈도우에서 파일 이름에 못 쓰는 문자 + 제어 문자
 _IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".webp", ".gif")
 
 
@@ -181,7 +181,8 @@ def write_series_json(download_root, title, title_id, meta, log=None):
         tmp_path = path + ".tmp"
         with open(tmp_path, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
-        os.replace(tmp_path, path)
+        from .state_store import replace_file
+        replace_file(tmp_path, path)  # 윈도우: BookOasis 스캐너가 읽는 중이면 잠깐 기다렸다 교체
         return True
     except Exception as e:  # noqa: BLE001
         if log:

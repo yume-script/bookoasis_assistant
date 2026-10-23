@@ -730,7 +730,7 @@ def _write_kavita_yaml_impl(download_root, title_id, session=None, embed_cover=T
         tmp_path = path + ".tmp"
         with open(tmp_path, "w", encoding="utf-8", newline="\n") as f:
             f.write(text)
-        os.replace(tmp_path, path)
+        ss.replace_file(tmp_path, path)
         _save_state(series_dir, archives, _meta_sig(t, platform, embed_cover))
         if log:
             log("%s: kavita.yaml 갱신 (%d개 회차)" % (title, len(archives)))
