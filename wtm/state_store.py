@@ -131,6 +131,12 @@ def titles_rev():
 import sys as _sys
 
 TITLES_FLUSH_DELAY = 5.0
+# 큰 파일(카카오 작품 기록은 18MB 넘음)은 통째로 다시 쓰는 데 CPU가 들고(직렬화 0.2초 안팎), 쓸 때마다 관리 화면
+# 프로세스도 파일 전체를 다시 읽는다. 그래서 큰 파일은 30초에 한 번만 쓴다. 작업이 끝날 때·종료할 때는 바로 쓴다
+# (flush_titles). 다운로드 도중 프로세스가 죽으면 최대 30초치 기록(대여권 사용 시각 등)이 빠질 수 있지만, 받은
+# 회차는 파일로 남아 있어 다시 받지 않고, 대여권은 카카오가 거절하면 1시간 뒤 다시 본다.
+TITLES_FLUSH_DELAY_LARGE = 30.0
+LARGE_TITLES_BYTES = 2 * 1024 * 1024
 _shared = getattr(_sys, "_wtm_titles_shared", None)
 if _shared is None:
     _shared = {"cache": {}, "pending": {}, "timer": None, "lock": threading.RLock()}
@@ -206,10 +212,21 @@ def _titles_patch(path, patches):
         _schedule_flush()
 
 
+def _flush_delay():
+    for path, pend in _shared["pending"].items():
+        if pend:
+            try:
+                if os.path.getsize(path) > LARGE_TITLES_BYTES:
+                    return TITLES_FLUSH_DELAY_LARGE
+            except OSError:
+                pass
+    return TITLES_FLUSH_DELAY
+
+
 def _schedule_flush():
     if _shared["timer"] is not None:
         return
-    t = threading.Timer(TITLES_FLUSH_DELAY, flush_titles)
+    t = threading.Timer(_flush_delay(), flush_titles)
     t.daemon = True
     _shared["timer"] = t
     t.start()

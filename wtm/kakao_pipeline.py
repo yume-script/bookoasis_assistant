@@ -862,6 +862,7 @@ def run_waitfree_tick(cfg, log=print, show_status=True):
         for s in sessions:
             kakao_api.save_session_cookies(s)
     _notify_expired_accounts(cfg, dead, log=log)
+    ss.flush_titles()   # 큰 작품 기록 파일은 30초마다만 쓰므로, 확인이 끝나면 바로 저장해 화면에 보이게
     log("카카오 기다무: 대여권 %d장 사용 / 신규 %d화" % (res["waitfree_used"], res["downloaded"]))
     return res
 
@@ -1718,6 +1719,7 @@ def run_kakao_cycle(cfg, log=print, manage_job=False):
         for s in extra_main.values():
             kakao_api.save_session_cookies(s)
         ss.save_job_state({"kakao": None})
+        ss.flush_titles()
     _notify_expired_accounts(cfg, dead, log=log)
 
     # 쿠키 만료 알림은 만료가 처음 감지됐을 때 1번만 보내고, 정상으로 돌아오면
