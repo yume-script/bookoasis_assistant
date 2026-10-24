@@ -270,6 +270,14 @@
               (k === 'gdw' && info.windows ? ' (윈도우에서는 사용 불가)' : (info[k] === false ? ' (꺼짐)' : '')) })]));
         });
         list.appendChild(h('div', { class: 'about-row' }, [h('span', { text: '프로그램' }), h('b', { text: info.version ? 'v' + info.version : '-' })]));
+        var up = info.update || {};
+        list.appendChild(h('div', { class: 'about-row' }, [h('span', { text: '최신 버전 (GitHub)' }),
+          h('b', { text: up.latest ? ('v' + up.latest + (up.available ? ' · 업데이트 있음' : ' · 최신')) :
+            (up.error ? '확인 실패' : '확인 중') })]));
+        if (up.available) {
+          list.appendChild(h('p', { class: 'muted', text: '업데이트: 설치 폴더에서 git pull 후 서비스 재시작 ' +
+            '(예: cd /mnt/bookoasis_assistant && git pull && systemctl restart bookoasis_assistant)' }));
+        }
         return h('div', {}, [list, h('p', { class: 'muted', text: '모듈 켜기/끄기와 경로·토큰 같은 실행 환경은 .env에서 바꿉니다 (WTM_ENABLED / GDW_ENABLED / MINI_ENABLED). ' +
           '드라이브 변경 감시는 리눅스 전용이라 윈도우에서는 사용할 수 없습니다.' })]);
       }
@@ -618,6 +626,15 @@
     // 아이콘 배지: 지금 보는 화면의 모듈 버전 (드라이브 변경 감시 / 웹툰 다운로더 / 미니게임마다 다름)
     var ver = (m.versions && current && m.versions[current]) || m.version;
     if (ver) { verEl.textContent = ver; document.title = document.title + ' · v' + ver; }
+    // 새 버전이 있으면 배지를 빨갛게 + 점, 마우스를 올리면 버전과 업데이트 명령 (설정 > 정보에도 나옴)
+    var up = m.update || {};
+    if (up.available) {
+      verEl.classList.add('has-update');
+      mark.title = '새 버전 v' + up.latest + ' (지금 v' + up.current + ')\n업데이트: git pull 후 서비스 재시작';
+      if (!ver) verEl.textContent = 'NEW';
+    } else if (up.latest) {
+      mark.title = '최신 버전입니다 (v' + up.current + ')';
+    }
     var name = m.user || '?';
     who.firstChild.textContent = name;
     who.lastChild.textContent = '관리자';

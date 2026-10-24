@@ -260,6 +260,11 @@ venv\Scripts\python app.py
 - 최고 점수 등은 게임마다 브라우저(localStorage)에 저장됩니다(플러그인과 같음).
 
 ## 관리 화면 / API
+
+- **업데이트 표시**: 왼쪽 위 아이콘의 버전 배지(지금 보는 모듈의 버전)는 GitHub에 새 버전이 있으면 빨갛게 바뀌고 노란 점이 붙습니다.
+  마우스를 올리거나 [설정 > 정보]에서 최신 버전을 볼 수 있습니다. 6시간마다 GitHub의 `VERSION`을 확인하며,
+  `.env`에 `UPDATE_CHECK_URL=`(빈 값)을 넣으면 확인하지 않습니다.
+
 - `GET /` 드라이브 변경 감시 (현황, 변경 기록, 감시 설정, 스캔 일정, 로그) · `GET /webtoon` 웹툰 다운로더 · `GET /games` 미니게임
 - `POST /api/rpc/<동작>` 드라이브 변경 감시 RPC, `GET /api/wtm/data`·`POST /api/wtm/action` 웹툰 다운로더.
   `Content-Type: application/json`만 받습니다(다른 사이트 폼 전송 차단).

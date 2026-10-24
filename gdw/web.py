@@ -93,6 +93,52 @@ def module_versions():
     return out
 
 
+# ── 새 버전 확인 (왼쪽 위 아이콘의 업데이트 표시) ──
+# GitHub의 VERSION 파일을 6시간마다 한 번 받아 지금 버전과 비교한다. 화면 요청을 기다리게 하지 않도록 백그라운드에서 받고,
+# 화면에는 마지막으로 받은 결과만 준다. .env의 UPDATE_CHECK_URL을 비우면(UPDATE_CHECK_URL=) 확인하지 않는다.
+DEFAULT_UPDATE_URL = "https://raw.githubusercontent.com/yume-script/bookoasis_assistant/main/VERSION"
+UPDATE_CHECK_SEC = 6 * 3600
+_update = {"latest": "", "checked_at": 0.0, "error": "", "running": False}
+
+
+def _version_tuple(v):
+    return tuple(int(x) if x.isdigit() else 0 for x in re.split(r"[.\-+]", str(v or "")) if x != "")
+
+
+def _fetch_latest():
+    import threading
+    from urllib.request import Request, urlopen
+
+    url = config.env("UPDATE_CHECK_URL", DEFAULT_UPDATE_URL)
+
+    def run():
+        try:
+            req = Request(url, headers={"User-Agent": "bookoasis_assistant", "Cache-Control": "no-cache"})
+            with urlopen(req, timeout=10) as r:
+                _update["latest"] = str(json.loads(r.read().decode("utf-8")).get("version") or "")
+                _update["error"] = ""
+        except Exception as e:  # noqa: BLE001 - 네트워크가 막혀 있어도 화면은 그대로
+            _update["error"] = str(e)[:200]
+        finally:
+            _update["checked_at"] = time.time()
+            _update["running"] = False
+
+    if not url or _update["running"]:
+        return
+    _update["running"] = True
+    threading.Thread(target=run, name="gdw_update_check", daemon=True).start()
+
+
+def update_info():
+    """{"current", "latest", "available", "checked_at", "error"} - 확인할 때가 됐으면 백그라운드로 다시 받는다"""
+    if time.time() - _update["checked_at"] > UPDATE_CHECK_SEC:
+        _fetch_latest()
+    cur = service._plugin_version()
+    latest = _update["latest"]
+    return {"current": cur, "latest": latest, "checked_at": _update["checked_at"], "error": _update["error"],
+            "available": bool(latest and _version_tuple(latest) > _version_tuple(cur))}
+
+
 def modules():
     # 웹툰 다운로더가 이 프로그램의 기본 모듈 (드라이브 변경 감시는 필요할 때 켜는 부가 모듈)
     # 드라이브 변경 감시는 리눅스 전용(경로를 /로 시작하는 리눅스 경로로 다루고, 실시간 감지는 inotify) -
@@ -177,7 +223,7 @@ class Handler(BaseHTTPRequestHandler):
         mods = modules()
         if path == "/api/modules":
             info = dict(mods, version=service._plugin_version(), versions=module_versions(), ui=ui_prefs(),
-                        user=user["username"], windows=os.name == "nt")
+                        user=user["username"], windows=os.name == "nt", update=update_info())
             if mods["mini"]:
                 from mini import bundle
                 info["games"] = bundle.menu()
@@ -381,4 +427,5 @@ def make_server(svc, host, port):
     handler = type("GdwHandler", (Handler,), {"svc": svc})
     server = ThreadingHTTPServer((host, port), handler)
     server.daemon_threads = True
+    _fetch_latest()   # 새 버전 확인을 미리 시작 (첫 화면부터 업데이트 표시가 나오게)
     return server

@@ -114,6 +114,11 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
   font: 700 0.56rem/1.35 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; letter-spacing: 0.02em; pointer-events: none;
 }
 .brand-ver:empty { display: none; }
+.brand-ver.has-update { background: #e5484d; color: #fff; }
+.brand-ver.has-update::after {
+  content: ''; position: absolute; top: -4px; right: -3px; width: 7px; height: 7px; border-radius: 50%;
+  background: #ffd23f; border: 1.5px solid var(--bg);
+}
 .brand-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .crumbs { display: flex; align-items: center; gap: 0.5rem; min-width: 0; color: var(--muted); font-size: 0.95rem; }
 .crumbs b { color: var(--text); font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
