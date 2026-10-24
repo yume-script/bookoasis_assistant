@@ -213,3 +213,8 @@ def file_ready(path):
         telegram_upload.enqueue(path)
     except Exception:  # noqa: BLE001
         pass
+    try:   # 날짜별 받은 회차 수·용량 (download_stats.json)
+        from . import download_stats
+        download_stats.record(path)
+    except Exception:  # noqa: BLE001
+        pass

@@ -412,8 +412,8 @@
     });
     var list = all.filter(function (h) { return !cutoff || (h.ts || 0) >= cutoff; });
     var hidden = all.length - list.length;
-    if (!list.length) { box.innerHTML = '<div class="wtm-hint">다운로드 이력이 없습니다.</div>'; return; }
-    box.innerHTML = list.map(function (h) {
+    if (!list.length) { box.innerHTML = daysTable() + '<div class="wtm-hint">다운로드 이력이 없습니다.</div>'; return; }
+    box.innerHTML = daysTable() + list.map(function (h) {
       var isFail = (h.type || '').indexOf('fail') >= 0;
       // source 필드가 없는 예전 이력(업데이트 전에 쌓인 기록)은 type 이름으로
       // 대신 추정한다 - manual_download(_fail)만 수동이고 나머지는 자동.
@@ -526,11 +526,30 @@
     }
   }
 
+  function fmtBytes(n) {
+    n = n || 0;
+    return n >= 107374182 ? (n / 1073741824).toFixed(2) + 'GB' : Math.round(n / 1048576) + 'MB';
+  }
+
+  // 날짜별 받은 회차·용량 (다운로드 이력 탭 위)
+  function daysTable() {
+    var days = (state.speed && state.speed.days) || [];
+    if (!days.length) return '';
+    var cell = function (r) { return r && r.count ? r.count + '화 · ' + fmtBytes(r.bytes) : '-'; };
+    var rows = days.map(function (d) {
+      return '<tr><td>' + escapeHtml(d.day.slice(5)) + '</td><td><b>' + cell(d) + '</b></td><td>' + cell(d.naver) +
+        '</td><td>' + cell(d.kakao) + '</td><td>' + cell(d.kakao_novel) + '</td></tr>';
+    }).join('');
+    return '<table class="wtm-days-table"><thead><tr><th>날짜</th><th>합계</th><th>네이버웹툰</th><th>카카오웹툰</th>' +
+      '<th>카카오웹소설</th></tr></thead><tbody>' + rows + '</tbody></table>';
+  }
+
   // 최근 1시간 다운로드 속도 + 고속 모드/서버 제한 상태
   function speedLine() {
     var sp = state.speed;
     if (!sp) return '';
     var txt = '최근 1시간 ' + (sp.total || 0) + '화 (네이버 ' + (sp.naver || 0) + ' · 카카오 ' + (sp.kakao || 0) + ')';
+    if (sp.days && sp.days[0] && sp.days[0].count) txt += ' · 오늘 ' + sp.days[0].count + '화 ' + fmtBytes(sp.days[0].bytes);
     txt += sp.fast ? ' · 고속 모드' : '';
     if (sp.telegram) {  // 텔레그램 채널 업로드 대기열
       var tg = sp.telegram;

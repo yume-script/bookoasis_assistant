@@ -782,6 +782,11 @@ class WebtoonManagerMetadataProvider(BaseMetadataProvider):
         except Exception:  # noqa: BLE001
             pass
         info["parallel"] = cfg.get("PARALLEL_TITLES")
+        try:   # 날짜별 받은 회차 수·용량 (오늘 + 최근 7일)
+            from . import download_stats
+            info["days"] = download_stats.summary(7)
+        except Exception:  # noqa: BLE001
+            pass
         if worker_ctl.enabled(cfg):
             # 다운로드는 작업 프로세스에서 돌므로 서버 제한 상태도 그쪽 값을 보여준다
             info["worker"] = ({"pid": worker.get("pid"), "nice": worker.get("nice")} if worker
