@@ -112,6 +112,7 @@ DEFAULTS = {
     "KAKAO_SYNC_PURCHASED": True,
     "KAKAO_NOVEL_DOWNLOAD_ROOT": "",
     "ALLOW_GL": False,
+    "HIDE_BL_GL": False,
     "COMPARE_FOLDER": "",
     "COMPARE_FOLDERS_NAVER": "",
     "COMPARE_FOLDERS_KAKAO": "",
@@ -161,6 +162,8 @@ class WebtoonManagerMetadataProvider(BaseMetadataProvider):
          "hint": "끄면 BL 작품은 받지 않고 자동 구독도 하지 않습니다(전 플랫폼)."},
         {"key": "ALLOW_GL", "label": "GL 장르 받기", "type": "checkbox", "default": False,
          "hint": "끄면 GL 작품은 받지 않고 자동 구독도 하지 않습니다(전 플랫폼)."},
+        {"key": "HIDE_BL_GL", "label": "BL·GL 작품을 웹툰 목록에서 숨기기", "type": "checkbox", "default": False,
+         "hint": "켜면 전체목록·구독중·구독해제·제외됨·중복 목록에 BL·GL 작품이 보이지 않습니다(화면 표시만 - 받기 여부는 위 설정)."},
 
         {"key": "COMPARE_FOLDER", "label": "중복 확인 폴더(모든 플랫폼)", "type": "textarea", "default": "",
          "hint": "한 줄에 폴더 하나. 하위 폴더명/압축파일명을 시리즈명으로 보고 비교합니다. "
@@ -549,6 +552,7 @@ class WebtoonManagerMetadataProvider(BaseMetadataProvider):
                 "KAKAO_USE_OWNED_TICKETS": bool(cfg.get("KAKAO_USE_OWNED_TICKETS")),
                 "ALLOW_BL": bool(cfg.get("ALLOW_BL")),
                 "ALLOW_GL": bool(cfg.get("ALLOW_GL")),
+                "HIDE_BL_GL": bool(cfg.get("HIDE_BL_GL")),
                 "KAKAO_NOVEL_ENABLE": bool(cfg.get("KAKAO_NOVEL_ENABLE")),
                 "KAKAO_DOWNLOAD_WAITFREE": bool(pipeline._truthy(cfg.get("KAKAO_DOWNLOAD_WAITFREE"))),
                 "KAKAO_NOVEL_DOWNLOAD_WAITFREE": bool(pipeline._truthy(cfg.get("KAKAO_NOVEL_DOWNLOAD_WAITFREE"))),
@@ -1639,7 +1643,7 @@ class WebtoonManagerMetadataProvider(BaseMetadataProvider):
     _SETTINGS_GROUPS = [
         ("common", "자동 실행", ("ENABLE_SCHEDULER", "INTERVAL_MINUTES", "FINISHED_SCAN_HOUR", "NEW_EP_SCOPE")),
         ("common", "구독 / 다운로드 대상", ("AUTO_SUBSCRIBE_NEW_TITLES", "INITIAL_EPISODES_LIMIT",
-                                         "ALLOW_BL", "ALLOW_GL"),
+                                         "ALLOW_BL", "ALLOW_GL", "HIDE_BL_GL"),
          "매일+·기다무 작품과 이미 갖고 있는 작품을 받을지는 각 플랫폼 탭에서 정합니다."),
         ("common", "중복 확인(모든 플랫폼)", ("COMPARE_FOLDER", "COMPARE_LIBRARY_ID"),
          "이미 갖고 있는 작품에 '📚 보유중' 뱃지를 붙이고, 각 플랫폼 탭의 '이미 갖고 있는 작품도 받기'가 꺼져 있으면 "

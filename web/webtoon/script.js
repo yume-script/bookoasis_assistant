@@ -130,6 +130,7 @@
 
   function filteredTitles() {
     var list = state.titles.slice();
+    if ((state.config_public || {}).HIDE_BL_GL) list = list.filter(function (t) { return !t.bl && !t.gl; });  // 설정 > 공통
     if (currentTab === 'subscribed') list = list.filter(function (t) { return t.subscribed && !t.excluded && !t.unsubscribed; });
     else if (currentTab === 'unsubscribed') list = list.filter(function (t) { return t.unsubscribed; });
     else if (currentTab === 'excluded') list = list.filter(function (t) { return t.excluded; });
