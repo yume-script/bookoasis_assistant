@@ -306,6 +306,25 @@ venv\Scripts\python app.py
 
 테스트: `python3 -m unittest discover -s tests`
 
+## 드라이브 변경 감시: Pipedream으로 바로 확인 (선택)
+
+워커는 Drive 변경을 `poll_seconds`(기본 60초)마다 확인합니다. Pipedream의 Google Drive 트리거
+**New or Modified Files (Instant)**(Drive 푸시 알림)를 쓰면, 파일이 바뀌는 즉시 이 프로그램을 깨워 기다리지 않고 확인하게 할 수 있습니다.
+무엇이 바뀌었는지는 워커가 평소처럼 직접 확인하므로 Pipedream이 보내는 내용(파일 이름·경로)은 쓰지 않습니다 - 알림이 빠지거나
+늦어도 원래 주기 확인이 그대로 돕니다.
+
+1. `.env`에 `GDW_WAKE_TOKEN=<길고 임의의 값>`을 넣고 재시작합니다 (`openssl rand -hex 24`로 만들 수 있음).
+2. Pipedream에서 새 Workflow → 트리거 **Google Drive → New or Modified Files (Instant)**
+   - Google 계정 연결(감시하는 Drive의 계정), `Drive`: My Drive 또는 감시하는 공유 드라이브, `Folders`: 감시 폴더(비우면 Drive 전체)
+   - `perFileInterval`은 1~5분 정도로 두면 같은 파일이 여러 번 바뀔 때 알림이 덜 옵니다.
+3. 다음 단계로 **HTTP / Webhook → Send any HTTP Request**
+   - Method `POST`, URL `https://<관리 화면 주소>/api/gdw/wake`
+   - Headers `Authorization: Bearer <GDW_WAKE_TOKEN 값>` (본문은 비워도 됨)
+4. Deploy 후 Drive에 파일을 하나 올려 보고, 감시 화면의 로그에서 바로 확인되는지 봅니다.
+   주소 확인: `curl -X POST -H "Authorization: Bearer <값>" https://<주소>/api/gdw/wake` → `{"success": true, …}`
+
+관리 화면이 인터넷에서 열려 있어야 합니다(리버스 프록시 등). 토큰 없이 부르면 401, `GDW_WAKE_TOKEN`이 비어 있으면 404로 거절합니다.
+
 ## 드라이브 변경 감시 기능 (플러그인과 동일)
 
 > ⚠️ **윈도우에서는 사용할 수 없습니다 (리눅스 전용).** 경로를 `/`로 시작하는 리눅스 경로로만 다루고, 실시간 감지(inotify)와

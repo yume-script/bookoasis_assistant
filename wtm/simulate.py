@@ -122,9 +122,10 @@ def simulate(cfg, hours=24, per_title=10.0, full_dur=None, now=None, pause_full=
         return win is not None and x["period"] >= kp.NIGHT_MIN_PERIOD
 
     def ready(x, n, at):  # kakao_pipeline.ready_at과 같은 규칙
+        g = kp.WAITFREE_READY_GRACE   # 충전 1분 뒤부터 씀
         if not is_night(x):
-            return x["tick"][n] + x["period"] if x["tick"][n] else at
-        base = max((x["tick"][m] + x["period"]) if x["tick"][m] else at for m in nums)   # 계정들이 모두 충전되면 같이
+            return x["tick"][n] + x["period"] + g if x["tick"][n] else at
+        base = max((x["tick"][m] + x["period"] + g) if x["tick"][m] else at for m in nums)   # 계정들이 모두 충전되면 같이
         return kp._night_ready(base, info_at(at))
 
     _info = {}

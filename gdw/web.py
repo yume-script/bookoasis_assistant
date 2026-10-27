@@ -129,6 +129,34 @@ def _fetch_latest():
     threading.Thread(target=run, name="gdw_update_check", daemon=True).start()
 
 
+# ── 외부 알림으로 바로 확인 (Pipedream 등) ──
+# Google Drive 변경 알림(예: Pipedream의 'New or Modified Files (Instant)')을 받으면 워커를 깨워 지금 바로
+# Drive 변경을 확인하게 한다(wake.flag - 화면의 '지금 확인'과 같음). 무엇이 바뀌었는지는 워커가 평소처럼 직접 확인하므로
+# 알림 내용(파일 이름·경로)은 쓰지 않는다. .env의 GDW_WAKE_TOKEN이 있어야 켜진다.
+_wake = {"count": 0, "last": 0.0, "from": ""}
+
+
+def _wake_token_ok(headers, query):
+    import hmac
+    expect = config.env("GDW_WAKE_TOKEN", "").strip()
+    if not expect:
+        return False
+    given = (headers.get("Authorization") or "").strip()
+    given = given[7:].strip() if given.lower().startswith("bearer ") else (headers.get("X-Wake-Token") or "").strip()
+    if not given:
+        from urllib.parse import parse_qs
+        given = (parse_qs(query).get("token") or [""])[0]
+    return bool(given) and hmac.compare_digest(given.encode(), expect.encode())
+
+
+def wake_watcher(source=""):
+    os.makedirs(service.DATA_DIR, exist_ok=True)
+    open(service._path("wake.flag"), "w").close()
+    _wake["count"] += 1
+    _wake["last"] = time.time()
+    _wake["from"] = source[:80]
+
+
 def update_info():
     """{"current", "latest", "available", "checked_at", "error"} - 확인할 때가 됐으면 백그라운드로 다시 받는다"""
     if time.time() - _update["checked_at"] > UPDATE_CHECK_SEC:
@@ -205,6 +233,8 @@ class Handler(BaseHTTPRequestHandler):
         path = self.path.split("?", 1)[0]
         if path == "/healthz":
             return self._send(200, {"ok": True, "worker": service._worker_alive() if self.svc else None})
+        if path == "/api/gdw/wake":
+            return self._wake()
         if path == "/mcp":  # Streamable HTTP의 서버→클라이언트 SSE 스트림은 쓰지 않는다
             return self._send(405, {"success": False, "error": "MCP는 POST만 받습니다."}, extra={"Allow": "POST"})
         user = self._user()
@@ -285,10 +315,29 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, data, ctype, extra={"Cache-Control": "max-age=3600"})
         return self._send(404, {"success": False, "error": "없는 주소입니다."})
 
+    def _wake(self):
+        """POST|GET /api/gdw/wake - Authorization: Bearer <GDW_WAKE_TOKEN> (또는 ?token=). 본문은 읽고 버린다."""
+        try:
+            length = min(int(self.headers.get("Content-Length") or 0), MAX_BODY)
+            if length:
+                self.rfile.read(length)
+        except (ValueError, OSError):
+            pass
+        if not config.env("GDW_WAKE_TOKEN", "").strip():
+            return self._send(404, {"success": False, "error": "외부 알림 받기가 꺼져 있습니다 (.env의 GDW_WAKE_TOKEN)."})
+        if not _wake_token_ok(self.headers, self.path.split("?", 1)[1] if "?" in self.path else ""):
+            return self._send(401, {"success": False, "error": "토큰이 맞지 않습니다."})
+        if not modules()["gdw"]:
+            return self._send(404, {"success": False, "error": "드라이브 변경 감시가 꺼져 있습니다 (GDW_ENABLED)."})
+        wake_watcher(self.headers.get("User-Agent") or "")
+        return self._send(200, {"success": True, "message": "드라이브 변경을 지금 확인합니다.", "count": _wake["count"]})
+
     def do_POST(self):
         path = self.path.split("?", 1)[0]
         if path == "/mcp":
             return self._mcp()
+        if path == "/api/gdw/wake":
+            return self._wake()
         user = self._user()
         if not user and path not in PUBLIC:
             return self._deny(path)

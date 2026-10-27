@@ -649,6 +649,10 @@ def _night_ready(c, info):
     return max(c, info["next"])
 
 
+# 충전 시각 '정각'에 쓰면 카카오 쪽 시계·처리 차이로 아직 충전 전이라고 거절되는 일이 있어, 충전 1분 뒤부터 쓴다
+WAITFREE_READY_GRACE = 60
+
+
 def ready_at(cfg, t, account, now=None, night=None, nums=None):
     """이 계정이 이 작품에서 기다무 대여권을 쓸 수 있는 시각: 충전 시각, 단 '1일 이상 기다무는 새벽부터'를 켰으면
     night_info 규칙으로 미룬다. 이 작품에서 쓴 적이 없으면 지금(또는 미룬 시각). night: 미리 구한 night_info(반복 호출용).
@@ -656,7 +660,7 @@ def ready_at(cfg, t, account, now=None, night=None, nums=None):
     새벽 사용이 길어지고, 그날 쓴 시각이 매일 조금씩 뒤로 밀린다. 한 번 같이 쓰면 그 뒤로는 같은 시각에 충전된다."""
     def charge(n):
         used = _ticket_at(t, n)
-        return used + waitfree_period(t) if used else (now or time.time())
+        return used + waitfree_period(t) + WAITFREE_READY_GRACE if used else (now or time.time())
     if not _night_applies(cfg, t):
         return charge(account)
     info = night if night is not None else night_info(cfg, now)
