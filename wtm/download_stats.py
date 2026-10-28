@@ -8,6 +8,7 @@
     python3 -m wtm.download_stats 30         최근 30일 기록
     python3 -m wtm.download_stats --scan 7   기록을 쓰기 전(업데이트 전)의 날짜도 보려면: 저장 경로의 회차 파일을
                                              수정 시각으로 세어 본다 (원격 마운트면 몇 분 걸릴 수 있음, 기록은 안 바꿈)
+    python3 -m wtm.download_stats --forecast 30   앞으로 30일 동안 하루에 받을 회차 수·용량 예측
 """
 import os
 import sys
@@ -137,6 +138,98 @@ def scan(days):
     return out
 
 
+# 회차 크기를 모를 때 쓰는 기본값 (기록이 쌓이면 최근 기록의 평균을 쓴다)
+DEFAULT_EP_BYTES = {"naver": 25 * 1048576, "kakao": 15 * 1048576, "kakao_novel": 200 * 1024}
+
+
+def avg_bytes(days=14):
+    """플랫폼별 회차 하나 평균 크기 {플랫폼: (바이트, 근거 회차 수)} - 최근 기록, 없으면 기본값"""
+    tot = {}
+    for _day, d in load(days):
+        for p, v in d.items():
+            c, b = tot.get(p, (0, 0))
+            tot[p] = (c + v.get("count", 0), b + v.get("bytes", 0))
+    return {p: ((tot[p][1] / tot[p][0], tot[p][0]) if tot.get(p, (0, 0))[0] else (DEFAULT_EP_BYTES[p], 0))
+            for p, _l in PLATFORMS}
+
+
+def forecast(days=30, now=None):
+    """앞으로 days일 동안 하루에 받을 회차 수 예측 [(날짜, {플랫폼: 회차 수})], 근거 설명 dict.
+    - 기다무: 대여권을 쓰는 작품(구독·구매 + 잠긴 회차 남음)마다 계정 수 × (하루 / 충전 주기)장. 작품마다 남은 잠긴 회차
+      (전체 회차 - 받은 마지막 회차)를 다 받으면 그 작품은 빠진다 → 날이 갈수록 줄어든다
+    - 새 회차: 구독 중인 연재작마다 연재 요일 수만큼 일주일에 받는다(매일+는 7번). 완결작은 0
+    실제로는 처리 속도·대여권 거절·새 기다무 작품 등으로 달라질 수 있다."""
+    from . import host, kakao_pipeline as kp, pipeline as pl, state_store as ss
+    from .webtoon_manager import DEFAULTS
+    cfg = dict(DEFAULTS)
+    cfg.update({k: v for k, v in host.load_settings().items() if v not in (None, "")})
+    now = now or time.time()
+    nums, cands = kp._waitfree_candidates(cfg)
+    n_acc = max(1, len(nums))
+    def weekly_of(t):
+        if t.get("status") == "완결":
+            return 0
+        wd = t.get("weekdays") or []
+        return 7 if "dailyPlus" in wd else len([w for w in wd if w != "dailyPlus"])
+
+    wf = []   # (플랫폼, 하루 장수, 남은 회차, 따라잡은 뒤 하루 새 회차)
+    for sid, t in cands.items():
+        per_day = n_acc * 1440.0 / max(1, int(t.get("waitfree_period_min") or 1440))
+        left = max(0, int(t.get("episode_count") or 0) - int(t.get("last_downloaded_no") or 0))
+        wf.append(("kakao_novel" if kp._is_novel(t) else "kakao", per_day, left or 1, weekly_of(t) / 7.0))
+    weekly = {"naver": 0.0, "kakao": 0.0, "kakao_novel": 0.0}
+    for platform, titles in (("naver", ss.load_titles()), ("kakao", ss.load_kakao_titles())):
+        for tid, t in titles.items():
+            if not t.get("subscribed") or t.get("excluded") or t.get("unsubscribed"):
+                continue
+            if platform == "naver" and pl.bl_blocked(cfg, t):
+                continue
+            if platform == "kakao" and str(tid) in cands:
+                continue   # 기다무로 밀린 회차를 받는 중인 작품 - 새 회차도 그 흐름으로 들어온다(아래)
+            n = weekly_of(t)
+            if not n:
+                continue
+            p = "kakao_novel" if platform == "kakao" and kp._is_novel(t) else platform
+            weekly[p] += n
+    rows = []
+    left = [x[2] for x in wf]
+    for i in range(days):
+        day = time.strftime("%Y-%m-%d", time.localtime(now + i * 86400))
+        cnt = {p: weekly[p] / 7.0 for p, _l in PLATFORMS}
+        for j, (p, per_day, _l0, new_per_day) in enumerate(wf):
+            left[j] += new_per_day          # 새 회차가 잠긴 채 올라오면 받을 회차가 늘어난다
+            use = min(per_day, left[j])
+            left[j] -= use
+            cnt[p] += use
+        rows.append((day, cnt))
+    info = {"waitfree_titles": len(wf), "accounts": n_acc, "weekly_new": weekly,
+            "waitfree_left": sum(x[2] for x in wf)}
+    return rows, info
+
+
+def _print_forecast(days):
+    rows, info = forecast(days)
+    sizes = avg_bytes()
+    print("■ 앞으로 %d일 예측 (기다무 작품 %d개 · 계정 %d개 · 남은 잠긴 회차 합계 %d화)" % (
+        days, info["waitfree_titles"], info["accounts"], info["waitfree_left"]))
+    print("  회차 평균 크기: " + " · ".join("%s %s%s" % (label, gb(sizes[p][0]), "" if sizes[p][1] else "(기본값)")
+                                      for p, label in PLATFORMS))
+    print("  새 회차(연재): 일주일에 " + " · ".join("%s %d화" % (label, info["weekly_new"][p]) for p, label in PLATFORMS))
+    print("\n  날짜          합계              " + "  ".join("%-16s" % label for _p, label in PLATFORMS))
+    tot_c = tot_b = 0
+    for day, cnt in rows:
+        c = sum(cnt.values())
+        b = sum(cnt[p] * sizes[p][0] for p in cnt)
+        tot_c += c
+        tot_b += b
+        print("  %s  %-16s  %s" % (day, "%d화 %s" % (round(c), gb(b)), "  ".join(
+            "%-16s" % ("%d화 %s" % (round(cnt[p]), gb(cnt[p] * sizes[p][0]))) for p, _l in PLATFORMS)))
+    print("\n  %d일 합계: %d화 · %s (하루 평균 %d화 · %s)" % (days, round(tot_c), gb(tot_b), round(tot_c / days),
+                                                         gb(tot_b / days)))
+    print("  * 기다무는 남은 잠긴 회차를 다 받으면 빠지므로 날이 갈수록 줄어듭니다. 대여권 거절·처리 속도·새로 생기는")
+    print("    기다무 작품은 반영하지 않은 추정치입니다. 크기는 최근 14일 기록 평균(없으면 기본값)입니다.")
+
+
 def _print(rows):
     print("  날짜          합계              " + "  ".join("%-16s" % label for _p, label in PLATFORMS))
     for day, d in rows:
@@ -152,6 +245,10 @@ def main(argv):
     config.load_env()
     config.utf8_console()
     os.environ.setdefault("WTM_HOST", "1")
+    if "--forecast" in argv:
+        i = argv.index("--forecast")
+        _print_forecast(int(argv[i + 1]) if i + 1 < len(argv) and argv[i + 1].isdigit() else 30)
+        return 0
     if "--scan" in argv:
         i = argv.index("--scan")
         days = int(argv[i + 1]) if i + 1 < len(argv) and argv[i + 1].isdigit() else 7
