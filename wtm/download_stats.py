@@ -153,6 +153,31 @@ def avg_bytes(days=14):
             for p, _l in PLATFORMS}
 
 
+def avg_waitfree_delay(days=7):
+    """최근 기다무 사용의 평균 지연(초) - 충전 뒤 1분 기다림 포함. 이력에 기록이 없으면 5분으로 본다"""
+    from . import state_store as ss
+    cut = time.time() - days * 86400
+    lates = [float(h["late_sec"]) for h in ss.load_history(limit=3000, per_platform=True)
+             if h.get("late_sec") is not None and float(h.get("ts") or 0) >= cut]
+    try:
+        from .kakao_pipeline import WAITFREE_READY_GRACE as grace
+    except ImportError:
+        grace = 60
+    return (sum(lates) / len(lates) if lates else 240) + grace
+
+
+def tickets_per_day(period_min, delay_sec):
+    """계정 하나가 하루에 실제로 쓰는 기다무 대여권 수. 대여권은 '쓴 시각 + 주기'에 다시 충전되므로, 쓸 때마다 생기는
+    지연(충전 뒤 1분 + 대기열)만큼 한 바퀴가 길어진다.
+    - 하루보다 짧은 주기(1·2·3·12시간): 하루 횟수에서 한 번을 뺀다 (3시간 → 8번이 아니라 7번). 지연이 쌓여 하루에
+      한 바퀴쯤은 다음 날로 밀린다고 보는 보수적 계산
+    - 1일 이상: 한 바퀴가 (주기 + 지연)이 되는 만큼 줄인다 (1일 기다무에 지연 5분 → 하루 0.997장)"""
+    period = max(1, int(period_min)) * 60.0
+    if period < 86400:
+        return max(0.0, 86400.0 // period - 1)
+    return 86400.0 / (period + max(0.0, delay_sec))
+
+
 def forecast(days=30, now=None):
     """앞으로 days일 동안 하루에 받을 회차 수 예측 [(날짜, {플랫폼: 회차 수})], 근거 설명 dict.
     - 기다무: 대여권을 쓰는 작품(구독·구매 + 잠긴 회차 남음)마다 계정 수 × (하루 / 충전 주기)장. 작품마다 남은 잠긴 회차
@@ -172,9 +197,10 @@ def forecast(days=30, now=None):
         wd = t.get("weekdays") or []
         return 7 if "dailyPlus" in wd else len([w for w in wd if w != "dailyPlus"])
 
+    delay = avg_waitfree_delay()
     wf = []   # (플랫폼, 하루 장수, 남은 회차, 따라잡은 뒤 하루 새 회차)
     for sid, t in cands.items():
-        per_day = n_acc * 1440.0 / max(1, int(t.get("waitfree_period_min") or 1440))
+        per_day = n_acc * tickets_per_day(int(t.get("waitfree_period_min") or 1440), delay)
         left = max(0, int(t.get("episode_count") or 0) - int(t.get("last_downloaded_no") or 0))
         wf.append(("kakao_novel" if kp._is_novel(t) else "kakao", per_day, left or 1, weekly_of(t) / 7.0))
     weekly = {"naver": 0.0, "kakao": 0.0, "kakao_novel": 0.0}
@@ -202,7 +228,7 @@ def forecast(days=30, now=None):
             left[j] -= use
             cnt[p] += use
         rows.append((day, cnt))
-    info = {"waitfree_titles": len(wf), "accounts": n_acc, "weekly_new": weekly,
+    info = {"waitfree_titles": len(wf), "accounts": n_acc, "weekly_new": weekly, "delay": delay,
             "waitfree_left": sum(x[2] for x in wf)}
     return rows, info
 
@@ -212,6 +238,9 @@ def _print_forecast(days):
     sizes = avg_bytes()
     print("■ 앞으로 %d일 예측 (기다무 작품 %d개 · 계정 %d개 · 남은 잠긴 회차 합계 %d화)" % (
         days, info["waitfree_titles"], info["accounts"], info["waitfree_left"]))
+    print("  기다무 한 계정이 하루에 쓰는 대여권: 3시간 %g장 · 12시간 %g장 · 1일 %.3f장 (평균 지연 %d분 반영)" % (
+        tickets_per_day(180, info["delay"]), tickets_per_day(720, info["delay"]), tickets_per_day(1440, info["delay"]),
+        round(info["delay"] / 60)))
     print("  회차 평균 크기: " + " · ".join("%s %s%s" % (label, gb(sizes[p][0]), "" if sizes[p][1] else "(기본값)")
                                       for p, label in PLATFORMS))
     print("  새 회차(연재): 일주일에 " + " · ".join("%s %d화" % (label, info["weekly_new"][p]) for p, label in PLATFORMS))
