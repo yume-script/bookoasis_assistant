@@ -1,4 +1,5 @@
 # cp docker-compose.example.yml docker-compose.yml 후 경로를 맞춘다 (README "설치 (도커)" 참고).
+# ★★★ 도커 설치는 절대로 권장하지 않습니다 - README "설치 (서버에 직접)"를 쓰세요. 이 파일은 참고용 ★★★
 # 중요: 저장 경로·감시할 마운트는 BookOasis 컨테이너와 "같은 경로"로 마운트한다.
 #       (받은 파일 경로를 BookOasis 보관함 경로와 그대로 비교하기 때문)
 services:

@@ -66,6 +66,11 @@ journalctl -u bookoasis_assistant -n 30 --no-pager
 ```
 
 ## 설치 (도커)
+> ★★★ **도커 설치는 절대로 권장하지 않습니다.** ★★★
+> 가능하면 위의 **"설치 (서버에 직접)"**(venv + systemd)로 설치하세요. 도커에서는 저장 경로를 BookOasis와 같은 경로로 맞춰야 하고,
+> rclone 마운트 전파(`:rslave`), 컨테이너 안 `127.0.0.1` 문제, 파일 소유자(root), 업데이트할 때마다 이미지 재빌드 등
+> 막히는 곳이 많습니다. 아래 방법은 도커만 쓸 수 있는 환경을 위한 참고용입니다.
+
 ### 1. 준비
 ```bash
 git clone https://github.com/yume-script/bookoasis_assistant.git /opt/bookoasis_assistant
