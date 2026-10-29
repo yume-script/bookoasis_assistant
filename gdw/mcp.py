@@ -89,6 +89,15 @@ def _tools(mods, svc):
                       "limit": {"type": "integer", "minimum": 1, "maximum": 300, "default": 50}}), READ),
             ("wtm_history", "다운로드 이력 (최신순).",
              _schema({"query": {"type": "string"}, "limit": {"type": "integer", "minimum": 1, "maximum": 500, "default": 50}}), READ),
+            ("wtm_title_report", "작품 하나의 다운로드 현황과 앞으로의 일정 보고서 (카카오·네이버에 요청하지 않음, 저장된 정보로 계산). "
+                                 "연재 요일·완결 여부, 마지막으로 받은 회차와 결과, 다음 자동 확인(전체 실행) 시각들, "
+                                 "기다무 주기와 계정별 다음 대여권 사용 시각·대기 순번, 최근 다운로드 이력과 로그. "
+                                 "'○○ 몇 화까지 받았어?', '새 회차 언제 받아?', '왜 안 받아져?' 같은 질문에 쓴다. "
+                                 "query는 작품 이름 일부 또는 작품 번호(titleId). 이름이 겹치면 구독 중인 것을 먼저 본다.",
+             _schema({"query": {"type": "string"}, "days": {"type": "integer", "minimum": 1, "maximum": 14, "default": 3}},
+                     ["query"]), READ),
+            ("wtm_forecast", "앞으로 며칠 동안 날마다 받을 회차 수·용량 예측과 최근 날짜별 받은 양 (네이버웹툰/카카오웹툰/카카오웹소설).",
+             _schema({"days": {"type": "integer", "minimum": 1, "maximum": 90, "default": 14}}), READ),
             ("wtm_set_subscription", "작품 구독 상태 바꾸기.",
              _schema({"titleId": {"type": "string"}, "platform": platform,
                       "state": {"type": "string", "enum": ["subscribe", "unsubscribe", "exclude", "restore"]}},
@@ -199,6 +208,25 @@ def _call(name, args, mods, svc):
         if name == "wtm_history":
             limit = min(500, max(1, int(args.get("limit") or 50)))
             return ss.load_history(limit=limit, query=(args.get("query") or None))
+        if name == "wtm_title_report":   # python3 -m wtm.explain 과 같은 내용
+            from wtm import explain
+            query = str(args.get("query") or "").strip()
+            if not query:
+                raise ToolError("query(작품 이름 또는 번호)가 필요합니다.")
+            lines = []
+            explain.explain(query, days=min(14, max(1, int(args.get("days") or 3))), out=lines.append)
+            return "\n".join(str(x) for x in lines)
+        if name == "wtm_forecast":       # python3 -m wtm.download_stats --forecast 와 같은 내용 + 최근 기록
+            import contextlib
+            import io
+            from wtm import download_stats
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                print("■ 최근 7일 받은 양")
+                download_stats._print(download_stats.load(7))
+                print()
+                download_stats._print_forecast(min(90, max(1, int(args.get("days") or 14))))
+            return buf.getvalue()
         payload = {"titleId": str(args.get("titleId") or ""), "platform": args.get("platform") or "naver"}
         known = ss.get_kakao_title(payload["titleId"]) if payload["platform"] == "kakao" else ss.get_title(payload["titleId"])
         if not known:  # 화면 버튼과 달리 아무 ID나 올 수 있으니, 없는 작품이 새로 생기지 않게 먼저 확인
@@ -254,7 +282,8 @@ def _handle_one(msg, mods, svc, version):
         except Exception as error:  # 도구 하나의 오류가 서버를 멈추지 않게
             log.exception("MCP 도구 실패: %s", name)
             result, is_error = f"{type(error).__name__}: {error}", True
-        if not is_error and name not in ("gdw_status", "gdw_events", "gdw_log", "gdw_schedules", "wtm_status", "wtm_titles", "wtm_history"):
+        if not is_error and name not in ("gdw_status", "gdw_events", "gdw_log", "gdw_schedules", "wtm_status", "wtm_titles",
+                                         "wtm_history", "wtm_title_report", "wtm_forecast"):
             log.info("MCP 도구 실행: %s %s", name, json.dumps(args, ensure_ascii=False)[:200])
         return {"jsonrpc": "2.0", "id": rid, "result": {"content": [{"type": "text", "text": _text(result)}], "isError": is_error}}
     return _error(rid, -32601, f"Method not found: {method}")

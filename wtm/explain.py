@@ -34,6 +34,19 @@ def _t(ts):
     return time.strftime("%m-%d", lt) + "(" + "월화수목금토일"[lt.tm_wday] + ") " + time.strftime("%H:%M", lt)
 
 
+def _next_weekday(weekdays, now):
+    """연재 요일 목록 → 다음 연재일 'MM-DD(요일)' (오늘이 연재일이면 오늘). 매일+면 오늘"""
+    order = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
+    if "dailyPlus" in weekdays:
+        return _t(now)[:8]
+    days = [order.index(w) for w in weekdays if w in order]
+    if not days:
+        return ""
+    today = time.localtime(now).tm_wday
+    ahead = min((d - today) % 7 for d in days)
+    return _t(now + ahead * 86400)[:8]
+
+
 def _period_label(minutes):
     m = int(minutes or 1440)
     return "%d일" % (m // 1440) if m % 1440 == 0 else ("%d시간" % (m // 60) if m % 60 == 0 else "%d분" % m)
@@ -76,10 +89,19 @@ def explain(query, days=3, out=print):
     out("  연재 요일: %s / 구독: %s%s%s" % (
         ",".join(wds) or "없음", "예" if t.get("subscribed") else "아니오",
         " / 제외됨" if t.get("excluded") else "", " / 구독해제" if t.get("unsubscribed") else ""))
+    nxt = _next_weekday(t.get("weekdays") or [], now)
+    if t.get("status") == "완결":
+        out("  완결 작품 - 새 회차가 올라오지 않습니다.")
+    elif nxt:
+        out("  다음 연재일(요일 기준): %s - 그날(또는 다음 날까지) 전체 실행에서 새 회차를 확인합니다." % nxt)
     if platform == "kakao":
         out("  기다무: %s / 잠긴 회차 남음: %s" % (
             (_period_label(t.get("waitfree_period_min")) + " 기다무") if t.get("waitfree") else "아님",
             "예" if t.get("has_locked") else "아니오"))
+        if t.get("waitfree") and t.get("episode_count"):
+            left = int(t.get("episode_count") or 0) - kp.WAITFREE_LATEST_EXCLUDED - int(t.get("last_downloaded_no") or 0)
+            out("  전체 %s화 · 받은 마지막 %s화 · 기다무 대여권으로 열 수 있는 남은 회차 약 %d화 (최신 %d화는 대여권 불가)" % (
+                t.get("episode_count"), t.get("last_downloaded_no"), max(0, left), kp.WAITFREE_LATEST_EXCLUDED))
     out("  마지막으로 받은 회차: %s화 / 마지막 결과: %s (%s)" % (
         t.get("last_downloaded_no"), t.get("last_result") or "-", _t(t.get("last_result_at"))))
 
@@ -125,7 +147,7 @@ def explain(query, days=3, out=print):
 
     # ── 기다무 ──
     if platform == "kakao" and t.get("waitfree"):
-        out("\n[기다무 확인] 5분마다 · 기다무 대여권 자동 사용 %s" % ("켬" if cfg.get("KAKAO_USE_WAITFREE") else "꺼짐 → 기다무로는 받지 않음"))
+        out("\n[기다무 확인] 충전 1분 뒤에 확인 · 기다무 대여권 자동 사용 %s" % ("켬" if cfg.get("KAKAO_USE_WAITFREE") else "꺼짐 → 기다무로는 받지 않음"))
         accs = kp.accounts(cfg)
         if not accs:
             out("  카카오 로그인 쿠키가 없어 기다무 대여권을 쓸 수 없습니다.")
