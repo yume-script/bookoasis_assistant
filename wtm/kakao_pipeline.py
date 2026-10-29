@@ -649,6 +649,12 @@ def _night_ready(c, info):
     return max(c, info["next"])
 
 
+# 카카오는 최신 10화(무료 회차 포함)는 기다무 대여권으로 열 수 없다. 잠긴 회차가 그것뿐이면 대여권이 충전돼도
+# 쓸 데가 없으므로, 그런 작품은 기다무 주기(3시간 등)마다 보지 않고 하루 한 번만 다시 본다(waitfree_idle_until).
+# 그 사이 새 회차가 올라와 열 수 있는 회차가 생기면 전체 실행(연재 요일)이 쓰고 이 표시를 지운다.
+WAITFREE_LATEST_EXCLUDED = 10
+WAITFREE_IDLE_SEC = 24 * 3600
+
 # 충전 시각 '정각'에 쓰면 카카오 쪽 시계·처리 차이로 아직 충전 전이라고 거절되는 일이 있어, 충전 1분 뒤부터 쓴다
 WAITFREE_READY_GRACE = 60
 
@@ -728,9 +734,12 @@ def _waitfree_candidates(cfg):
         return [], {}
     from . import pipeline as _pl
     out = {}
+    now = time.time()
     for sid, t in ss.load_kakao_titles().items():
         if not (t.get("waitfree") and t.get("has_locked")) or t.get("excluded") or t.get("unsubscribed"):
             continue
+        if float(t.get("waitfree_idle_until") or 0) > now:
+            continue   # 남은 잠긴 회차가 최신 10화뿐(대여권으로 못 엶) - 하루 뒤 다시
         if not (t.get("subscribed") or t.get("purchased")) or (_is_novel(t) and not novel_enabled(cfg)):
             continue
         if adult_block_reason_any(cfg, t) or _pl.bl_blocked(cfg, t):
@@ -1408,9 +1417,9 @@ def download_series(cfg, session, sid, log=print, full=False, cancel_check=None,
                 embed_cover=bool(cfg.get("KAVITA_YAML_EMBED_COVER", True)),
                 log=log, platform=yaml_platform(t))
 
-    # 대여권으로 열 회차가 없으면(남은 잠긴 회차가 기다무 대상이 아님 - 최신 회차 등) 충전 주기 한 번만큼 쉬었다 본다.
-    # 예전엔 1시간 뒤 다시 봐서, 이런 작품이 하루 24번씩 기다무 확인 줄에 다시 서 다른 작품을 밀어냈다.
-    idle_patch = _ticket_patch(sid, t, account, time.time()) if res.get("waitfree_none") else {}
+    # 대여권으로 열 회차가 없으면(남은 잠긴 회차가 최신 10화 등 기다무 대상이 아님) 주기와 상관없이 하루 뒤에 다시 본다.
+    # 대여권 시각은 건드리지 않는다(실제 충전 시각 그대로 - 열 회차가 생기면 바로 씀).
+    idle_patch = {"waitfree_idle_until": time.time() + WAITFREE_IDLE_SEC} if res.get("waitfree_none") else {}
     if not targets and extra:
         # 추가 계정으로도 열 회차가 없음 - 계정 1의 결과 문구는 그대로 둔다
         ss.upsert_kakao_title({sid: dict(idle_patch, **_locked_patch(t, locked_eps, only, incremental))})
@@ -1631,12 +1640,13 @@ def download_series(cfg, session, sid, log=print, full=False, cancel_check=None,
         done_patch["checked_no"] = max_checked
     if res["waitfree_used"]:
         done_patch.update(_ticket_patch(sid, t, account, time.time()))
+        done_patch["waitfree_idle_until"] = 0
     elif res.get("waitfree_failed"):
         # 카카오가 거절(아직 충전 전 등) - 실제 충전 시각을 모르므로 최대 1시간 뒤 다시 본다
         done_patch.update(_ticket_patch(sid, t, account, _waitfree_backoff(t)))
     elif res.get("waitfree_none"):
-        # 대여권으로 열 회차가 없음 - 충전 주기 한 번 쉰다 (기록하지 않으면 기다무 확인이 같은 작품을 계속 다시 붙잡는다)
-        done_patch.update(_ticket_patch(sid, t, account, time.time()))
+        # 대여권으로 열 회차가 없음(최신 10화뿐 등) - 하루 뒤에 다시 본다 (기록하지 않으면 주기마다 다시 붙잡는다)
+        done_patch.update(idle_patch)
     if only is None and not res.get("capped") and not res["cancelled"] and not res["auth_expired"]:
         # 이번에 끝까지 확인했으니, 새 회차가 올라오기 전까지는 다시 안 봐도 됨
         done_patch["checked_slide_dt"] = t.get("last_slide_added_dt") or ""

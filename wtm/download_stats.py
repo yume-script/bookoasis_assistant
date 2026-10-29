@@ -201,8 +201,9 @@ def forecast(days=30, now=None):
     wf = []   # (플랫폼, 하루 장수, 남은 회차, 따라잡은 뒤 하루 새 회차)
     for sid, t in cands.items():
         per_day = n_acc * tickets_per_day(int(t.get("waitfree_period_min") or 1440), delay)
-        left = max(0, int(t.get("episode_count") or 0) - int(t.get("last_downloaded_no") or 0))
-        wf.append(("kakao_novel" if kp._is_novel(t) else "kakao", per_day, left or 1, weekly_of(t) / 7.0))
+        left = max(0, int(t.get("episode_count") or 0) - kp.WAITFREE_LATEST_EXCLUDED  # 최신 10화는 대여권으로 못 엶
+                   - int(t.get("last_downloaded_no") or 0))
+        wf.append(("kakao_novel" if kp._is_novel(t) else "kakao", per_day, left, weekly_of(t) / 7.0))
     weekly = {"naver": 0.0, "kakao": 0.0, "kakao_novel": 0.0}
     for platform, titles in (("naver", ss.load_titles()), ("kakao", ss.load_kakao_titles())):
         for tid, t in titles.items():

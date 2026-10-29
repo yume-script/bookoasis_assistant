@@ -137,6 +137,9 @@ def explain(query, days=3, out=print):
             out("  계정%d: 마지막 사용(또는 확인) %s → %s" % (n, _t(used), state))
         if not t.get("has_locked"):
             out("  잠긴 회차가 없다고 기록돼 있어 기다무 확인 대상이 아닙니다 (새 회차가 잠긴 채 올라오면 다시 대상이 됨).")
+        elif float(t.get("waitfree_idle_until") or 0) > now:
+            out("  남은 잠긴 회차가 최신 %d화뿐이라(기다무 대여권으로 못 엶) %s까지 기다무 확인에서 쉽니다." % (
+                kp.WAITFREE_LATEST_EXCLUDED, _t(float(t["waitfree_idle_until"]))))
         elif cfg.get("KAKAO_USE_WAITFREE"):
             due = kp.waitfree_due_titles(cfg, now)
             if tid in due:

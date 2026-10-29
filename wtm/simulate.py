@@ -101,9 +101,12 @@ def simulate(cfg, hours=24, per_title=10.0, full_dur=None, now=None, pause_full=
     _nums, cands = kp._waitfree_candidates(cfg)
     st = {}
     for sid, t in cands.items():
-        left = max(0, int(t.get("episode_count") or 0) - int(t.get("last_downloaded_no") or 0))
+        left = max(0, int(t.get("episode_count") or 0) - kp.WAITFREE_LATEST_EXCLUDED  # 최신 10화는 대여권으로 못 엶
+                   - int(t.get("last_downloaded_no") or 0))
+        if left <= 0:
+            continue   # 남은 잠긴 회차가 최신 10화뿐 - 대여권을 쓸 데가 없음
         st[sid] = {"title": t.get("title") or sid, "period": kp.waitfree_period(t),
-                   "tick": {n: kp._ticket_at(t, n) for n in nums}, "left": left or 1}
+                   "tick": {n: kp._ticket_at(t, n) for n in nums}, "left": left}
     # 전체 실행 구간 (그동안 기다무 확인은 작업 잠금을 못 잡아 쉰다)
     interval = max(10.0, float(cfg.get("INTERVAL_MINUTES") or 240)) * 60
     blocks = []
