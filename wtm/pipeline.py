@@ -717,9 +717,11 @@ def run_download_cycle(cfg, log=print):
         "요일 %s + 매일+ + 첫 다운로드" % ",".join(sorted(target_weekdays()))))
 
     download_root = cfg.get("DOWNLOAD_ROOT") or ss.DOWNLOAD_DEFAULT_DIR
-    temp_root = cfg.get("TEMP_DOWNLOAD_ROOT") or ss.TMP_DOWNLOAD_DEFAULT_DIR
+    temp_root = ss.temp_root(cfg)
     try:
         downloader.flush_outbox(temp_root, log=log)   # 지난번에 못 옮긴 zip 먼저 정리
+        for old_root in ss.temp_roots_old(cfg):         # 임시 경로를 바꾸기 전에 남은 것도
+            downloader.flush_outbox(old_root, log=log)
     except Exception as e:  # noqa: BLE001
         log("남은 zip 정리 실패(무시): %s" % e)
     if download_root == ss.DOWNLOAD_DEFAULT_DIR:

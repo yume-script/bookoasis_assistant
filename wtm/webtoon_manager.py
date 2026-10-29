@@ -521,7 +521,7 @@ class WebtoonManagerMetadataProvider(BaseMetadataProvider):
             "repo_url": REPO_URL,
             "config_public": {
                 "DOWNLOAD_ROOT": cfg.get("DOWNLOAD_ROOT", ""),
-                "TEMP_DOWNLOAD_ROOT": cfg.get("TEMP_DOWNLOAD_ROOT") or ss.TMP_DOWNLOAD_DEFAULT_DIR,
+                "TEMP_DOWNLOAD_ROOT": ss.temp_root(cfg),
                 "ENABLE_SCHEDULER": bool(cfg.get("ENABLE_SCHEDULER")),
                 "INTERVAL_MINUTES": cfg.get("INTERVAL_MINUTES"),
                 "FINISHED_SCAN_HOUR": cfg.get("FINISHED_SCAN_HOUR"),
@@ -1360,7 +1360,7 @@ class WebtoonManagerMetadataProvider(BaseMetadataProvider):
                 try:
                     ok, skipped, cnt, err = dl.download_episode(
                         session, cfg.get("DOWNLOAD_ROOT") or ss.DOWNLOAD_DEFAULT_DIR,
-                        cfg.get("TEMP_DOWNLOAD_ROOT") or ss.TMP_DOWNLOAD_DEFAULT_DIR,
+                        ss.temp_root(cfg),
                         title, title_id, no,
                         image_zero_fill=int(cfg.get("IMAGE_ZERO_FILL", 4)),
                         folder_zero_fill=int(cfg.get("FOLDER_ZERO_FILL", 4)),
@@ -1381,7 +1381,7 @@ class WebtoonManagerMetadataProvider(BaseMetadataProvider):
                         # compress_episode() 자체가 이미 압축돼 있으면 스킵함.)
                         c_ok, c_path, c_msg = dl.compress_episode(
                             cfg.get("DOWNLOAD_ROOT") or ss.DOWNLOAD_DEFAULT_DIR,
-                            cfg.get("TEMP_DOWNLOAD_ROOT") or ss.TMP_DOWNLOAD_DEFAULT_DIR,
+                            ss.temp_root(cfg),
                             title, title_id, no,
                             folder_zero_fill=int(cfg.get("FOLDER_ZERO_FILL", 4)),
                             log=ss.append_log,
@@ -1506,7 +1506,7 @@ class WebtoonManagerMetadataProvider(BaseMetadataProvider):
                 try:
                     ok, skipped, cnt, err = dl.download_episode(
                         session, cfg.get("DOWNLOAD_ROOT") or ss.DOWNLOAD_DEFAULT_DIR,
-                        cfg.get("TEMP_DOWNLOAD_ROOT") or ss.TMP_DOWNLOAD_DEFAULT_DIR,
+                        ss.temp_root(cfg),
                         title_name, title_id, ep["no"],
                         image_zero_fill=int(cfg.get("IMAGE_ZERO_FILL", 4)),
                         folder_zero_fill=int(cfg.get("FOLDER_ZERO_FILL", 4)),
@@ -1544,7 +1544,7 @@ class WebtoonManagerMetadataProvider(BaseMetadataProvider):
                         # 이미지 다운로드(1단계)와 분리된 2단계 - 별도로 압축한다.
                         c_ok, c_path, c_msg = dl.compress_episode(
                             cfg.get("DOWNLOAD_ROOT") or ss.DOWNLOAD_DEFAULT_DIR,
-                            cfg.get("TEMP_DOWNLOAD_ROOT") or ss.TMP_DOWNLOAD_DEFAULT_DIR,
+                            ss.temp_root(cfg),
                             title_name, title_id, ep["no"],
                             folder_zero_fill=int(cfg.get("FOLDER_ZERO_FILL", 4)),
                             log=ss.append_log,

@@ -86,7 +86,7 @@ def load_cfg(db_type, args):
         cfg["DELAY_SECONDS"] = args.delay
 
     cfg.setdefault("DOWNLOAD_ROOT", ss.DOWNLOAD_DEFAULT_DIR)
-    cfg.setdefault("TEMP_DOWNLOAD_ROOT", ss.TMP_DOWNLOAD_DEFAULT_DIR)
+    cfg["TEMP_DOWNLOAD_ROOT"] = ss.temp_root(cfg)
     return cfg
 
 

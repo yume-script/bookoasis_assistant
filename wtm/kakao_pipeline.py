@@ -71,8 +71,7 @@ def yaml_platform(t):
 
 
 def kakao_temp_root(cfg):
-    base = (cfg.get("TEMP_DOWNLOAD_ROOT") or "").strip() or ss.TMP_DOWNLOAD_DEFAULT_DIR
-    return os.path.join(base, "kakao")
+    return os.path.join(ss.temp_root(cfg), "kakao")
 
 
 def build_session_from_cfg(cfg):
@@ -356,18 +355,18 @@ def _download_novel_episode(cfg, session, root, title, sid, ep, t, force=False, 
         if got:
             mt = {".png": "image/png", ".gif": "image/gif", ".webp": "image/webp"}.get(got[1], "image/jpeg")
             cover = (got[0], mt)
-    os.makedirs(series_dir, exist_ok=True)
     ep_title = ep.get("subtitle") or ("%s %d화" % (title, no))
+    # 웹툰 zip처럼 임시 작업 경로(_outbox)에서 만든 뒤 라이브러리로 옮긴다 - 라이브러리가 원격 마운트여도
+    # 만드는 도중의 파일이 보이지 않고, 마운트에는 다 만든 파일을 한 번에 쓴다 (옮기며 드라이브 변경 감시에도 알림)
+    box = os.path.join(kakao_temp_root(cfg), "_outbox", str(sid))
+    os.makedirs(box, exist_ok=True)
+    local = os.path.join(box, os.path.basename(path))
     novel_epub.build_epub(
-        path, ep_title, title, t.get("author") or "", data["sections"], data["images"],
+        local, ep_title, title, t.get("author") or "", data["sections"], data["images"],
         css=data["css"], cover=cover, identifier="kakaopage:%s:%s" % (sid, ep["product_id"]),
         episode_no=no)
+    path = downloader._queue_move(local, series_dir, os.path.basename(path), log=log, wait=True)
     kavita_yaml.remember_epub_words(path, data["words"])
-    try:  # 독립형: 드라이브 변경 감시에 바로 반영 요청
-        from .host import file_ready
-        file_ready(path)
-    except Exception:  # noqa: BLE001
-        pass
     time.sleep(max(0.0, float(_num(cfg, "DELAY_SECONDS", 1.0))))
     return True, False, data["words"], None
 
@@ -1785,6 +1784,8 @@ def run_kakao_cycle(cfg, log=print, manage_job=False):
              "auth_expired": False, "cancelled": False}
     try:
         downloader.flush_outbox(kakao_temp_root(cfg), log=log)
+        for old_root in ss.temp_roots_old(cfg):   # 임시 경로를 바꾸기 전에 남은 것도
+            downloader.flush_outbox(os.path.join(old_root, "kakao"), log=log)
     except Exception as e:  # noqa: BLE001
         log("카카오: 남은 zip 정리 실패(무시): %s" % e)
     if not accounts(cfg):

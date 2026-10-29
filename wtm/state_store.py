@@ -24,6 +24,22 @@ DOWNLOAD_DEFAULT_DIR = os.path.join(DATA_DIR, "downloads")
 # 상태의 파일들이 BookOasis 스캐너가 보는 실제 라이브러리 경로에 절대 노출되지
 # 않게 한다. 플러그인 데이터 폴더 밑이라 항상 로컬 디스크에 있다고 가정한다.
 TMP_DOWNLOAD_DEFAULT_DIR = os.path.join(DATA_DIR, "tmp_downloads")
+
+
+def temp_root(cfg):
+    """설정 TEMP_DOWNLOAD_ROOT(.env WTM_TEMP_DOWNLOAD_ROOT) - 비었으면 기본값. 앞뒤 공백·~·상대 경로를 정리한다."""
+    v = str((cfg or {}).get("TEMP_DOWNLOAD_ROOT") or "").strip().strip('"').strip("'")
+    if not v:
+        return TMP_DOWNLOAD_DEFAULT_DIR
+    v = os.path.expanduser(v)
+    if not os.path.isabs(v):   # 상대 경로는 실행 위치가 아니라 설치 폴더 기준 (systemd·docker에서 같은 곳)
+        v = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), v)
+    return os.path.normpath(v)
+
+
+def temp_roots_old(cfg):
+    """설정을 바꾸기 전 기본 임시 경로 - 거기 남은 zip도 옮겨 주려고 (지금 경로와 같으면 빈 목록)"""
+    return [] if temp_root(cfg) == TMP_DOWNLOAD_DEFAULT_DIR else [TMP_DOWNLOAD_DEFAULT_DIR]
 TITLES_PATH = os.path.join(DATA_DIR, "titles.json")
 AUTHORS_TAGS_PATH = os.path.join(DATA_DIR, "authors_tags.json")
 HISTORY_PATH = os.path.join(DATA_DIR, "history.jsonl")
