@@ -1,0 +1,11 @@
+# 설정·기록·쿠키는 이미지에 넣지 않는다 (볼륨으로 마운트)
+.env
+.env.*
+!env.example
+data/
+venv/
+.venv/
+__pycache__/
+*.pyc
+.git/
+docker-compose.yml

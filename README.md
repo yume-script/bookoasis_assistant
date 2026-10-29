@@ -66,14 +66,76 @@ journalctl -u bookoasis_assistant -n 30 --no-pager
 ```
 
 ## 설치 (도커)
+### 1. 준비
 ```bash
-cp env.example .env                       # WEB_USER/WEB_PASSWORD(첫 관리자), RCLONE_CONFIG=/config/rclone/rclone.conf 등
-cp docker-compose.example.yml docker-compose.yml   # 마운트 경로를 BookOasis와 같게
-docker compose up -d --build
+git clone https://github.com/yume-script/bookoasis_assistant.git /opt/bookoasis_assistant
+cd /opt/bookoasis_assistant
+cp env.example .env && chmod 600 .env
+cp docker-compose.example.yml docker-compose.yml
+mkdir -p data /opt/wtm_tmp
 ```
-- `.env`는 `env_file`이 아니라 **파일로 마운트**합니다. 화면에서 실행 환경을 저장하면 이 파일에 씁니다(같은 inode에 제자리 쓰기라 파일 단위 마운트여도 됨).
-- compose의 `environment:`에 적은 키는 `.env`보다 우선합니다. 화면에서 바꿀 값(RCLONE_*, BOOKOASIS_URL, WEBHOOK_TOKEN, AUTO_START)은 적지 마세요.
-- rclone.conf는 파일이 아니라 **디렉터리째** 마운트하세요 (파일 단위 바인드 마운트는 rclone이 토큰을 저장할 때 `device or resource busy`).
+
+### 2. `.env` 채우기 (경로는 모두 **컨테이너 안** 경로)
+```ini
+WTM_ENABLED=true
+GDW_ENABLED=false                 # 드라이브 변경 감시를 안 쓰면 false (쓰면 아래 "드라이브 변경 감시" 참고)
+WEB_USER=admin
+WEB_PASSWORD=처음비밀번호          # 0.0.0.0으로 열기 때문에 계정이 없으면 시작하지 않음
+WTM_DOWNLOAD_ROOT=/mnt/gds2/webtoon/naver
+WTM_KAKAO_DOWNLOAD_ROOT=/mnt/gds2/webtoon/kakao
+WTM_KAKAO_NOVEL_DOWNLOAD_ROOT=/mnt/gds2/novel/kakao
+WTM_TEMP_DOWNLOAD_ROOT=/wtm_tmp   # 로컬 디스크를 마운트한 곳
+BOOKOASIS_URL=http://bookoasis:5930   # 받은 회차 바로 스캔용 (같은 도커 네트워크일 때)
+WEBHOOK_TOKEN=BookOasis와_같은_값
+```
+저장 경로·임시 폴더·쿠키는 화면 [웹툰 다운로더 > 설정]에서 넣어도 이 `.env`에 써집니다.
+
+### 3. `docker-compose.yml`의 볼륨 맞추기
+| 컨테이너 경로 | 무엇 | 주의 |
+|---|---|---|
+| `/data` | 기록·설정(`settings.json`)·쿠키(`webtoon/cookies/`)·로그 | 지우면 구독·이력·쿠키가 모두 사라짐. 백업 대상 |
+| `/app/.env` | 설정 파일 | `env_file:`이 아니라 **파일로 마운트**(화면에서 저장하면 이 파일에 씀) |
+| 저장 경로 (`/mnt/gds2` 등) | 웹툰·웹소설 라이브러리 | **BookOasis 컨테이너와 같은 대상 경로**로. rclone 마운트면 `:rslave` |
+| `/wtm_tmp` | 임시 작업 폴더(`WTM_TEMP_DOWNLOAD_ROOT`) | **로컬 디스크**. 비우면 `/data/webtoon/tmp_downloads` |
+| `/config/rclone` | rclone.conf (드라이브 변경 감시를 쓸 때만) | 파일이 아니라 **디렉터리째** |
+
+### 4. 실행·확인
+```bash
+docker compose up -d --build
+docker compose logs -f --tail 50                      # 시작 로그
+docker exec bookoasis_assistant python app.py --check # 설정 점검
+```
+관리 화면: `http://서버주소:5931/`
+
+### 업데이트
+화면 왼쪽 위 배지가 빨갛게 바뀌면 새 버전이 있다는 뜻입니다. 도커는 `git pull` 후 **이미지를 다시 빌드**해야 반영됩니다.
+```bash
+cd /opt/bookoasis_assistant && git pull && docker compose up -d --build
+```
+`/data`와 `.env`는 볼륨이라 그대로 이어집니다.
+
+### 명령 도구는 `docker exec`로
+README의 `python3 -m wtm.…` 명령은 컨테이너 안에서 실행합니다.
+```bash
+docker exec -it bookoasis_assistant python -m wtm.explain 곤륜객잔
+docker exec -it bookoasis_assistant python -m wtm.today_gift --apply
+docker exec -it bookoasis_assistant python -m wtm.download_stats --forecast
+```
+작품 기록을 직접 고치는 도구(`wtm.shift_waitfree --apply`)는 작업 프로세스를 멈춘 상태에서 해야 하므로, 화면에서 웹툰 작업을 멈추거나
+`docker compose stop` 후 `docker compose run --rm bookoasis_assistant python -m wtm.shift_waitfree --spread 1 11 --apply`로 실행하세요.
+
+### 자주 막히는 곳
+- **BookOasis에 회차가 안 잡힘**: 저장 경로가 두 컨테이너에서 같은 경로로 보이는지 확인하세요
+  (`docker exec bookoasis_assistant ls /mnt/gds2/webtoon` 과 BookOasis 컨테이너의 같은 명령).
+- **rclone 마운트가 컨테이너 안에서 비어 보임**: 마운트보다 컨테이너가 먼저 떴습니다. 볼륨에 `:rslave`를 붙이고 컨테이너를 다시 시작하세요.
+- **시간이 9시간 어긋남**(기다무 충전 시각·새벽 시간대): `TZ: Asia/Seoul`을 지우지 마세요.
+- **받은 파일이 root 소유**: compose의 `user: "1000:1000"`을 켜고 `data/`, `.env`, 저장 경로·임시 폴더의 소유자를 같은 사용자로 맞추세요.
+- **드라이브 변경 감시**: 컨테이너 안의 `127.0.0.1`은 호스트가 아닙니다. 호스트의 rclone rc(`--rc-addr 127.0.0.1:5572`)나
+  BookOasis에 붙어야 하면 `network_mode: host`가 가장 간단합니다(그때 `ports:`는 지움). 아니면 rc를 `--rc-addr 0.0.0.0:5572`처럼
+  열고 감시 설정의 RC 주소를 `http://host.docker.internal:5572`(compose에 `extra_hosts: ["host.docker.internal:host-gateway"]`)로 적으세요.
+- compose의 `environment:`에 적은 키는 `.env`보다 우선합니다. 화면에서 바꿀 값(RCLONE_*, BOOKOASIS_URL, WEBHOOK_TOKEN, AUTO_START,
+  WTM_* 경로)은 거기 적지 마세요.
+- `.env`, `data/`는 `.dockerignore`로 이미지에 들어가지 않습니다(쿠키·비밀번호가 이미지에 남지 않게).
 
 ## 설치 (윈도우)
 웹툰 다운로더와 미니게임은 윈도우에서도 돕니다. **드라이브 변경 감시는 리눅스 전용**이라(리눅스 경로·inotify·/proc 사용)
