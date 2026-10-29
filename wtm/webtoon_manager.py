@@ -110,6 +110,7 @@ DEFAULTS = {
     "ALLOW_BL": False,
     "KAKAO_NOVEL_ENABLE": False,
     "KAKAO_SYNC_PURCHASED": True,
+    "KAKAO_TODAY_GIFT": True,
     "KAKAO_NOVEL_DOWNLOAD_ROOT": "",
     "ALLOW_GL": False,
     "HIDE_BL_GL": False,
@@ -278,6 +279,9 @@ class WebtoonManagerMetadataProvider(BaseMetadataProvider):
                  "구독 전으로 되돌립니다(직접 구독한 작품은 그대로 받음)."},
         {"key": "KAKAO_SYNC_PURCHASED", "label": "구매 작품 자동 동기화", "type": "checkbox", "default": True,
          "hint": "하루 1번 보관함 > 구매 목록의 작품을 등록하고 구매·대여 회차를 받습니다(로그인 쿠키 필요)."},
+        {"key": "KAKAO_TODAY_GIFT", "label": "오늘의 선물 대여권 매일 받기", "type": "checkbox", "default": True,
+         "hint": "하루 1번 page.kakao.com/today-gift 에서 받을 수 있는 대여권을 계정마다 받습니다(목록에 있는 작품 먼저). "
+                 "받은 대여권은 '보유 대여권 자동 사용'을 켜면 다운로드에 씁니다. 직접: python3 -m wtm.today_gift"},
         {"key": "KAKAO_USE_WAITFREE", "label": "기다무 대여권 자동 사용", "type": "checkbox", "default": False,
          "hint": "작품당 실행 1회에 1장. 계정의 대여권이 실제로 소모됩니다(웹툰·웹소설 공통)."},
         {"key": "WAITFREE_CHECK_MINUTES", "label": "기다무 확인 최대 간격(분, 1~30)", "type": "number", "default": 5,
@@ -1681,7 +1685,7 @@ class WebtoonManagerMetadataProvider(BaseMetadataProvider):
         ("kakao", "다운로드", ("KAKAO_DOWNLOAD_ROOT", "KAKAO_DOWNLOAD_WAITFREE", "KAKAO_SYNC_PURCHASED")),
         ("kakao", "대여권(웹툰·웹소설 공통)", ("KAKAO_USE_WAITFREE", "WAITFREE_CHECK_MINUTES", "WAITFREE_SPREAD_ENABLE", "WAITFREE_SPREAD_START",
                                             "WAITFREE_SPREAD_END", "WAITFREE_NIGHT_ENABLE",
-                                            "WAITFREE_NIGHT_START", "KAKAO_USE_OWNED_TICKETS",
+                                            "WAITFREE_NIGHT_START", "KAKAO_TODAY_GIFT", "KAKAO_USE_OWNED_TICKETS",
                                             "KAKAO_USE_PAID_TICKETS")),
         ("kakao", "중복 확인", ("COMPARE_FOLDERS_KAKAO", "KAKAO_DOWNLOAD_OWNED")),
 

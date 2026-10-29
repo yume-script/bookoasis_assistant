@@ -562,6 +562,9 @@ def _needs_check(cfg, t, now=None):
     if (cfg.get("KAKAO_USE_OWNED_TICKETS") and t.get("has_locked")
             and now - float(t.get("last_checked_at") or 0) >= 24 * 3600):
         return True   # 보유 대여권이 새로 생겼을 수 있으니 하루 1번은 확인
+    if (cfg.get("KAKAO_USE_OWNED_TICKETS") and t.get("has_locked")
+            and float(t.get("gift_at") or 0) > float(t.get("last_checked_at") or 0)):
+        return True   # 오늘의 선물로 대여권을 받았으면 바로 사용
     # 기다무 대여권은 여기서 보지 않는다 - 5분마다 도는 기다무 확인(run_waitfree_tick)이 충전된 작품만 받는다
     return False
 
@@ -2005,6 +2008,89 @@ def sync_purchased(cfg, log=print, manage_job=False):
     log(msg)
     if manage_job:
         ss.save_job_state({"running": False, "stage": "done", "finished_at": time.time(), "message": msg})
+    return res
+
+
+def today_gift_due(cfg, now=None):
+    """오늘의 선물을 오늘 아직 안 받았는지 (하루 1번, 날짜 기준)"""
+    if not cfg.get("KAKAO_TODAY_GIFT", True) or not accounts(cfg):
+        return False
+    return ss.load_job_state().get("last_kakao_gift_day") != time.strftime("%Y-%m-%d", time.localtime(now))
+
+
+def claim_today_gifts(cfg, log=print, dry_run=False):
+    """카카오페이지 '오늘의 선물'(page.kakao.com/today-gift)에서 오늘 받을 수 있는 대여권을 계정마다 받는다.
+    보통 목록 전체(하루 백여 작품, 수백 장)를 받을 수 있다. 혹시 장수가 모자랄 때를 위해 목록에 있는 작품
+    (잠긴 회차가 남은 것 먼저)부터 받는다.
+    받은 대여권(오늘의 선물 대여권, 기한 있음)은 '보유 대여권 자동 사용'이 켜져 있으면 다음 사이클에서 쓴다.
+    dry_run이면 목록만 보여 주고 받지 않는다."""
+    res = {"received": 0, "tracked": 0, "auth_expired": False}
+    if not accounts(cfg):
+        log("오늘의 선물: 로그인 쿠키가 없어 건너뜀")
+        return res
+    titles = ss.load_kakao_titles()
+    now = time.time()
+    session = build_session_from_cfg(cfg)
+    for n, cookie in accounts(cfg):
+        tag = log if n == 1 else _prefixed(log, n)
+        try:
+            s = session if n == 1 else account_session(cfg, n, cookie, log=log)
+            if n == 1:
+                kakao_api.refresh_token(s, log=log)
+            result = kakao_api.fetch_today_gifts(s)
+            left = int(result.get("num_receivable_ticket") or 0)
+            items = kakao_api.today_gift_items(result)
+            todo = [g for g in items if not g["received"]]
+
+            def prio(g):
+                t = titles.get(g["series_id"]) or {}
+                return (0 if t and t.get("has_locked") else 1 if t else 2)
+            todo.sort(key=prio)
+            tag("오늘의 선물: 작품 %d개, 아직 안 받은 것 %d개, 오늘 더 받을 수 있는 대여권 %d장" % (
+                len(items), len(todo), left))
+            if not items and result:
+                tag("오늘의 선물 응답(확인용): %s" % json.dumps(result, ensure_ascii=False)[:400])
+            if dry_run:
+                for g in todo[:30]:
+                    tag("  %s%s (%d장)" % (g["title"] or g["series_id"],
+                                           " [목록에 있음]" if g["series_id"] in titles else "", g["count"]))
+                continue
+            got, fails = 0, 0
+            for g in todo:
+                if left <= 0 or fails >= 5:
+                    break
+                code, msg = kakao_api.receive_today_gift(s, g["uid"], g["series_id"], helix=g["helix"])
+                if code == 0:
+                    got += 1
+                    left -= g["count"]
+                    res["received"] += g["count"]
+                    if g["series_id"] in titles:
+                        res["tracked"] += 1
+                        ss.upsert_kakao_title({g["series_id"]: {"gift_at": now}})
+                    tag("오늘의 선물 받음: %s (%d장)" % (g["title"] or g["series_id"], g["count"]))
+                elif code == kakao_api.GIFT_ALREADY_RECEIVED:
+                    continue
+                elif code == kakao_api.GIFT_NOT_TARGET:
+                    tag("오늘의 선물: 받을 수 없는 계정 - %s" % msg.strip())
+                    break
+                else:
+                    fails += 1
+                    tag("오늘의 선물 받기 실패: %s - %s %s" % (g["title"] or g["series_id"], code, msg.strip()))
+                time.sleep(0.5)
+            tag("오늘의 선물: %d개 작품에서 받음" % got)
+            if n > 1:
+                kakao_api.save_session_cookies(s)
+        except kakao_api.KakaoAuthExpired as e:
+            tag("오늘의 선물: %s" % e)
+            if n == 1:
+                res["auth_expired"] = True
+        except Exception as e:  # noqa: BLE001
+            tag("오늘의 선물 실패: %s" % e)
+    if not dry_run:
+        kakao_api.save_session_cookies(session)
+        ss.save_job_state({"last_kakao_gift_day": time.strftime("%Y-%m-%d")})
+        if res["received"] and not cfg.get("KAKAO_USE_OWNED_TICKETS"):
+            log("오늘의 선물: 받은 대여권을 자동으로 쓰려면 설정에서 '보유 대여권 자동 사용'을 켜세요")
     return res
 
 

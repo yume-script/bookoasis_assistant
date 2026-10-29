@@ -868,6 +868,77 @@ def use_waitfree_ticket(session, product_id):
     return not isinstance(body, dict) or body.get("result_code") in (None, 0, "0")
 
 
+# ---------------------------------------------------------------------------
+# 오늘의 선물 (page.kakao.com/today-gift) - 하루 1번 작품별 무료 대여권(RT06)을 받는다
+# ---------------------------------------------------------------------------
+TODAY_GIFT_LIST_API = BFF + "/api/gateway/api/v8/store/today_gift/list"
+TICKET_FREE_API = BFF + "/api/gateway/api/v1/ticket/free"
+GIFT_ALREADY_RECEIVED, GIFT_EXPIRED, GIFT_NOT_TARGET = -212, -210, -211
+
+
+def fetch_today_gifts(session, category_uid=0, subcategory_uid=None):
+    """오늘의 선물 목록 (웹 코드와 같은 요청). 반환 result dict:
+    num_receivable_ticket(오늘 더 받을 수 있는 장수), list / promotion_list / helix_list[].list(작품),
+    cat_opt_list(분류 탭). 작품마다 service_property.today_gift{today_gift_uid, is_received, ticket_count}
+    또는 helix_gift{helix_gift_uid, is_received}가 붙어 있다."""
+    params = {"category_uid": category_uid}
+    if subcategory_uid is not None:
+        params["subcategory_uid"] = subcategory_uid
+    r = session.get(TODAY_GIFT_LIST_API, params=params, timeout=session.request_timeout)
+    _check_auth(r, "오늘의 선물 목록")
+    if r.status_code >= 300:
+        raise RuntimeError("오늘의 선물 목록 조회 실패: %s" % _api_error_text(r)[1])
+    body = json.loads(r.content.decode("utf-8"))
+    if body.get("result_code") not in (None, 0, "0"):
+        key = str(body.get("message_key") or "")
+        if "authorize" in key or "login" in key:
+            raise KakaoAuthExpired("오늘의 선물: %s" % (body.get("message") or key))
+        raise RuntimeError("오늘의 선물 목록 조회 실패: %s (%s)" % (body.get("message") or "", key))
+    return body.get("result") or {}
+
+
+def today_gift_items(result):
+    """목록 응답에서 받을 수 있는 선물 [{uid, series_id, title, helix, received, count, age_grade}] (중복 제거)"""
+    out, seen = [], set()
+    groups = [result.get("promotion_list") or [], result.get("list") or []]
+    groups += [h.get("list") or [] for h in (result.get("helix_list") or []) if isinstance(h, dict)]
+    for group in groups:
+        for it in group:
+            if not isinstance(it, dict):
+                continue
+            sp = it.get("service_property") or {}
+            helix = isinstance(sp.get("helix_gift"), dict) and not isinstance(sp.get("today_gift"), dict)
+            g = sp.get("helix_gift") if helix else sp.get("today_gift")
+            if not isinstance(g, dict):
+                continue
+            uid = g.get("helix_gift_uid") if helix else g.get("today_gift_uid")
+            sid = it.get("series_id")
+            if not uid or not sid or (uid, sid) in seen:
+                continue
+            seen.add((uid, sid))
+            out.append({"uid": uid, "series_id": str(sid), "title": (it.get("title") or "").strip(),
+                        "helix": helix, "received": bool(g.get("is_received")),
+                        "count": int(g.get("ticket_count") or 1), "age_grade": it.get("age_grade")})
+    return out
+
+
+def receive_today_gift(session, uid, series_id, helix=False):
+    """선물 대여권 받기 (웹의 '선물받기' 버튼). 반환 (result_code, message) - 0이면 받음"""
+    r = session.post(TICKET_FREE_API, data={"uid": uid, "series_id": series_id,
+                                            "type": "HELIX_GIFT" if helix else "TODAY_GIFT"},
+                     timeout=session.request_timeout)
+    _check_auth(r, "오늘의 선물 받기")
+    try:
+        body = json.loads(r.content.decode("utf-8"))
+    except ValueError:
+        return (0 if r.status_code < 300 else r.status_code), (r.text or "")[:200]
+    code = body.get("result_code")
+    code = 0 if code in (None, "0") else int(code) if str(code).lstrip("-").isdigit() else code
+    if r.status_code >= 300 and code == 0:
+        code = r.status_code
+    return code, "%s %s" % (body.get("message") or "", body.get("message_key") or "")
+
+
 def is_logged_in(session):
     """(로그인 여부, 사유). 로그인이 안 된 쿠키도 무료 회차는 받아지므로, 대여권을 쓰기 전에 따로 확인한다."""
     try:

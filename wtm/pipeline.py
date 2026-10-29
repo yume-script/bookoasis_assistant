@@ -1063,6 +1063,11 @@ def run_full_cycle(cfg, log=print):
             def _kakao_run():
                 try:
                     from . import kakao_pipeline
+                    if kakao_pipeline.today_gift_due(cfg):   # 하루 1번, 받은 대여권을 이번 사이클에서 쓰도록 먼저
+                        try:
+                            kakao_pipeline.claim_today_gifts(cfg, log=log)
+                        except Exception as e:  # noqa: BLE001
+                            log("오늘의 선물 실패(무시): %s" % e)
                     kakao_box["result"] = kakao_pipeline.run_kakao_cycle(cfg, log=log)
                     # 하루 1번 구매 작품 동기화(로그인 쿠키가 있을 때)
                     if (kakao_pipeline.accounts(cfg) and _cfg_bool(cfg, "KAKAO_SYNC_PURCHASED", True)
