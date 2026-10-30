@@ -24,6 +24,7 @@
     'download': '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/>',
     'user-pen': '<circle cx="10" cy="7" r="4"/><path d="M4 21v-2a4 4 0 0 1 4-4h4"/><path d="M18.4 12.6a2 2 0 1 1 2.8 2.8L16 20.6l-3.6.9.9-3.6z"/>',
     'clock-rotate-left': '<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/>',
+    'chart-column': '<path d="M3 3v16a2 2 0 0 0 2 2h16"/><path d="M8 17v-4"/><path d="M13 17V8"/><path d="M18 17v-7"/>',
     'gear': '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>',
     'circle-question': '<circle cx="12" cy="12" r="10"/><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3"/><path d="M12 17h.01"/>',
     'angles-left': '<path d="m11 17-5-5 5-5"/><path d="m18 17-5-5 5-5"/>',
@@ -49,6 +50,7 @@
         { tab: 'manual', label: '선택 회차 다운로드', icon: 'download' },
         { tab: 'authors', label: '작가·태그 관리', icon: 'user-pen' },
         { tab: 'history', label: '다운로드 이력', icon: 'clock-rotate-left' },
+        { tab: 'hourly', label: '시간대별 다운로드', icon: 'chart-column' },
         { tab: 'settings', label: '설정', icon: 'gear' },
         { tab: 'help', label: '도움말', icon: 'circle-question' }
       ] },

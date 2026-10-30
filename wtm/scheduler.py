@@ -213,6 +213,13 @@ def _loop(get_cfg_func, run_full_cycle_func, run_finished_scan_func):
                         except Exception as e:  # noqa: BLE001
                             _ss.append_log("스케줄러(완결 스캔) 실행 오류: %s" % e)
 
+        # 시간대별 다운로드 예상: 날이 바뀌면(자정 직후) 그날 예상을 한 번 정해 둔다 (화면에서 실제와 비교)
+        try:
+            from . import hourly_stats
+            hourly_stats.ensure_plan(log=_ss.append_log)
+        except Exception as e:  # noqa: BLE001
+            _ss.append_log("시간대별 예상 계산 실패(무시): %s" % e)
+
         # 쿠키 자동 갱신은 예약 다운로드를 꺼 둬도 따로 돈다(기본 6시간마다).
         try:
             from . import cookie_keeper
