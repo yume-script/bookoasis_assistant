@@ -257,3 +257,5 @@ select.wtm-input option { color: #111; background: #fff; }
 .wtm-hm-even.good { color: #2fa36b; }
 .wtm-hm-even.mid { color: #c9a227; }
 .wtm-hm-even.bad { color: #d9822b; }
+.wtm-hm-backlog { color: #d9822b !important; opacity: 1 !important; }
+.wtm-hourly-summary { display: flex; flex-wrap: wrap; gap: 4px 18px; margin: 0 0 10px; font-size: 0.84rem; }

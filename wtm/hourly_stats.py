@@ -2,8 +2,8 @@
 """시간대별 다운로드 (화면 [웹툰 다운로더 > 시간대별 다운로드])
 
 플랫폼(네이버웹툰 / 카카오웹툰 / 카카오웹소설)과 기다무 주기(1시간·3시간·1일 기다무 …)별로 0~23시에
-- 예약: 지금 기록된 기다무 충전 일정으로 앞으로 7일 동안 대여권을 쓸 시각을 시간대별로 모아 하루 평균으로 나눈 것
-  (작품·계정마다 '마지막으로 쓴 시각 + 충전 주기 + 최근 평균 지연', 새벽 사용 설정·남은 잠긴 회차 반영).
+- 예약(배치): 지금 기록된 기다무 충전 시각(작품·계정마다 '마지막으로 쓴 시각 + 충전 주기')을 주기마다 이어 놓고
+  하루 0~23시에 몇 장씩 오는지 (처리 지연은 넣지 않음 - 언제 받아야 하는지). 충전됐는데 아직 못 쓴 대여권은 '밀림'으로 따로 센다.
   기다무가 아닌 것(새 회차·무료 등)은 예약이 없다.
 - 실제: 다운로드 이력(history.jsonl)에서 고른 기간(최근 24시간 / 오늘 / 어제 / 최근 7일 평균)에 받은 회차 수
 를 나란히 놓고, 하루에 고르게 펼쳐져 있는지(고른 정도: 24시간에 똑같이 나뉘면 100%)를 본다.
@@ -110,36 +110,33 @@ def _cfg():
 
 
 def schedule(cfg, now, days=SCHEDULE_DAYS):
-    """{(플랫폼, 'N시간 기다무'): [24]} 지금 충전 일정대로라면 하루에 시간대별로 쓸 대여권 수 (앞으로 days일 평균).
-    작품·계정마다 다음 사용 시각부터 (주기 + 평균 지연)마다 한 장, 남은 잠긴 회차(최신 10화 제외)까지만."""
-    from . import download_stats as ds, kakao_pipeline as kp
+    """지금 충전 기록대로의 '배치': 작품·계정마다 대여권이 충전되는 시각(마지막으로 쓴 시각 + 충전 주기 + 1분)을
+    주기마다 이어 놓고 하루(0~23시)에 몇 장씩 오는지 (days일에 걸쳐 센 하루 평균 - 2일·3일 기다무도 셀 수 있게).
+    처리 지연은 넣지 않는다 - 언제 받아야 하는지(배치)를 보려는 것. '1일 이상 기다무는 새벽부터'를 켰으면 그 시각으로.
+    반환 ({(플랫폼, 'N시간 기다무'): [24]}, {같은 키: 작품 수}, {같은 키: 지금 충전돼 기다리는 대여권 수})"""
+    from . import kakao_pipeline as kp
     nums, cands = kp._waitfree_candidates(cfg)
-    out, titles = {}, {}
+    out, titles, backlog = {}, {}, {}
     if not cands:
-        return out, titles
-    end = now + days * 86400
-    extra = max(0.0, ds.avg_waitfree_delay() - kp.WAITFREE_READY_GRACE)   # ready_at에 1분이 이미 들어 있다
+        return out, titles, backlog
     night = kp.night_info(cfg, now)
     for sid, t in cands.items():
         key = ("kakao_novel" if kp._is_novel(t) else "kakao", kp.waitfree_label(t))
         titles[key] = titles.get(key, 0) + 1
         period = kp.waitfree_period(t)
-        left = None
-        if t.get("episode_count"):
-            left = max(0, int(t["episode_count"]) - kp.WAITFREE_LATEST_EXCLUDED - int(t.get("last_downloaded_no") or 0))
-            if t.get("status") != "완결":
-                left += days   # 그사이 새 회차가 잠긴 채 올라오는 것 (연재작, 넉넉히 하루 1화)
-        evs = []
-        for n in nums:
-            r = max(now, kp.ready_at(cfg, t, n, now=now, night=night, nums=nums) + extra)
-            while r < end:
-                evs.append(r)
-                r += period + extra
-        evs.sort()
         arr = out.setdefault(key, [0.0] * 24)
-        for r in (evs if left is None else evs[:left]):
-            arr[time.localtime(r).tm_hour] += 1.0 / days
-    return {k: [round(v, 1) for v in arr] for k, arr in out.items()}, titles
+        for n in nums:
+            c = kp.ready_at(cfg, t, n, now=now, night=night, nums=nums)
+            if c <= now:
+                backlog[key] = backlog.get(key, 0) + 1   # 충전됐는데 아직 안 씀 (쓴 적 없는 계정 포함)
+            if kp._night_applies(cfg, t):   # 새벽 사용: 날마다 같은 시각에 (주기가 하루보다 길면 그만큼 나눠서)
+                arr[time.localtime(c).tm_hour] += 86400.0 / period
+                continue
+            r = c
+            while r < c + days * 86400:
+                arr[time.localtime(r).tm_hour] += 1.0 / days
+                r += period
+    return {k: [round(v, 1) for v in arr] for k, arr in out.items()}, titles, backlog
 
 
 def evenness(arr):
@@ -159,7 +156,7 @@ def report(rng="24h", now=None):
     now = now or time.time()
     rng = rng if rng in dict(RANGES) else "24h"
     cfg = _cfg()
-    sched, titles = schedule(cfg, now)
+    sched, titles, backlog = schedule(cfg, now)
     act = actual(rng, now)
     keys = set(sched) | set(act)
     for p, _l in PLATFORMS:   # 기다무 아닌 줄은 플랫폼마다 늘 보이게
@@ -173,6 +170,7 @@ def report(rng="24h", now=None):
         a = act.get(key) or [0] * 24
         st = round(sum(s), 1) if s else 0
         rows.append({"platform": p, "platform_label": dict(PLATFORMS)[p], "kind": kind, "titles": titles.get(key),
+                     "backlog": backlog.get(key, 0),
                      "period_min": _period_min(kind) if kind != NON_WAITFREE else None,
                      "schedule": s, "actual": a, "sched_total": st, "actual_total": round(sum(a), 1),
                      "sched_even": evenness(s) if s else None, "actual_even": evenness(a),

@@ -930,7 +930,8 @@
         html += '<div class="wtm-hm-platform">' + escapeHtml(r.platform_label) + '</div>' + hourHead;
       }
       var label = '<b>' + escapeHtml(r.kind) + '</b>' + (r.titles ? '<small>' + r.titles + '작품' + (r.ideal !== null && r.ideal !== undefined ?
-        ' · 이상 시간당 ' + n(r.ideal) : '') + '</small>' : '');
+        ' · 이상 시간당 ' + n(r.ideal) : '') + '</small>' : '') +
+        (r.backlog ? '<small class="wtm-hm-backlog" title="충전됐는데 아직 쓰지 못한 대여권 (작품×계정)">밀림 ' + r.backlog + '장</small>' : '');
       if (r.schedule) {
         html += '<div class="wtm-hm-group">' + line(label, '예약', r.schedule, r.sched_total, r.sched_even, '회', false) +
           line('', '실제', r.actual, r.actual_total, r.actual_even, '화', true) + '</div>';
@@ -939,8 +940,13 @@
       }
     });
     if (!d.rows.length) html = '<div class="wtm-hint">아직 받은 기록이 없습니다.</div>';
-    var info = '<p class="wtm-hint" style="margin:0 0 8px">카카오 계정 ' + d.accounts + '개 · 기다무 평균 지연 ' +
-      Math.round(d.delay / 60) + '분(충전 뒤 1분 포함) 기준</p>';
+    var need = 0, used = 0, back = 0;
+    d.rows.forEach(function (r) { if (r.schedule) { need += r.sched_total; used += r.actual_total; back += r.backlog || 0; } });
+    var rangeLabel = (d.ranges.filter(function (x) { return x[0] === d.range; })[0] || ['', ''])[1];
+    var info = '<div class="wtm-hourly-summary"><span>기다무 하루 필요 <b>' + n(need) + '장</b></span><span>실제 사용(' + escapeHtml(rangeLabel) +
+      ') <b>' + n(used) + '장</b>' + (need ? ' (' + Math.round(used / need * 100) + '%)' : '') + '</span><span>지금 밀린 대여권 <b' +
+      (back ? ' class="wtm-hm-backlog"' : '') + '>' + back + '장</b></span><span>평균 지연 <b>' + Math.round(d.delay / 60) +
+      '분</b></span><span>계정 ' + d.accounts + '개</span></div>';
     el('[data-el="hourly-body"]').innerHTML = info + '<div class="wtm-hm">' + html + '</div>';
   }
 
