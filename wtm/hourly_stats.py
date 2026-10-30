@@ -114,11 +114,9 @@ def schedule(cfg, now, days=SCHEDULE_DAYS):
     주기마다 이어 놓고 하루(0~23시)에 몇 장씩 오는지 (days일에 걸쳐 센 하루 평균 - 2일·3일 기다무도 셀 수 있게).
     처리 지연은 넣지 않는다 - 언제 받아야 하는지(배치)를 보려는 것. '1일 이상 기다무는 새벽부터'를 켰으면 그 시각으로.
     반환 ({(플랫폼, 'N시간 기다무'): [24]}, {같은 키: 작품 수}, {같은 키: 지금 충전돼 기다리는 대여권 수})"""
-    from . import kakao_pipeline as kp
+    from . import kakao_pipeline as kp, state_store as ss
     nums, cands = kp._waitfree_candidates(cfg)
     out, titles, backlog = {}, {}, {}
-    if not cands:
-        return out, titles, backlog
     night = kp.night_info(cfg, now)
     for sid, t in cands.items():
         key = ("kakao_novel" if kp._is_novel(t) else "kakao", kp.waitfree_label(t))
@@ -136,17 +134,54 @@ def schedule(cfg, now, days=SCHEDULE_DAYS):
             while r < c + days * 86400:
                 arr[time.localtime(r).tm_hour] += 1.0 / days
                 r += period
+    # 네이버: 작품별 확인 시각(설정 '네이버 작품별 확인 시각을 시간대에 고르게')에 연재 요일만큼 (매일+는 매일)
+    from . import pipeline as pl
+    if pl.naver_spread_window(cfg):
+        key = ("naver", NON_WAITFREE)
+        arr = out.setdefault(key, [0.0] * 24)
+        for tid, t in ss.load_titles().items():
+            if not t.get("subscribed") or t.get("excluded") or t.get("unsubscribed") or pl.bl_blocked(cfg, t):
+                continue
+            wds = t.get("weekdays") or []
+            per_day = 1.0 if "dailyPlus" in wds else len([w for w in wds if w != "dailyPlus"]) / 7.0
+            if not per_day:
+                continue
+            titles[key] = titles.get(key, 0) + 1
+            arr[pl.naver_slot_min(cfg, t) // 60] += per_day
     return {k: [round(v, 1) for v in arr] for k, arr in out.items()}, titles, backlog
 
 
-def evenness(arr):
-    """24시간에 똑같이 나뉘면 100, 한 시간에 몰리면 0에 가깝다: 100 × (1 - 균등 분포와의 거리)"""
+def evenness(arr, hours=None):
+    """정한 시간대(hours, 없으면 24시간)에 똑같이 나뉘면 100, 한 시간에 몰리면 0에 가깝다.
+    시간대 밖에 받은 것은 고르지 않은 것으로 센다."""
     tot = sum(arr or [])
     if tot <= 0:
         return None
-    avg = tot / 24.0
-    dist = sum(abs(v - avg) for v in arr) / (2.0 * tot)      # 0(균등) ~ 23/24(한 칸)
-    return int(round(100 * (1 - dist * 24 / 23.0)))
+    hours = list(hours) if hours else list(range(24))
+    k = len(hours)
+    if k <= 1:
+        return 100
+    avg = tot / float(k)
+    dist = (sum(abs(arr[h] - avg) for h in hours) + sum(arr[h] for h in range(24) if h not in hours)) / (2.0 * tot)
+    return max(0, int(round(100 * (1 - dist * k / (k - 1.0)))))
+
+
+def _window(cfg, p, kind):
+    """이 줄을 고르게 펼치기로 한 시간대 [시] (네이버·일 단위 기다무, 설정이 켜져 있을 때) 또는 None(24시간)"""
+    from . import pipeline as pl
+    if p == "naver":
+        win = pl.naver_spread_window(cfg)
+    elif kind != NON_WAITFREE and _period_min(kind) >= 1440 and cfg.get("WAITFREE_SPREAD_ENABLE"):
+        try:
+            win = (int(float(cfg.get("WAITFREE_SPREAD_START", 1))) % 24, int(float(cfg.get("WAITFREE_SPREAD_END", 11))) % 24)
+        except (TypeError, ValueError):
+            win = None
+    else:
+        win = None
+    if not win:
+        return None
+    a, b = win
+    return [(a + i) % 24 for i in range((b - a) % 24 or 24)]
 
 
 def report(rng="24h", now=None):
@@ -166,15 +201,17 @@ def report(rng="24h", now=None):
     rows = []
     for key in sorted(keys, key=lambda k: (order.get(k[0], 9), k[1] == NON_WAITFREE, _period_min(k[1]))):
         p, kind = key
-        s = sched.get(key) if kind != NON_WAITFREE else None
+        win = _window(cfg, p, kind)
+        s = sched.get(key) if (kind != NON_WAITFREE or p == "naver") else None
         a = act.get(key) or [0] * 24
         st = round(sum(s), 1) if s else 0
         rows.append({"platform": p, "platform_label": dict(PLATFORMS)[p], "kind": kind, "titles": titles.get(key),
                      "backlog": backlog.get(key, 0),
                      "period_min": _period_min(kind) if kind != NON_WAITFREE else None,
                      "schedule": s, "actual": a, "sched_total": st, "actual_total": round(sum(a), 1),
-                     "sched_even": evenness(s) if s else None, "actual_even": evenness(a),
-                     "ideal": round(st / 24.0, 1) if s else None})
+                     "sched_even": evenness(s, win) if s else None, "actual_even": evenness(a, win),
+                     "window": [win[0], (win[-1] + 1) % 24] if win else None,
+                     "ideal": round(st / float(len(win) if win else 24), 1) if s else None})
     nums, _c = kp._waitfree_candidates(cfg)
     return {"range": rng, "ranges": [list(r) for r in RANGES], "rows": rows, "now_hour": time.localtime(now).tm_hour,
             "accounts": len(nums), "delay": int(ds.avg_waitfree_delay()), "schedule_days": SCHEDULE_DAYS}

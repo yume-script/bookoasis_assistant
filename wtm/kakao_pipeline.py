@@ -772,7 +772,7 @@ def next_charge_at(cfg, now=None):
     return best
 
 
-SPREAD_PERIODS = (1440, 2880, 4320)   # 시간대에 고르게 펴는 기다무: 1일·2일·3일 (분)
+SPREAD_PERIODS = (1440, 2880, 4320, 10080)   # 시간대에 고르게 펴는 기다무: 1일·2일·3일·7일 (분)
 
 
 def _at_hour(ts, hour, day_offset=0):

@@ -930,7 +930,7 @@
         html += '<div class="wtm-hm-platform">' + escapeHtml(r.platform_label) + '</div>' + hourHead;
       }
       var label = '<b>' + escapeHtml(r.kind) + '</b>' + (r.titles ? '<small>' + r.titles + '작품' + (r.ideal !== null && r.ideal !== undefined ?
-        ' · 이상 시간당 ' + n(r.ideal) : '') + '</small>' : '') +
+        ' · 이상 시간당 ' + n(r.ideal) : '') + (r.window ? ' · ' + r.window[0] + '~' + r.window[1] + '시' : '') + '</small>' : '') +
         (r.backlog ? '<small class="wtm-hm-backlog" title="충전됐는데 아직 쓰지 못한 대여권 (작품×계정)">밀림 ' + r.backlog + '장</small>' : '');
       if (r.schedule) {
         html += '<div class="wtm-hm-group">' + line(label, '예약', r.schedule, r.sched_total, r.sched_even, '회', false) +

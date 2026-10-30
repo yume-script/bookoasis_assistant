@@ -161,6 +161,77 @@ def kind_label(t, platform="naver"):
 NAVER_RECHECK_HOURS = 20   # 네이버 작품은 자동 실행에서 하루 1번만 (실행 주기가 12시간이면 하루 2번 돌기 때문)
 
 
+def naver_spread_window(cfg):
+    """네이버 작품별 확인 시각을 펼칠 시간대 (시작 시, 끝 시) 또는 None(끔)"""
+    if not cfg.get("NAVER_SPREAD_ENABLE"):
+        return None
+    try:
+        a = int(float(cfg.get("NAVER_SPREAD_START", 5))) % 24
+        b = int(float(cfg.get("NAVER_SPREAD_END", 20))) % 24
+    except (TypeError, ValueError):
+        return None
+    return a, b
+
+
+def naver_slot_min(cfg, t):
+    """이 네이버 작품을 하루에 확인할 시각(자정부터 분). wtm.rebalance가 정해 둔 값(check_slot_min), 없으면 작품 이름으로
+    시간대 안에 고르게 흩어지는 자리를 정한다 (새로 구독한 작품도 따로 정하지 않아도 되게). 끔이면 None"""
+    win = naver_spread_window(cfg)
+    if not win:
+        return None
+    a, b = win
+    span = ((b - a) % 24 or 24) * 60
+    v = t.get("check_slot_min")
+    if v is not None:
+        try:
+            v = int(v)
+            if 0 <= (v - a * 60) % 1440 < span:
+                return v
+        except (TypeError, ValueError):
+            pass
+    h = int(hashlib.sha1(str(t.get("title") or t.get("title_id") or "").encode("utf-8")).hexdigest()[:8], 16)
+    return (a * 60 + h % span) % 1440
+
+
+def naver_slot_at(cfg, t, now=None):
+    """오늘(지금 기준 가장 최근) 이 작품의 확인 시각 타임스탬프. 끔이면 None"""
+    m = naver_slot_min(cfg, t)
+    if m is None:
+        return None
+    now = now or time.time()
+    lt = time.localtime(now)
+    at = time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday, m // 60, m % 60, 0, 0, 0, -1))
+    return at if at <= now else at - 86400
+
+
+NAVER_SLOT_TICK = 300
+_naver_tick = {"at": 0.0}
+
+
+def naver_slot_tick(cfg, log=print):
+    """[네이버 확인 시각 펼치기]를 켰을 때 스케줄러가 1분마다 부른다: 5분에 한 번, 확인 시각이 지난 작품이 있으면
+    네이버 다운로드만 돌린다 (다른 작업 중이면 다음에). 전체 실행(실행 주기)을 기다리지 않아 하루에 고르게 받는다."""
+    if not naver_spread_window(cfg) or time.time() - _naver_tick["at"] < NAVER_SLOT_TICK:
+        return None
+    _naver_tick["at"] = time.time()
+    due = [tid for tid, t in ss.load_titles().items()
+           if t.get("subscribed") and not t.get("excluded") and not t.get("unsubscribed")
+           and in_new_episode_scope(cfg, t, "naver")]
+    if not due:
+        return None
+    if not ss.try_acquire_job({"stage": "starting", "message": "네이버: 확인 시각이 된 작품 %d개" % len(due),
+                               "started_at": time.time(), "cancel_requested": False, "last_error": None}):
+        return None
+    try:
+        r = run_download_cycle(cfg, log=log)
+        ss.save_job_state({"running": False, "stage": "done", "finished_at": time.time(),
+                            "message": "네이버(확인 시각): 신규 %d화" % r.get("downloaded", 0)})
+        return r
+    except Exception as e:  # noqa: BLE001
+        ss.save_job_state({"running": False, "stage": "error", "finished_at": time.time(), "last_error": str(e)})
+        raise
+
+
 def in_new_episode_scope(cfg, t, platform="naver", now=None):
     """자동 실행(실행 주기마다)에서 이 작품의 새 회차를 확인할지. 설정 NEW_EP_SCOPE가 'today'(기본)일 때:
       - 아직 한 번도 받지 않은 작품: 바로
@@ -176,8 +247,13 @@ def in_new_episode_scope(cfg, t, platform="naver", now=None):
     if t.get("last_downloaded_no") is None:
         return True        # 새로 구독한 작품은 요일과 상관없이 바로 첫 다운로드
     now = now or time.time()
-    if platform == "naver" and now - float(t.get("last_auto_check_at") or 0) < NAVER_RECHECK_HOURS * 3600:
-        return False
+    if platform == "naver":
+        slot = naver_slot_at(cfg, t, now)
+        if slot is not None:   # 작품마다 정해 둔 시각(05~20시 등)에 하루 1번
+            if now < slot or float(t.get("last_auto_check_at") or 0) >= slot:
+                return False
+        elif now - float(t.get("last_auto_check_at") or 0) < NAVER_RECHECK_HOURS * 3600:
+            return False
     wds = set(t.get("weekdays") or [])
     if "dailyPlus" in wds:
         return True

@@ -213,6 +213,15 @@ def _loop(get_cfg_func, run_full_cycle_func, run_finished_scan_func):
                         except Exception as e:  # noqa: BLE001
                             _ss.append_log("스케줄러(완결 스캔) 실행 오류: %s" % e)
 
+        # 네이버 작품별 확인 시각(05~20시 등에 펼쳐 둔 것)이 된 작품 - 전체 실행을 기다리지 않고 받는다
+        if enabled:
+            try:
+                from . import pipeline as _pl
+                if _pl.naver_spread_window(cfg) and not _ss.load_job_state().get("running"):
+                    _pl.naver_slot_tick(cfg, log=_ss.append_log)
+            except Exception as e:  # noqa: BLE001
+                _ss.append_log("네이버 확인 시각 실행 오류(무시): %s" % e)
+
         # 쿠키 자동 갱신은 예약 다운로드를 꺼 둬도 따로 돈다(기본 6시간마다).
         try:
             from . import cookie_keeper

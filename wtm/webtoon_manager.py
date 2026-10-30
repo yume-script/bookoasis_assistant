@@ -111,6 +111,9 @@ DEFAULTS = {
     "KAKAO_NOVEL_ENABLE": False,
     "KAKAO_SYNC_PURCHASED": True,
     "KAKAO_TODAY_GIFT": True,
+    "NAVER_SPREAD_ENABLE": False,
+    "NAVER_SPREAD_START": 5,
+    "NAVER_SPREAD_END": 20,
     "KAKAO_NOVEL_DOWNLOAD_ROOT": "",
     "ALLOW_GL": False,
     "HIDE_BL_GL": False,
@@ -279,6 +282,11 @@ class WebtoonManagerMetadataProvider(BaseMetadataProvider):
                  "구독 전으로 되돌립니다(직접 구독한 작품은 그대로 받음)."},
         {"key": "KAKAO_SYNC_PURCHASED", "label": "구매 작품 자동 동기화", "type": "checkbox", "default": True,
          "hint": "하루 1번 보관함 > 구매 목록의 작품을 등록하고 구매·대여 회차를 받습니다(로그인 쿠키 필요)."},
+        {"key": "NAVER_SPREAD_ENABLE", "label": "네이버 작품별 확인 시각을 시간대에 고르게", "type": "checkbox", "default": False,
+         "hint": "구독 작품마다 아래 시간대 안의 확인 시각을 정해(고르게 퍼지게) 연재일 그 시각에 받습니다. 전체 실행(실행 주기)에 "
+                 "한꺼번에 몰리지 않습니다. 정확히 같은 간격으로 다시 놓으려면 python3 -m wtm.rebalance --apply"},
+        {"key": "NAVER_SPREAD_START", "label": "네이버 확인 시간대 시작(0~23시)", "type": "number", "default": 5},
+        {"key": "NAVER_SPREAD_END", "label": "네이버 확인 시간대 끝(0~23시, 이 시각 전까지)", "type": "number", "default": 20},
         {"key": "KAKAO_TODAY_GIFT", "label": "오늘의 선물 대여권 매일 받기", "type": "checkbox", "default": True,
          "hint": "하루 1번 page.kakao.com/today-gift 에서 받을 수 있는 대여권을 계정마다 받습니다(목록에 있는 작품 먼저). "
                  "받은 대여권은 '보유 대여권 자동 사용'을 켜면 다운로드에 씁니다. 직접: python3 -m wtm.today_gift"},
@@ -1674,6 +1682,7 @@ class WebtoonManagerMetadataProvider(BaseMetadataProvider):
 
         ("naver", "계정", ("NAVER_COOKIE_JSON", "NAVER_KEEP_LOGIN")),
         ("naver", "다운로드", ("DOWNLOAD_ROOT", "NAVER_DOWNLOAD_DAILY_PLUS", "NAVER_TRY_OWNED_PAID")),
+        ("naver", "확인 시각", ("NAVER_SPREAD_ENABLE", "NAVER_SPREAD_START", "NAVER_SPREAD_END")),
         ("naver", "중복 확인", ("COMPARE_FOLDERS_NAVER", "NAVER_DOWNLOAD_OWNED")),
 
         ("kakao", "사용 / 계정(웹툰·웹소설 공통)", ("KAKAO_ENABLE", "KAKAO_COOKIE", "KAKAO_AUTO")),
