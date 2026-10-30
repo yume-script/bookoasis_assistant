@@ -1224,7 +1224,7 @@ def _existing_nos(series_dir):
 
 def download_series(cfg, session, sid, log=print, full=False, cancel_check=None,
                     on_progress=None, only_nos=None, force=False, account=1, extra=False, skip_nos=None, yaml=True,
-                    manual=False):
+                    manual=False, charge_ref=None):
     """작품 하나의 볼 수 있는 미보유 회차를 받는다.
     full=True(수동 '지금 다운로드'): 미보유 회차를 전부 시도.
     full=False(자동): 새 회차 + 이미 대여/소장 표시된 회차 + (옵션)기다무만 시도.
@@ -1385,7 +1385,9 @@ def download_series(cfg, session, sid, log=print, full=False, cancel_check=None,
     # 작품이 기다무 확인에 걸려도 계정1부터 차례로 돌기 때문에, 예전엔 충전 안 된 계정도 시도해서
     # 카카오가 '상품 정보를 찾을 수 없습니다(-205)'로 거절했다. 기록된 충전 시각은 그대로 둔다.
     # 자동 실행에서는 '긴 주기 기다무는 새벽에'도 지킨다 (직접 누른 다운로드는 시간대와 상관없이 씀).
-    charge_at = (ready_at(cfg, t, account, nums=[n for n, _c in accounts(cfg)]) if not (full or only is not None) else
+    # charge_ref: 작품 처리를 시작할 때의 기록 - '1일 이상 기다무는 계정들이 모두 충전되면 같이 쓴다'를 계정 1이 방금 쓴
+    # 기록으로 다시 계산하면 계정 2는 늘 '충전 전'(계정 1의 다음 충전까지)이 되어 대여권을 버렸다
+    charge_at = (ready_at(cfg, charge_ref or t, account, nums=[n for n, _c in accounts(cfg)]) if not (full or only is not None) else
                  (_ticket_at(t, account) + waitfree_period(t) if _ticket_at(t, account) else 0))
     if manual and use_waitfree and has_cookie and charge_at > time.time():
         # 직접 누른 다운로드는 기록된 충전 시각을 믿지 않고 시도한다 - 기록은 이 프로그램이 쓴 시각 기준이라
@@ -1751,6 +1753,8 @@ def _download_series_all(cfg, session, sid, log=print, session_for=None, dead=No
     force(선택 회차 다시 받기)는 계정 1에만 적용한다 - 추가 계정은 force 없이 아직 없는 회차만 채운다
     (계정 1이 방금 다시 받은 회차를 또 지우고 받지 않게)."""
     extras = extra_accounts(cfg)
+    if extras and "charge_ref" not in kw:   # 계정마다 같은 '처리 시작 때' 충전 기록으로 판단
+        kw["charge_ref"] = dict(ss.get_kakao_title(str(sid)) or {})
     # 계정이 여럿이면 kavita.yaml은 계정마다 쓰지 않고 작품 처리가 끝난 뒤 한 번만 쓴다
     # (예전엔 계정 1·2가 각각 회차를 받고 각각 yaml을 다시 써서, 작품 하나에 yaml 쓰기·업로드가 두 번이었다)
     res = download_series(cfg, session, sid, log=log, yaml=not extras, **kw)
