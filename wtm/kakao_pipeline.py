@@ -1187,7 +1187,8 @@ def _existing_nos(series_dir):
 
 
 def download_series(cfg, session, sid, log=print, full=False, cancel_check=None,
-                    on_progress=None, only_nos=None, force=False, account=1, extra=False, skip_nos=None, yaml=True):
+                    on_progress=None, only_nos=None, force=False, account=1, extra=False, skip_nos=None, yaml=True,
+                    manual=False):
     """작품 하나의 볼 수 있는 미보유 회차를 받는다.
     full=True(수동 '지금 다운로드'): 미보유 회차를 전부 시도.
     full=False(자동): 새 회차 + 이미 대여/소장 표시된 회차 + (옵션)기다무만 시도.
@@ -1350,6 +1351,14 @@ def download_series(cfg, session, sid, log=print, full=False, cancel_check=None,
     # 자동 실행에서는 '긴 주기 기다무는 새벽에'도 지킨다 (직접 누른 다운로드는 시간대와 상관없이 씀).
     charge_at = (ready_at(cfg, t, account, nums=[n for n, _c in accounts(cfg)]) if not (full or only is not None) else
                  (_ticket_at(t, account) + waitfree_period(t) if _ticket_at(t, account) else 0))
+    if manual and use_waitfree and has_cookie and charge_at > time.time():
+        # 직접 누른 다운로드는 기록된 충전 시각을 믿지 않고 시도한다 - 기록은 이 프로그램이 쓴 시각 기준이라
+        # 앱·웹에서 직접 읽었거나 충전 시각을 고르게 펴며 뒤로 미룬 계정은 실제로는 이미 충전돼 있을 수 있다
+        # (실패하면 카카오가 거절할 뿐 대여권은 쓰이지 않음)
+        if any(ep["waitfree_ok"] for ep in locked_eps):
+            log("%s: 기록상 기다무 대여권 충전 전(%s)이지만 직접 다운로드라 시도" % (
+                title, time.strftime("%m-%d %H:%M", time.localtime(charge_at))))
+        charge_at = 0
     if use_waitfree and has_cookie and charge_at > time.time():
         res["waitfree_none"] = False
         if any(ep["waitfree_ok"] for ep in locked_eps):
@@ -2115,7 +2124,7 @@ def run_kakao_series_job(cfg, sid, log=print, only_nos=None, force=False):
                                   "message": "%s %s 받는 중 (%d/%d화)" % (label, text, i + 1, n)})
 
     try:
-        r = download_series_all(cfg, session, sid, log=log, full=True,
+        r = download_series_all(cfg, session, sid, log=log, full=True, manual=True,
                                 cancel_check=lambda: ss.load_title_job_state().get("cancel_requested"),
                                 on_progress=_progress, only_nos=only_nos, force=force)
     finally:
