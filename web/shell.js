@@ -132,6 +132,7 @@
   var LOGO_INNER = '<rect class="logo-bg" width="64" height="64" rx="15"/>' +
     '<circle class="logo-ink" cx="27" cy="33" r="19"/><circle class="logo-bg" cx="37" cy="26" r="15.5"/>' +
     '<text class="logo-ink logo-p" x="37.6" y="27" text-anchor="middle" dominant-baseline="central">P</text>';
+  var BRAND_HTML = '<i>B</i>ook<i>O</i>asis<i>A</i>ssistant';
   var ACCENT_HEX = { amber: ['#e5a00d', '#141517'], blue: ['#3b82f6', '#ffffff'], green: ['#22c55e', '#06200f'],
     purple: ['#a855f7', '#ffffff'], red: ['#ef4444', '#ffffff'], pink: ['#ec4899', '#ffffff'], teal: ['#14b8a6', '#032420'] };
   function setFavicon() {  // 브라우저 탭 아이콘도 지금 강조색으로
@@ -151,6 +152,8 @@
   if (document.body.classList.contains('login-body')) {
     var loginMark = document.querySelector('.login-brand .brand-mark');
     if (loginMark) loginMark.innerHTML = '<svg class="logo" viewBox="0 0 64 64" aria-hidden="true">' + LOGO_INNER + '</svg>';
+    var loginName = document.querySelector('.login-brand .brand-name');
+    if (loginName) loginName.innerHTML = BRAND_HTML;
     window.GdwShell = { setDefaults: setDefaults };
     return;
   }
@@ -486,11 +489,14 @@
   var mark = h('span', { class: 'brand-mark' });
   mark.innerHTML = '<svg class="logo" viewBox="0 0 64 64" aria-hidden="true">' + LOGO_INNER + '</svg>';
   mark.appendChild(verEl);
+  // 이름: B·O·A 머리글자만 로고·파비콘과 같은 강조색
+  var brandName = h('span', { class: 'brand-name', title: 'BookOasisAssistant' });
+  brandName.innerHTML = BRAND_HTML;
   var crumbTab = h('b', { text: '' });
   var top = h('header', { class: 'topbar' }, [
     h('button', { type: 'button', class: 'icon-btn menu-btn', title: '메뉴', 'aria-label': '메뉴',
       onclick: function () { document.body.classList.toggle('nav-open'); } }, [icon('bars')]),
-    h('a', { class: 'brand', href: './' }, [mark, h('span', { class: 'brand-name', text: 'BookOasisAssistant' })]),
+    h('a', { class: 'brand', href: './' }, [mark, brandName]),
     h('div', { class: 'crumbs' }, [h('span', { text: mod ? mod.title : '' }), h('span', { class: 'sep', text: '›' }), crumbTab])
   ]);
 

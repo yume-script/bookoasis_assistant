@@ -119,8 +119,9 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
   content: ''; position: absolute; top: -4px; right: -3px; width: 7px; height: 7px; border-radius: 50%;
   background: #ffd23f; border: 1.5px solid var(--bg);
 }
-/* 이름은 로고·파비콘과 같은 강조색 (테마의 강조색을 바꾸면 같이 바뀜) */
-.brand-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--accent); letter-spacing: -0.015em; font-size: 1rem; }
+/* 이름: B·O·A 머리글자만 로고·파비콘과 같은 강조색 (테마의 강조색을 바꾸면 같이 바뀜) */
+.brand-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; letter-spacing: -0.015em; font-size: 1rem; }
+.brand-name i { font-style: normal; color: var(--accent); }
 .crumbs { display: flex; align-items: center; gap: 0.5rem; min-width: 0; color: var(--muted); font-size: 0.95rem; }
 .crumbs b { color: var(--text); font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .crumbs .sep { opacity: 0.6; }
