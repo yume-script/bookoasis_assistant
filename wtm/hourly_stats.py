@@ -118,7 +118,11 @@ def schedule(cfg, now, days=SCHEDULE_DAYS):
     nums, cands = kp._waitfree_candidates(cfg)
     out, titles, backlog = {}, {}, {}
     night = kp.night_info(cfg, now)
+    from .classify import open_left
     for sid, t in cands.items():
+        left = open_left(t)
+        if left is not None and left <= 0:
+            continue   # 기록상 최신 10화만 남음 - 대여권을 쓸 회차가 없어 하루 1번 새 회차만 (wtm.classify와 같은 기준)
         key = ("kakao_novel" if kp._is_novel(t) else "kakao", kp.waitfree_label(t))
         titles[key] = titles.get(key, 0) + 1
         period = kp.waitfree_period(t)
