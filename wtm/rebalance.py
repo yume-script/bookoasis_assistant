@@ -1,11 +1,12 @@
 # -*- coding: utf-8 -*-
 """다운로드 시각을 하루에 고르게 다시 놓는 간이 스크립트 (기다무 대여권 일부를 포기하더라도)
 
+    venv/bin/python -m wtm.rebalance                 # 미리 보기 (아무것도 안 바꿈)
     systemctl stop bookoasis_assistant
-    python3 -m wtm.rebalance                  미리 보기 (시간대별 분포 전 → 후, 아무것도 안 바꿈)
-    python3 -m wtm.rebalance --apply          적용 (kakao_titles.json·titles.json 백업 후) + 설정도 맞춤
-    python3 -m wtm.rebalance --window 5 20    일 단위 시간대 바꾸기 (기본 05:00~19:59)
+    venv/bin/python -m wtm.rebalance --window 5 20 --apply         # 적용 (작품 기록 2개를 .bak-날짜시각으로 백업한 뒤)
     systemctl start bookoasis_assistant
+
+    --window 시작시 끝시: 일 단위 기다무·네이버를 펼칠 시간대 (기본 5 20 = 05:00~19:59)
 
 - 카카오 시간 단위 기다무(1·2·3·6·12시간 등): 주기별로 묶어 한 주기(24시간 안에서 반복) 안에 똑같은 간격으로.
   예) 3시간 기다무 60개 → 3분마다 하나씩 충전, 그 뒤로도 3시간마다 같은 자리.
@@ -194,8 +195,12 @@ def main(argv):
                 "NAVER_SPREAD_ENABLE": True, "NAVER_SPREAD_START": start_h, "NAVER_SPREAD_END": end_h}
     print("\n  설정: " + ", ".join("%s=%s" % kv for kv in settings.items()))
     if not apply:
-        print("\n미리 보기입니다. 적용하려면: systemctl stop bookoasis_assistant && python3 -m wtm.rebalance%s --apply"
-              % ("" if (start_h, end_h) == (5, 20) else " --window %d %d" % (start_h, end_h)))
+        print("\n미리 보기입니다. 사용법 예시:")
+        print("  venv/bin/python -m wtm.rebalance                 # 미리 보기 (아무것도 안 바꿈)")
+        print("  systemctl stop bookoasis_assistant")
+        print("  venv/bin/python -m wtm.rebalance --window %d %d --apply         # 적용 (작품 기록 2개를 .bak-날짜시각으로 백업한 뒤)"
+              % (start_h, end_h))
+        print("  systemctl start bookoasis_assistant")
         return 0
     stamp = time.strftime("%Y%m%d%H%M%S")
     for path in (ss.KAKAO_TITLES_PATH, ss.TITLES_PATH):
