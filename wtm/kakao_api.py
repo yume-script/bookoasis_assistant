@@ -22,6 +22,7 @@ import html as _html
 import json
 import os
 import re
+import threading
 import time
 
 import requests
@@ -781,8 +782,7 @@ def ready_ticket_types(session, product_id):
 
 def use_ticket(session, product_id, ticket_type):
     """이용권 사용. 성공 True."""
-    r = session.post(TICKET_USE_API, data={"product_id": product_id, "ticket_type": ticket_type},
-                     timeout=session.request_timeout)
+    r = _post_ticket(session, {"product_id": product_id, "ticket_type": ticket_type})
     _check_auth(r, "이용권 사용")
     if r.status_code >= 300:
         return False
@@ -850,11 +850,31 @@ def fetch_purchased_series(session, category_uid=None, max_pages=200, log=None):
     return out
 
 
+# 대여권 사용 요청은 한 번에 하나씩 보낸다. 같은 계정으로 동시에 보내면(기다무 확인과 전체 실행이 나란히 돌 때 등)
+# 카카오가 앞 요청이 끝나지 않았다며 -317(WaitForPreviousRequest)로 거절하고, 예전엔 그걸 '충전 전'처럼 처리해
+# 대여권을 한 시간씩 미뤘다. 거절되면 잠깐 기다렸다 다시 보낸다.
+_TICKET_LOCK = threading.Lock()
+WAIT_PREVIOUS = -317
+_TICKET_RETRY = 4
+
+
+def _post_ticket(session, data):
+    for i in range(_TICKET_RETRY):
+        with _TICKET_LOCK:
+            r = session.post(TICKET_USE_API, data=data, timeout=session.request_timeout)
+        try:
+            code = json.loads(r.content.decode("utf-8")).get("result_code")
+        except (ValueError, AttributeError):
+            code = None
+        if str(code) != str(WAIT_PREVIOUS) or i == _TICKET_RETRY - 1:
+            return r
+        time.sleep(1.5 * (i + 1))
+    return r
+
+
 def use_waitfree_ticket(session, product_id):
     """기다무 대여권 사용. 성공 True, 대여 불가(대기 시간 미충족 등) False."""
-    r = session.post(TICKET_USE_API, data={"product_id": product_id,
-                                           "ticket_type": RENTAL_TICKET_TYPE},
-                     timeout=session.request_timeout)
+    r = _post_ticket(session, {"product_id": product_id, "ticket_type": RENTAL_TICKET_TYPE})
     _check_auth(r, "기다무 사용")
     # 실패 사유를 로그에 남길 수 있게 응답을 붙여 둔다 (대기 시간 미충족 / 로그인 안 됨 등)
     session.kakao_ticket_detail = "HTTP %s %s" % (r.status_code, (r.text or "")[:200].replace("\n", " "))
