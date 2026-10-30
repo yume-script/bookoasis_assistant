@@ -265,16 +265,14 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(404, {"success": False, "error": "웹툰 다운로더가 꺼져 있습니다 (WTM_ENABLED)."})
             from wtm import service as wtm_service
             return self._send(200, wtm_service.dashboard())
-        if path == "/api/wtm/hourly":   # 시간대별 예상·실제 다운로드 수 (?day=YYYY-MM-DD, 없으면 오늘)
+        if path == "/api/wtm/hourly":   # 시간대별 예약·실제 다운로드 수 (?range=24h|today|yesterday|7d)
             if not mods["wtm"]:
                 return self._send(404, {"success": False, "error": "웹툰 다운로더가 꺼져 있습니다 (WTM_ENABLED)."})
             from urllib.parse import parse_qs
-            day = (parse_qs(self.path.partition("?")[2]).get("day") or [""])[0]
-            if day and not re.match(r"^\d{4}-\d{2}-\d{2}$", day):
-                return self._send(400, {"success": False, "error": "날짜 형식: YYYY-MM-DD"})
+            rng = (parse_qs(self.path.partition("?")[2]).get("range") or ["24h"])[0]
             from wtm import hourly_stats
             try:
-                return self._send(200, dict(hourly_stats.report(day or None), success=True))
+                return self._send(200, dict(hourly_stats.report(rng), success=True))
             except Exception as e:  # noqa: BLE001
                 log.exception("시간대별 다운로드 계산 실패")
                 return self._send(500, {"success": False, "error": str(e)})

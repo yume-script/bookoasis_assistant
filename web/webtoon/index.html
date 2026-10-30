@@ -149,21 +149,15 @@
   <div class="wtm-panel" data-panel-view="hourly" style="display:none">
     <div class="wtm-box">
       <div class="wtm-box-title" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-        <span style="flex:1">시간대별 예상 다운로드 / 실제 다운로드</span>
-        <select class="wtm-input" style="flex:0 0 auto;width:auto" data-el="hourly-day"></select>
+        <span style="flex:1">시간대별 다운로드 - 기다무 주기대로 고르게 받고 있는지</span>
+        <select class="wtm-input" style="flex:0 0 auto;width:auto" data-el="hourly-range"></select>
         <button class="wtm-btn wtm-btn-ghost wtm-btn-small" data-el="hourly-reload">새로고침</button>
       </div>
-      <div class="wtm-hourly-summary" data-el="hourly-summary"></div>
-      <div class="wtm-hourly-legend">
-        <span><i class="wtm-sw wtm-sw-plan"></i>예상</span><span><i class="wtm-sw wtm-sw-act"></i>실제</span>
-      </div>
-      <div class="wtm-hourly-chart" data-el="hourly-chart"><div class="wtm-hint">불러오는 중...</div></div>
-      <p class="wtm-hint" data-el="hourly-note"></p>
-      <div data-el="hourly-table"></div>
+      <div data-el="hourly-body"><div class="wtm-hint">불러오는 중...</div></div>
       <p class="wtm-hint">
-        예상 - <b>기다무</b>: 대여권을 쓰는 작품마다 계정별로 '마지막으로 쓴 시각 + 충전 주기 + 최근 평균 지연'에 한 장씩
-        (새벽 사용 설정, 남은 잠긴 회차 수 반영). <b>그 밖</b>(새 회차·무료·대여·소장·보유 대여권): 최근 7일 같은 시간대의 평균.
-        하루 예상은 자정 직후 한 번 정해 두고 바꾸지 않습니다. 실제는 다운로드 이력에서 셉니다.
+        <b>예약</b>: 지금 기록된 충전 일정대로라면 하루에 그 시간대에 쓸 대여권 수(앞으로 7일 평균). <b>실제</b>: 그 시간대에 받은 회차 수.
+        <b>고른 정도</b>: 24시간에 똑같이 나뉘면 100%. 1일 기다무는 0~24시에 고르게, 3시간 기다무는 매 시간 같은 수가 이상적입니다.
+        칸이 진할수록 많이 받은 시간대입니다(줄마다 가장 많은 칸 기준).
       </p>
     </div>
   </div>

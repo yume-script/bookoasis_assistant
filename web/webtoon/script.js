@@ -879,88 +879,69 @@
   // ------------------------------------------------------------------
   // 시간대별 다운로드 (예상 / 실제) - GET api/wtm/hourly?day=
   // ------------------------------------------------------------------
-  var hourlyDay = '';
+  var hourlyRange = '24h';
   var hourlyAt = 0;
   async function loadHourly(force) {
     if (!force && Date.now() - hourlyAt < 60000) return;
     hourlyAt = Date.now();
-    var box = el('[data-el="hourly-chart"]');
+    var body = el('[data-el="hourly-body"]');
     try {
-      var resp = await fetch('api/wtm/hourly' + (hourlyDay ? '?day=' + encodeURIComponent(hourlyDay) : ''),
-        { credentials: 'same-origin' });
+      var resp = await fetch('api/wtm/hourly?range=' + encodeURIComponent(hourlyRange), { credentials: 'same-origin' });
       var d = await resp.json();
       if (!d.success) throw new Error(d.error || ('HTTP ' + resp.status));
       renderHourly(d);
     } catch (e) {
-      if (box) box.innerHTML = '<div class="wtm-hint">불러오지 못했습니다: ' + escapeHtml(e.message || String(e)) + '</div>';
+      if (body) body.innerHTML = '<div class="wtm-hint">불러오지 못했습니다: ' + escapeHtml(e.message || String(e)) + '</div>';
     }
   }
 
   function renderHourly(d) {
-    var sel = el('[data-el="hourly-day"]');
+    var sel = el('[data-el="hourly-range"]');
     if (sel) {
-      sel.innerHTML = d.days.map(function (day) {
-        var label = day === d.today ? day + ' (오늘)' : day === d.tomorrow ? day + ' (내일 예상)' : day;
-        return '<option value="' + escapeHtml(day) + '"' + (day === d.day ? ' selected' : '') + '>' + escapeHtml(label) + '</option>';
+      sel.innerHTML = d.ranges.map(function (r) {
+        return '<option value="' + r[0] + '"' + (r[0] === d.range ? ' selected' : '') + '>실제: ' + escapeHtml(r[1]) + '</option>';
       }).join('');
     }
-    var num = function (v) { return v === null || v === undefined ? null : Math.round(v * 10) / 10; };
-    var sum = function (o) { return o ? (o.waitfree || 0) + (o.other || 0) : 0; };
-    var hasPlan = function (x) { return x.plan.waitfree !== null && x.plan.waitfree !== undefined; };
-    var max = 1;
-    d.hours.forEach(function (x) { max = Math.max(max, hasPlan(x) ? sum(x.plan) : 0, x.actual ? sum(x.actual) : 0); });
-    var cols = d.hours.map(function (x) {
-      var p = hasPlan(x) ? sum(x.plan) : null, a = x.actual ? sum(x.actual) : null;
-      var tip = '<b>' + (x.hour < 10 ? '0' : '') + x.hour + '시</b><br>' +
-        '예상 ' + (p === null ? '-' : num(p) + '화') + (p === null ? '' : ' (기다무 ' + num(x.plan.waitfree) + ' · 그 밖 ' + num(x.plan.other) + ')') +
-        (a === null ? '' : '<br>실제 ' + a + '화 (기다무 ' + x.actual.waitfree + ' · 그 밖 ' + x.actual.other + ')');
-      var bar = function (cls, v) {
-        return '<div class="wtm-hb ' + cls + '" style="height:' + (v ? Math.max(1.5, v / max * 100) : 0) + '%"></div>';
-      };
-      return '<div class="wtm-hcol' + (x.now ? ' now' : '') + (!x.past && !x.now ? ' future' : '') + '">' +
-        bar('wtm-hb-plan', p || 0) + (a === null ? '' : bar('wtm-hb-act', a)) +
-        '<div class="wtm-htip">' + tip + '</div></div>';
-    }).join('');
-    var labels = d.hours.map(function (x) {
-      return '<span' + (x.now ? ' class="now"' : '') + '>' + (x.hour % 3 === 0 || x.now ? x.hour : '') + '</span>';
-    }).join('');
-    var chart = el('[data-el="hourly-chart"]');
-    if (chart) chart.outerHTML = '<div class="wtm-hourly-chart" data-el="hourly-chart">' + cols + '</div>';
-    var lab = el('.wtm-hlabel');
-    if (lab) lab.remove();
-    el('[data-el="hourly-chart"]').insertAdjacentHTML('afterend', '<div class="wtm-hlabel">' + labels + '</div>');
-
-    // 합계: 예상은 지금까지(지난 시간대)와 하루 전체, 실제는 지금까지
-    var planSoFar = 0, actSoFar = 0;
-    d.hours.forEach(function (x) {
-      // 예상이 있는 시간대끼리만 비교 (업데이트한 날처럼 예상을 하루 중간에 처음 만든 경우)
-      if ((x.past || x.now) && hasPlan(x)) { planSoFar += sum(x.plan); actSoFar += x.actual ? sum(x.actual) : 0; }
-    });
-    var t = d.total, isTomorrow = d.day === d.tomorrow, isToday = d.day === d.today;
-    var parts = ['예상 하루 <b>' + num(sum(t.plan)) + '화</b> (기다무 ' + num(t.plan.waitfree) + ' · 그 밖 ' + num(t.plan.other) + ')'];
-    if (!isTomorrow) {
-      parts.push('실제 <b>' + sum(t.actual) + '화</b> (기다무 ' + t.actual.waitfree + ' · 그 밖 ' + t.actual.other + ')');
-      if (isToday && d.plan_from_hour !== null && d.plan_from_hour !== undefined) {
-        var diff = actSoFar - planSoFar;
-        parts.push((d.plan_from_hour ? d.plan_from_hour + '시부터 ' : '') + '지금까지 예상 ' + num(planSoFar) + '화 · 실제 ' + actSoFar + '화 <span class="' + (diff >= 0 ? 'wtm-hourly-diff-up' : 'wtm-hourly-diff-down') + '">' +
-          (diff >= 0 ? '+' : '') + num(diff) + '화</span>');
+    var n = function (v) { return Math.round(v * 10) / 10; };
+    var cellText = function (v) { return v >= 10 ? String(Math.round(v)) : (v ? String(n(v)) : ''); };
+    var even = function (v) {
+      if (v === null || v === undefined) return '<span class="wtm-hm-even">-</span>';
+      var cls = v >= 80 ? 'good' : v >= 60 ? 'mid' : 'bad';
+      return '<span class="wtm-hm-even ' + cls + '">' + v + '%</span>';
+    };
+    var hourHead = '<div class="wtm-hm-row wtm-hm-head"><div class="wtm-hm-label"></div><div class="wtm-hm-tag"></div>' +
+      Array.apply(null, Array(24)).map(function (_x, h) {
+        return '<div class="wtm-hm-h' + (h === d.now_hour ? ' now' : '') + '">' + h + '</div>';
+      }).join('') + '<div class="wtm-hm-stat">하루 · 고른 정도</div></div>';
+    var line = function (label, tag, arr, total, ev, unit, sub) {
+      var max = Math.max.apply(null, arr.concat([0.0001]));
+      var cells = arr.map(function (v, h) {
+        var a = v / max;
+        return '<div class="wtm-hm-c' + (h === d.now_hour ? ' now' : '') + '" title="' + h + '시 ' + tag + ' ' + n(v) + unit + '"' +
+          ' style="--a:' + (v ? (0.12 + a * 0.88).toFixed(2) : 0) + '"><span' + (a > 0.6 ? ' class="on"' : '') + '>' + cellText(v) + '</span></div>';
+      }).join('');
+      return '<div class="wtm-hm-row' + (sub ? ' sub' : '') + '"><div class="wtm-hm-label">' + label + '</div><div class="wtm-hm-tag">' + tag + '</div>' +
+        cells + '<div class="wtm-hm-stat">' + n(total) + unit + ' · ' + even(ev) + '</div></div>';
+    };
+    var html = '', curP = '';
+    d.rows.forEach(function (r) {
+      if (r.platform !== curP) {
+        curP = r.platform;
+        html += '<div class="wtm-hm-platform">' + escapeHtml(r.platform_label) + '</div>' + hourHead;
       }
-    }
-    el('[data-el="hourly-summary"]').innerHTML = parts.map(function (x) { return '<span>' + x + '</span>'; }).join('');
-    el('[data-el="hourly-note"]').textContent = d.note || '';
-
-    // 표 (색 없이 숫자로도 읽을 수 있게)
-    var f = function (v) { return v === null || v === undefined ? '-' : String(num(v)); };
-    var rows = d.hours.map(function (x) {
-      var a = x.actual;
-      return '<tr' + (x.now ? ' style="font-weight:700"' : '') + '><td>' + (x.hour < 10 ? '0' : '') + x.hour + '시' + (x.now ? ' ◀' : '') + '</td>' +
-        '<td>' + f(hasPlan(x) ? sum(x.plan) : null) + '</td><td>' + (a ? sum(a) : '-') + '</td>' +
-        '<td>' + f(x.plan.waitfree) + ' / ' + (a ? a.waitfree : '-') + '</td>' +
-        '<td>' + f(x.plan.other) + ' / ' + (a ? a.other : '-') + '</td></tr>';
-    }).join('');
-    el('[data-el="hourly-table"]').innerHTML = '<details><summary class="wtm-hint" style="cursor:pointer">표로 보기</summary>' +
-      '<table class="wtm-days-table"><thead><tr><th>시간</th><th>예상</th><th>실제</th><th>기다무 (예상/실제)</th>' +
-      '<th>그 밖 (예상/실제)</th></tr></thead><tbody>' + rows + '</tbody></table></details>';
+      var label = '<b>' + escapeHtml(r.kind) + '</b>' + (r.titles ? '<small>' + r.titles + '작품' + (r.ideal !== null && r.ideal !== undefined ?
+        ' · 이상 시간당 ' + n(r.ideal) : '') + '</small>' : '');
+      if (r.schedule) {
+        html += '<div class="wtm-hm-group">' + line(label, '예약', r.schedule, r.sched_total, r.sched_even, '회', false) +
+          line('', '실제', r.actual, r.actual_total, r.actual_even, '화', true) + '</div>';
+      } else {
+        html += '<div class="wtm-hm-group">' + line(label, '실제', r.actual, r.actual_total, r.actual_even, '화', false) + '</div>';
+      }
+    });
+    if (!d.rows.length) html = '<div class="wtm-hint">아직 받은 기록이 없습니다.</div>';
+    var info = '<p class="wtm-hint" style="margin:0 0 8px">카카오 계정 ' + d.accounts + '개 · 기다무 평균 지연 ' +
+      Math.round(d.delay / 60) + '분(충전 뒤 1분 포함) 기준</p>';
+    el('[data-el="hourly-body"]').innerHTML = info + '<div class="wtm-hm">' + html + '</div>';
   }
 
   function setTab(tab) {
@@ -1254,11 +1235,11 @@
     });
   }
 
-  var hourlySel = el('[data-el="hourly-day"]');
+  var hourlySel = el('[data-el="hourly-range"]');
   if (hourlySel) {
     hourlySel.addEventListener('change', function () {
       if (!alive()) return;
-      hourlyDay = hourlySel.value;
+      hourlyRange = hourlySel.value;
       loadHourly(true);
     });
   }
