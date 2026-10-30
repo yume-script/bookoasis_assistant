@@ -936,6 +936,34 @@ def flush_leftovers(cfg, log=print):
         return 0
 
 
+def _rotate_unused(sid, t, before, log=print):
+    """기다무 확인에서 충전된 것으로 본 계정이 이번에 대여권을 쓰지도, 기록이 바뀌지도 않았으면(회차 목록 조회 실패,
+    받기 실패, 대여권 사용 전에 끝남 등) 최대 1시간 뒤 다시 보도록 기록한다. 그러지 않으면 이 작품은 계속 '가장 오래 밀린
+    작품'으로 남아 확인할 때마다 맨 앞 30개를 차지하고, 그 뒤의 작품(수백~천 개)은 차례가 오지 않는다."""
+    if not before:
+        return
+    cur = ss.get_kakao_title(sid) or {}
+    if float(cur.get("waitfree_idle_until") or 0) > time.time() or not cur.get("has_locked"):
+        return   # 하루 뒤로 미뤄졌거나 열 회차가 없어 기다무 확인에서 빠짐
+    stuck = [n for n, old in before.items() if _ticket_at(cur, n) == old]
+    if not stuck:
+        return
+    stamp = _waitfree_backoff(cur)
+    patch = {}
+    acc = dict(cur.get("ticket_at_acc") or {})
+    for n in stuck:
+        if n == 1:
+            patch["last_ticket_at"] = stamp
+        else:
+            acc[str(n)] = stamp
+    if any(n != 1 for n in stuck):
+        patch["ticket_at_acc"] = acc
+    ss.upsert_kakao_title({sid: patch})
+    log("%s: 충전된 것으로 본 기다무 대여권(계정 %s)을 이번에 쓰지 못함 - %d분 뒤 다시 확인 (결과: %s)" % (
+        cur.get("title") or sid, ",".join(map(str, stuck)), min(waitfree_period(cur), 3600) // 60,
+        (cur.get("last_result") or "")[:120]))
+
+
 def run_waitfree_tick(cfg, log=print, show_status=True):
     """충전된 기다무 대여권만 바로 쓰는 가벼운 실행 (스케줄러가 몇 분마다 부름).
     자동 실행 주기(기본 4시간)를 기다리지 않으므로 3시간 기다무도 충전될 때마다 1화씩 받는다.
@@ -980,16 +1008,24 @@ def run_waitfree_tick(cfg, log=print, show_status=True):
     def _cancelled():
         return bool(ss.load_job_state().get("cancel_requested"))
 
+    nums = [n for n, _c in accounts(cfg)] or [1]
+    night = night_info(cfg)
+
     def _one(sid, t):
         if _cancelled():
             return
         if show_status:  # 전체 실행 중에 같이 돌 때는 그쪽 진행 표시를 덮어쓰지 않는다
             ss.save_job_state({"message": "기다무 대여권 사용: %s" % t.get("title", sid)})
+        now = time.time()
+        ready = [n for n in nums if ready_at(cfg, t, n, now, night, nums) <= now]
+        before = {n: _ticket_at(t, n) for n in ready}
         r = download_series_all(cfg, _main_session(), sid, log=log, dead=dead, session_for=_session_for,
                                 cancel_check=_cancelled)
         with lock:
             res["downloaded"] += r.get("downloaded", 0)
             res["waitfree_used"] += r.get("waitfree_used", 0)
+        if not (r.get("cancelled") or r.get("busy") or r.get("auth_expired")):
+            _rotate_unused(sid, t, before, log)
 
     # 작품 여러 개를 동시에 (설정 '동시 처리 작품 수', 카카오 전체 실행과 같은 값). 작품 하나가 회차 목록 조회·대여권·
     # 이미지 받기로 10~20초씩 걸려, 하나씩 하면 30개에 5~10분이 걸린다.
