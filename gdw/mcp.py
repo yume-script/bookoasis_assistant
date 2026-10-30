@@ -260,8 +260,8 @@ def _handle_one(msg, mods, svc, version):
         return {"jsonrpc": "2.0", "id": rid, "result": {
             "protocolVersion": asked if asked in PROTOCOL_VERSIONS else PROTOCOL_VERSIONS[0],
             "capabilities": {"tools": {"listChanged": False}},
-            "serverInfo": {"name": "bookoasis_assistant", "title": "BookOasis 보조", "version": version},
-            "instructions": ("BookOasis 보조 프로그램: Google Drive 변경 감시(BookOasis 부분 스캔)와 웹툰 다운로더. "
+            "serverInfo": {"name": "bookoasis_assistant", "title": "BookOasisAssistant", "version": version},
+            "instructions": ("BookOasisAssistant(BookOasis 보조 프로그램): Google Drive 변경 감시(BookOasis 부분 스캔)와 웹툰 다운로더. "
                              "gdw_status로 감시 현황을, wtm_status로 다운로더 현황을 먼저 보세요. 경로는 이 프로그램 기준 절대 경로입니다.")}}
     if method == "ping":
         return {"jsonrpc": "2.0", "id": rid, "result": {}}

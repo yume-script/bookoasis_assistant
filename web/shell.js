@@ -490,7 +490,7 @@
   var top = h('header', { class: 'topbar' }, [
     h('button', { type: 'button', class: 'icon-btn menu-btn', title: '메뉴', 'aria-label': '메뉴',
       onclick: function () { document.body.classList.toggle('nav-open'); } }, [icon('bars')]),
-    h('a', { class: 'brand', href: './' }, [mark, h('span', { class: 'brand-name', text: 'BookOasis 보조' })]),
+    h('a', { class: 'brand', href: './' }, [mark, h('span', { class: 'brand-name', text: 'BookOasisAssistant' })]),
     h('div', { class: 'crumbs' }, [h('span', { text: mod ? mod.title : '' }), h('span', { class: 'sep', text: '›' }), crumbTab])
   ]);
 
