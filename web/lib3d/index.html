@@ -83,6 +83,7 @@
   .l3d-page.r { box-shadow: 3px 3px 0 #ece6da, 6px 6px 0 #e2dccf, inset 0 0 0 1px rgba(0, 0, 0, 0.05); }
   .l3d-page img, .l3d-face img { width: 100%; height: 100%; object-fit: contain; display: block; user-select: none; }
   .l3d-page.blank, .l3d-face.blank { background: #f6f2e9; }
+  .l3d-pgerr { position: absolute; inset: 0; display: grid; place-items: center; padding: 20px; text-align: center; color: #8a8174; font-size: 0.85rem; }
   .l3d-leaf { position: absolute; top: 0; bottom: 0; display: none; transform-style: preserve-3d; transform-origin: left center;
     transition: transform 0.6s cubic-bezier(0.45, 0.05, 0.3, 1); z-index: 3; }
   .l3d-leaf.half { left: 50%; width: 50%; }
@@ -103,15 +104,6 @@
   .l3d-txt article h2, .l3d-txt article h3 { margin: 0 0 0.8em; font-size: 1.2em; }
   .l3d-txt article img { max-width: 100%; max-height: 60%; display: block; margin: 8px auto; }
   .l3d-pno { position: absolute; bottom: 3%; left: 0; right: 0; text-align: center; font-size: 11px; color: #9a9184; }
-  /* 책을 쥔 손 (아래쪽 양 모서리, 엄지가 종이 위로) */
-  .l3d-hand { position: absolute; bottom: -78px; width: 150px; height: 196px; z-index: 4; pointer-events: none;
-    filter: drop-shadow(0 6px 10px rgba(0, 0, 0, 0.35)); transition: transform 0.6s ease; }
-  .l3d-hand.left { left: -62px; transform: rotate(8deg); }
-  .l3d-hand.right { right: -62px; transform: scaleX(-1) rotate(8deg); }
-  .l3d-book.turning .l3d-hand.right { transform: scaleX(-1) rotate(4deg) translateY(-6px); }
-  .l3d-hand .palm, .l3d-hand .fing { fill: #e6b593; }
-  .l3d-hand .thumb { fill: #eebf9e; stroke: rgba(120, 70, 40, 0.25); stroke-width: 2; }
-  .l3d-book.rtl .l3d-hand.left { transform: rotate(8deg); }
   .l3d-reader.on { display: flex; }
   .l3d-r-top { display: flex; align-items: center; gap: 8px; padding: 8px 10px; background: rgba(20, 20, 22, 0.75); flex-wrap: wrap; position: relative; z-index: 5; }
   .l3d-r-top b { flex: 1 1 160px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.92rem; }
@@ -183,7 +175,7 @@
           <div class="l3d-page l" id="l3d-pg-l"></div>
           <div class="l3d-page r" id="l3d-pg-r"></div>
           <div class="l3d-leaf" id="l3d-leaf"><div class="l3d-face front"></div><div class="l3d-face back"></div></div>
-          <svg class="l3d-hand left" viewBox="0 0 160 210" aria-hidden="true"><path class="fing" d="M30 120 q-18 40 -6 80 l26 4 q4 -40 14 -70 z"/><path class="fing" d="M58 112 q-10 48 2 92 l26 2 q0 -44 6 -84 z"/><path class="fing" d="M88 116 q-4 44 10 84 l24 -6 q-8 -36 -6 -72 z"/><path class="palm" d="M18 150 q-6 -70 46 -90 q60 -16 84 30 q10 34 -14 64 q-50 30 -116 -4 z"/><path class="thumb" d="M96 58 q20 -46 50 -50 q14 4 8 22 q-12 34 -40 54 z"/></svg><svg class="l3d-hand right" viewBox="0 0 160 210" aria-hidden="true"><path class="fing" d="M30 120 q-18 40 -6 80 l26 4 q4 -40 14 -70 z"/><path class="fing" d="M58 112 q-10 48 2 92 l26 2 q0 -44 6 -84 z"/><path class="fing" d="M88 116 q-4 44 10 84 l24 -6 q-8 -36 -6 -72 z"/><path class="palm" d="M18 150 q-6 -70 46 -90 q60 -16 84 30 q10 34 -14 64 q-50 30 -116 -4 z"/><path class="thumb" d="M96 58 q20 -46 50 -50 q14 4 8 22 q-12 34 -40 54 z"/></svg>
+          
         </div>
       </div>
       <div class="l3d-r-body" id="l3d-r-body" hidden></div>

@@ -3,7 +3,7 @@
  * 평대의 표지 · 눈높이 칸의 표지 진열 · 나머지 칸의 책등(제목)으로. 빈칸은 장식용 책으로 채운다.
  * 데이터: api/lib3d/data · 표지: api/lib3d/cover · 열기: api/lib3d/open · 읽기: api/lib3d/volumes|book|page|chapter|pdf
  * 조작: W A S D·방향키 이동(Shift 빠르게), 끌기로 둘러보기, 책 누르기, 휴대폰은 왼쪽 아래 끌기로 이동
- * 읽기: 두 손에 든 책 모양, 책장 넘김(넓은 화면은 두 쪽 펼침, 만화는 오른쪽→왼쪽도). 매장에는 걷고 책을 고르는 사람들.
+ * 읽기: 펼친 책 모양, 책장 넘김(넓은 화면은 두 쪽 펼침, 만화는 오른쪽→왼쪽도). 매장에는 걷고 책을 고르는 사람들.
  * 설정(#settings): 보여 줄 보관함 고르기 - api/lib3d/libraries, POST api/lib3d/settings */
 (function () {
   'use strict';
@@ -384,10 +384,13 @@
   var neckGeo = new T.CylinderGeometry(0.048, 0.052, 0.12, 12);
   function std(c, r) { return new T.MeshStandardMaterial({ color: c, roughness: r || 0.8 }); }
 
-  function person(seed) {
+  function person(seed, beach) {
     var r = rnd(seed * 7919 + 13), pick = function (a) { return a[Math.floor(r() * a.length)]; };
     var skin = std(pick(SKIN), 0.7), shirt = std(pick(CLOTH)), pants = std(pick(PANTS)), hair = std(pick(HAIR), 0.9),
         shoe = std(r() < 0.5 ? 0x1b1b1b : 0xe8e4dc, 0.6);
+    if (beach) {   // 숨은 인물: 맨팔·맨다리(피부색) 위에 비키니, 샌들
+      skin = std(0xf0c4a0, 0.65); shirt = skin; pants = skin; hair = std(0x5a3a22, 0.85); shoe = std(0xd8b47c, 0.7);
+    }
     var g = new T.Group(), body = new T.Group();
     g.add(body);
     function limb(geo, mat, px, py, len) {
@@ -406,7 +409,20 @@
     var head = new T.Group(); head.position.y = 1.7; body.add(head);
     var face = new T.Mesh(ballGeo, skin); face.scale.set(0.105, 0.125, 0.11); face.castShadow = true; head.add(face);
     var hr = new T.Mesh(hairGeo, hair); hr.position.set(0, 0.025, -0.008); hr.rotation.x = -0.25; head.add(hr);
-    var sc = 0.9 + r() * 0.16;
+    if (beach) {
+      var suit = std(0xe2465a, 0.5);
+      var top = new T.Mesh(new T.CylinderGeometry(0.188, 0.195, 0.11, 24), suit); top.position.y = 1.3; body.add(top);
+      [-1, 1].forEach(function (sd) {   // 끈
+        var st = new T.Mesh(new T.CylinderGeometry(0.008, 0.008, 0.2, 6), suit); st.position.set(sd * 0.1, 1.42, 0.06); st.rotation.x = 0.3; body.add(st);
+      });
+      var bottom = new T.Mesh(new T.CylinderGeometry(0.158, 0.15, 0.13, 24), suit); bottom.position.y = 0.93; body.add(bottom);
+      var long = new T.Mesh(new T.CylinderGeometry(0.1, 0.06, 0.38, 16), hair); long.position.set(0, -0.15, -0.07); head.add(long);   // 긴 머리
+      var straw = std(0xe9d29a, 0.85);
+      var brim = new T.Mesh(new T.CylinderGeometry(0.27, 0.27, 0.012, 32), straw); brim.position.y = 0.07; head.add(brim);
+      var crown = new T.Mesh(new T.CylinderGeometry(0.1, 0.12, 0.1, 24), straw); crown.position.y = 0.12; head.add(crown);
+      var band = new T.Mesh(new T.CylinderGeometry(0.121, 0.121, 0.025, 24), suit); band.position.y = 0.085; head.add(band);
+    }
+    var sc = beach ? 0.97 : 0.9 + r() * 0.16;
     g.scale.setScalar(sc);
     return { g: g, body: body, legL: legL, legR: legR, armL: armL, armR: armR, head: head, r: r, phase: r() * 6, sc: sc };
   }
@@ -451,6 +467,13 @@
     var sit = person(seed * 97 + 5);
     sit.kind = 'sit'; place(sit, -2.8, L.front - 3.25, Math.PI);
     sit.body.position.y = -0.47; sit.legL.rotation.x = -1.5; sit.legR.rotation.x = -1.5; heldBook(sit);
+    // 숨은 인물: 층에 들어올 때 가끔(약 3번에 1번) 나타나 통로를 지나간다
+    if (r() < 0.34) {
+      var bk = person(seed * 101 + 3, true), li2 = Math.floor(r() * lanes.length);
+      bk.kind = 'walk'; bk.node = [li2, 0]; bk.speed = 1.25; bk.hidden = true;
+      place(bk, lanes[li2], rowsZ[0], 0);
+      nextNode(bk);
+    }
     // 안내 데스크 직원
     var staff = person(seed * 13 + 7);
     staff.kind = 'staff'; place(staff, L.w / 2 - 5.5, L.front - 6.35, 0);
@@ -764,7 +787,17 @@
       var no = document.createElement('span'); no.className = 'l3d-pno'; no.textContent = i + 1; node.appendChild(no);
       return;
     }
-    var img = document.createElement('img'); img.src = pageUrl(i); img.alt = (i + 1) + '쪽'; img.draggable = false;
+    var img = document.createElement('img'); img.alt = (i + 1) + '쪽'; img.draggable = false;
+    img.onerror = function () {   // 빈 종이로 남지 않게 이유를 적는다
+      fetch(pageUrl(i), { credentials: 'same-origin' }).then(function (r) { return r.json(); }).catch(function () { return {}; })
+        .then(function (d) {
+          if (img.parentNode !== node) return;
+          var e = document.createElement('div'); e.className = 'l3d-pgerr';
+          e.textContent = (i + 1) + '쪽을 불러오지 못했습니다' + (d && d.error ? ' - ' + d.error : '');
+          node.replaceChild(e, img);
+        });
+    };
+    img.src = pageUrl(i);
     node.appendChild(img);
   }
   function pageStep() { var v = pgR.querySelector('.l3d-txt'); return v ? v.clientWidth + 48 : 0; }
