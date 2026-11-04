@@ -1588,9 +1588,11 @@ class DrivePollWatcher(Watcher):
             p = self.progress
             if p.get("queued"):
                 self.stat["note"] = "폴더 비교 대기 · 같은 리모트의 다른 폴더 비교가 끝나면 시작"
-            else:
+            elif p.get("started"):
                 self.stat["note"] = (f"폴더 비교 중 · {p['items']:,}개 / 폴더 {p['folders']:,}개 · "
                                      f"{int(time.time() - p['started'])}초 경과")
+            else:
+                self.stat["note"] = "폴더 비교 시작 중"
             return 0
         if self.last:
             self.stat["note"], self.last = self.last, ""
@@ -3260,6 +3262,9 @@ class Worker:
             old = previous.get(watcher.name)
             if isinstance(watcher, DrivePollWatcher) and isinstance(old, DrivePollWatcher):
                 watcher.thread = old.thread
+                # 진행 상황도 같은 것을 본다 - 예전엔 스레드만 넘겨 새 감시기의 진행 상황(시작 0)이 화면에
+                # '폴더 비교 중 · 0개 · 1793757201초 경과'처럼 나왔고, 차례를 기다리는 중인지도 보이지 않았다
+                watcher.progress = old.progress
                 if old.cfg == watcher.cfg:
                     watcher.next_sweep = old.next_sweep  # 같은 폴더 설정이면 다음 비교 시각도 그대로
         self.watchers = watchers
