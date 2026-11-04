@@ -449,7 +449,46 @@
     people.forEach(function (q) { floorGroup.remove(q.g); disposeGroup(q.g); });
     parent = floorGroup; spawnPeople(floors[cur], cur + 1); parent = scene;
   }
+  // three.js 예제의 Collada 모형: 걷는 스톰트루퍼(뼈대·동작 포함)와 받침대 위 엘프 피규어(정지 모형)
+  var COLLADA_BASE = 'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r175/examples/models/collada/';
+  function keepShared(root) {   // 층을 바꿀 때 지워도 원본은 남도록 형상·재질을 공용으로 표시
+    root.traverse(function (o) {
+      if (o.geometry) o.geometry.userData.shared = true;
+      (Array.isArray(o.material) ? o.material : (o.material ? [o.material] : [])).forEach(function (m) { m.userData.keep = true; });
+    });
+  }
+  function loadCollada() {
+    if (!T.ColladaLoader || !T.SkeletonUtils) return;
+    var cl = new T.ColladaLoader();
+    cl.load(COLLADA_BASE + 'stormtrooper/stormtrooper.dae', function (c) {
+      if (!c.scene.animations || !c.scene.animations.length) return;
+      // 동작 트랙이 개체 고유 ID로 묶여 있어 복제본에 붙지 않는다 → 뼈 이름으로 바꿔 묶는다
+      var byId = {}; c.scene.traverse(function (o) { byId[o.uuid] = o; });
+      var clip = c.scene.animations[0].clone();
+      clip.tracks.forEach(function (t) { var i = t.name.indexOf('.'), o = byId[t.name.slice(0, i)]; if (o && o.name) t.name = o.name + t.name.slice(i); });
+      keepShared(c.scene); HUMAN.trooper = c.scene; HUMAN.trooperClip = clip; respawn();
+    }, undefined, function (e) { console.warn('3D 서재 스톰트루퍼:', e); });
+    cl.load(COLLADA_BASE + 'elf/elf.dae', function (c) {
+      keepShared(c.scene); HUMAN.elf = c.scene; respawn();
+    }, undefined, function (e) { console.warn('3D 서재 엘프:', e); });
+  }
+  function trooperHuman(r) {   // 총을 든 채 걷는 동작 하나뿐이라 멈추지 않고 계속 순찰한다
+    var model = T.SkeletonUtils.clone(HUMAN.trooper);
+    model.traverse(function (o) { if (o.isMesh) { o.castShadow = true; o.frustumCulled = false; } });
+    var turn = new T.Group(); turn.rotation.y = Math.PI; turn.scale.setScalar(0.4); turn.add(model);   // 모형이 뒤(-Z)를 보고 있어 돌려 세운다
+    var g = new T.Group(); g.add(turn);
+    var mixer = new T.AnimationMixer(model), walk = mixer.clipAction(HUMAN.trooperClip);
+    walk.play(); mixer.update(r() * 3);
+    return { g: g, mixer: mixer, acts: { walk: walk }, clips: {}, model: model, r: r, phase: r() * 6, sc: 1, walkW: 1, alwaysWalk: true };
+  }
+  function elfStatue() {   // 받침대가 붙은 실물 크기 피규어
+    var e = HUMAN.elf.clone();
+    e.traverse(function (o) { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+    var g = new T.Group(); e.scale.setScalar(0.25); g.add(e);
+    return { g: g, r: rnd(7), phase: 0, kind: 'statue' };
+  }
   function loadHumans() {
+    loadCollada();
     if (!T.GLTFLoader || !T.SkeletonUtils) return;
     var loader = new T.GLTFLoader();
     loader.load(MODEL_BASE + 'Xbot.glb', function (gltf) {
@@ -732,7 +771,7 @@
     for (var c = 0; c <= L.cols; c++) lanes.push((c - L.cols / 2) * (BOOTH_W + GAP));
     for (var rr = 0; rr < L.rows; rr++) rowsZ.push(-LOBBY + GAP / 2 - rr * (BOOTH_D + GAP));
     L.lanes = lanes; L.rowsZ = rowsZ;
-    var walkers = Math.min(10, 3 + fl.libs.length);
+    var walkers = Math.min(5, 2 + Math.floor(fl.libs.length / 2));
     for (var i = 0; i < walkers; i++) {
       var p = makePerson(seed * 31 + i), li = Math.floor(r() * lanes.length), zi = Math.floor(r() * rowsZ.length);
       p.kind = 'walk'; p.node = [li, zi]; p.speed = 0.95 + r() * 0.45;
@@ -741,14 +780,14 @@
     }
     // 서가 앞에서 고르는 손님 (구역마다 반쯤)
     (L.sections || []).forEach(function (s, j) {
-      if (r() < 0.55) {
+      if (r() < 0.3) {
         var p2 = makePerson(seed * 53 + j + 400);
         p2.kind = 'browse'; p2.t = r() * 4;
         if (p2.mixer) { setLook(p2, 'browse'); if (r() < 0.4) carryBook(p2); }
         if (r() < 0.5) place(p2, s.x + (r() - 0.5) * 2.4, s.z + 3.15, Math.PI);          // 평대 앞
         else place(p2, s.x - BOOTH_W / 2 + 1.05, s.z - 0.2 + (r() - 0.5) * 3, Math.PI / 2);   // 옆 서가 앞
       }
-      if (r() < 0.22) {   // 서서 읽는 손님
+      if (r() < 0.12) {   // 서서 읽는 손님
         var p3 = makePerson(seed * 71 + j + 800);
         p3.kind = 'read'; place(p3, s.x + BOOTH_W / 2 - 1.2, s.z + 2.6, -Math.PI / 2 - 0.4); heldBook(p3);
       }
@@ -768,6 +807,15 @@
       place(bk, lanes[li2], rowsZ[0], 0);
       nextNode(bk);
     }
+    // 스톰트루퍼: 층마다 한 명이 통로를 순찰한다
+    if (HUMAN.trooper) {
+      var tp = trooperHuman(rnd(seed * 131 + 9)), li3 = Math.floor(r() * lanes.length);
+      tp.kind = 'walk'; tp.node = [li3, Math.min(1, rowsZ.length - 1)]; tp.speed = 0.85;
+      place(tp, lanes[li3], rowsZ[tp.node[1]], 0);
+      nextNode(tp);
+    }
+    // 엘프 피규어: 들어서면 바로 보이는 로비 오른쪽 앞, 입구를 바라보게 전시
+    if (HUMAN.elf) place(elfStatue(), 4, L.front - 8.5, -0.3);
     // 안내 데스크 직원
     var staff = makePerson(seed * 13 + 7);
     staff.kind = 'staff'; place(staff, L.w / 2 - 5.5, L.front - 6.35, 0);
@@ -784,7 +832,7 @@
     var o = opts[Math.floor(p.r() * opts.length)];
     p.prev = p.node; p.node = o;
     p.tx = L.lanes[o[0]] + (p.r() - 0.5) * 1.2; p.tz = L.rowsZ[o[1]] + (p.r() - 0.5) * 1.2;
-    if (p.r() < 0.18) p.pause = 1 + p.r() * 3;   // 가끔 멈춰 두리번
+    if (!p.alwaysWalk && p.r() < 0.18) p.pause = 1 + p.r() * 3;   // 가끔 멈춰 두리번
   }
 
   function updateHuman(p, dt, now) {
@@ -804,6 +852,7 @@
       }
     }
     // 걷기 ↔ 서 있기를 부드럽게 섞는다
+    if (p.alwaysWalk) { p.mixer.update(dt * 0.9); return; }
     p.walkW += ((moving ? 1 : 0) - p.walkW) * Math.min(1, dt * 4);
     if (p.acts.walk) { p.acts.walk.setEffectiveWeight(p.walkW); p.acts.walk.timeScale = p.speed / 1.25; }
     if (p.acts.idle) p.acts.idle.setEffectiveWeight(1 - p.walkW);
