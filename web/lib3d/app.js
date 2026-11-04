@@ -436,7 +436,7 @@
     { top: 0x5a5f66, bottom: 0x1f2126, beard: true }, { top: 0x7b8a6a, bottom: 0x4a4038, beard: false },
     { top: 0x23252b, bottom: 0x23252b, beard: false }, { top: 0x8a4a3a, bottom: 0x3a4352, beard: true },
   ];
-  var POSES = ['sad_pose', 'agree', 'headShake'];   // 덧입히는 동작(고개 숙이기·끄덕임·도리도리)
+  var POSES = [];   // 덧입히는 동작은 쓰지 않는다(반복 끄덕임이 어색함) — 시선은 setLook()으로
   // 손님 옷차림: 바지·윗옷·피부색
   var LOOKS = [
     { pants: 0x2f4a6e, top: 0xf2efe8, skin: 0xe8b996 }, { pants: 0x1e1f22, top: 0x8c2f39, skin: 0xc68a62 },
@@ -478,7 +478,7 @@
           HUMAN.beachMat = mat({ pants: 0xe9b995, top: 0xd92f45, skin: 0xe9b995, beach: true });
           HUMAN.dressed = dg;
           respawn();
-        } catch (e) { HUMAN.dressed = null; }
+        } catch (e) { console.warn('3D 서재 사람 모형:', e); HUMAN.dressed = null; }
         loader.load(MODEL_BASE + 'readyplayer.me.glb', function (mg) {
           try {
             var mats = {};
@@ -498,10 +498,10 @@
               return { top: suit('Wolf3D_Outfit_Top', lk.top), bottom: suit('Wolf3D_Outfit_Bottom', lk.bottom), beard: lk.beard };
             }) };
             respawn();
-          } catch (e) { HUMAN.man = null; }
-        }, undefined, function () { /* 못 받으면 여자 손님만 */ });
-      }, undefined, function () { /* 못 받으면 마네킹 그대로 */ });
-    }, undefined, function () { /* 못 받으면 단순한 사람 그대로 */ });
+          } catch (e) { console.warn('3D 서재 사람 모형:', e); HUMAN.man = null; }
+        }, undefined, function (e) { console.warn('3D 서재 사람 모형:', e); /* 못 받으면 여자 손님만 */ });
+      }, undefined, function (e) { console.warn('3D 서재 사람 모형:', e); /* 못 받으면 마네킹 그대로 */ });
+    }, undefined, function (e) { console.warn('3D 서재 사람 모형:', e); /* 못 받으면 단순한 사람 그대로 */ });
   }
   // ── 옷 입은 사람: Michelle(glTF)에 Xbot의 걷기·서 있기 동작을 옮겨 입힌다 ──
   function boneKey(n) { return n.replace(/^mixamorig:?/, ''); }   // Mixamo 접두사를 빼면 readyplayer.me 뼈 이름과 같다
@@ -687,10 +687,23 @@
     g.scale.setScalar(sc);
     return { g: g, mixer: mixer, acts: acts, clips: HUMAN.clips, model: model, handL: handL, r: r, phase: r() * 6, sc: sc, walkW: 0 };
   }
-  function addPose(p, name, w, speed) {   // 서 있는 사람 위에 덧입히는 동작
-    if (!p.mixer || !p.clips[name]) return;
-    var a = p.mixer.clipAction(p.clips[name]);
-    a.blendMode = T.AdditiveAnimationBlendMode; a.setEffectiveWeight(w); a.timeScale = speed || 1; a.play();
+  // 서 있는 사람의 시선: 반복 끄덕임 동작 대신 머리 뼈를 천천히 돌린다
+  // read: 고개를 숙이고 책을 본다 / browse: 서가를 따라 천천히 둘러본다 / calm: 가끔 주변을 본다
+  function setLook(p, kind) {
+    if (!p.mixer) return;
+    p.look = kind; p.headBone = p.headBone || findBone(p.model, 'Head'); p.neckBone = p.neckBone || findBone(p.model, 'Neck');
+  }
+  function applyLook(p, now) {
+    if (!p.look || !p.headBone || p.walkW > 0.5) return;
+    var t = now / 1000 + p.phase * 7, pitch = 0, yaw = 0;
+    if (p.look === 'read') { pitch = 0.42 + Math.sin(t * 0.35) * 0.03; yaw = Math.sin(t * 0.13) * 0.06; }
+    else if (p.look === 'browse') {   // 몇 초씩 한곳을 보다가 천천히 옮긴다
+      var s = Math.sin(t * 0.18) + 0.35 * Math.sin(t * 0.07 + 1.3);
+      yaw = Math.max(-1, Math.min(1, s * 1.6)) * 0.45; pitch = 0.12 + Math.sin(t * 0.11 + 0.7) * 0.06;
+    } else { yaw = Math.sin(t * 0.09) * 0.3; pitch = 0.04; }
+    var k = 1 - p.walkW * 2;
+    if (p.neckBone) { p.neckBone.rotateY(yaw * 0.4 * k); p.neckBone.rotateX(pitch * 0.4 * k); }
+    p.headBone.rotateY(yaw * 0.6 * k); p.headBone.rotateX(pitch * 0.6 * k);
   }
   function carryBook(p) {   // 왼손에 든 책
     if (!p.handL) return;
@@ -704,7 +717,7 @@
   function heldBook(p) {   // 가슴 앞에 펼쳐 든 책
     var bk = new T.Mesh(new T.BoxGeometry(0.32, 0.22, 0.03), [M.white, M.white, M.white, M.white, std(PALETTE[Math.floor(p.r() * PALETTE.length)], 0.6), M.white]);
     bk.position.set(0, 1.22, 0.3); bk.rotation.x = -0.9; (p.body || p.g).add(bk);
-    if (p.mixer) { bk.parent.remove(bk); carryBook(p); addPose(p, 'sad_pose', 0.8); return; }
+    if (p.mixer) { bk.parent.remove(bk); carryBook(p); setLook(p, 'read'); return; }
     p.armL.rotation.set(-1.15, 0, 0.25); p.armR.rotation.set(-1.15, 0, -0.25);
     p.head.rotation.x = 0.35;
   }
@@ -731,7 +744,7 @@
       if (r() < 0.55) {
         var p2 = makePerson(seed * 53 + j + 400);
         p2.kind = 'browse'; p2.t = r() * 4;
-        if (p2.mixer) { addPose(p2, r() < 0.5 ? 'agree' : 'headShake', 0.35 + r() * 0.3, 0.35 + r() * 0.3); if (r() < 0.4) carryBook(p2); }
+        if (p2.mixer) { setLook(p2, 'browse'); if (r() < 0.4) carryBook(p2); }
         if (r() < 0.5) place(p2, s.x + (r() - 0.5) * 2.4, s.z + 3.15, Math.PI);          // 평대 앞
         else place(p2, s.x - BOOTH_W / 2 + 1.05, s.z - 0.2 + (r() - 0.5) * 3, Math.PI / 2);   // 옆 서가 앞
       }
@@ -758,7 +771,7 @@
     // 안내 데스크 직원
     var staff = makePerson(seed * 13 + 7);
     staff.kind = 'staff'; place(staff, L.w / 2 - 5.5, L.front - 6.35, 0);
-    if (staff.mixer) addPose(staff, 'agree', 0.3, 0.4);
+    if (staff.mixer) setLook(staff, 'calm');
   }
 
   function nextNode(p) {
@@ -774,7 +787,7 @@
     if (p.r() < 0.18) p.pause = 1 + p.r() * 3;   // 가끔 멈춰 두리번
   }
 
-  function updateHuman(p, dt) {
+  function updateHuman(p, dt, now) {
     var moving = false;
     if (p.kind === 'walk') {
       if (p.pause > 0) p.pause -= dt;
@@ -795,12 +808,13 @@
     if (p.acts.walk) { p.acts.walk.setEffectiveWeight(p.walkW); p.acts.walk.timeScale = p.speed / 1.25; }
     if (p.acts.idle) p.acts.idle.setEffectiveWeight(1 - p.walkW);
     p.mixer.update(dt);
+    applyLook(p, now);
   }
 
   function updatePeople(dt, now) {
     for (var i = 0; i < people.length; i++) {
       var p = people[i];
-      if (p.mixer) { updateHuman(p, dt); continue; }
+      if (p.mixer) { updateHuman(p, dt, now); continue; }
       if (p.kind === 'walk') {
         if (p.pause > 0) {
           p.pause -= dt;
