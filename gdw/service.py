@@ -1532,13 +1532,15 @@ class Service:
             return {"success": False, "error": f".env에 쓸 수 없습니다 ({config.ENV_PATH}): {error}"}
         self._sync_runtime(force_libraries=True)
         note = f" 단, {', '.join(fixed)}는 실제 환경변수로도 정해져 있어 그 값이 우선합니다." if fixed else ""
+        if not config.plex_enabled():
+            note += " (GDWPLX_ENABLED=false라 Plex 스캔은 꺼져 있습니다)"
         return {"success": True, "message": "Plex 설정을 저장했습니다. 실행 중인 감시에 자동 반영됩니다." + note}
 
     def _rpc_check_plex(self, ctx):
         """Plex 접속·토큰 확인 (화면에서 입력한 값 우선) + 라이브러리 폴더 목록"""
         settings = self._settings()
         env = ctx.get("env") or {}
-        url = str(env.get("plex_url") or settings.get("plex_url") or "").strip().rstrip("/")
+        url = str(env.get("plex_url") or settings.get("plex_url") or config.env("PLEX_URL") or "").strip().rstrip("/")
         token = str(env.get("plex_token") or "").strip() or settings.get("plex_token") or ""
         pmap = env.get("plex_path_map") if "plex_path_map" in env else settings.get("plex_path_map")
         ok, msg = plex.check(url, token)

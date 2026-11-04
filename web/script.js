@@ -795,6 +795,8 @@
         }).catch(function (e) { toast(e.message, true); });
     }
     function switchTab(name) {
+        var tb = app.querySelector('.gdw-tabs [data-tab="' + name + '"]');
+        if (tb && tb.hidden) name = 'events';   // 설정으로 꺼진 메뉴 (Plex 설정: GDWPLX_ENABLED)
         st.tab = name;
         $$('[data-tab]').forEach(function (b) { b.classList.toggle('is-on', b.getAttribute('data-tab') === name); b.setAttribute('aria-selected', b.getAttribute('data-tab') === name); });
         $$('[data-pane]').forEach(function (p) { p.hidden = p.getAttribute('data-pane') !== name; });

@@ -179,6 +179,7 @@ venv\Scripts\python app.py
 | `BOOKOASIS_DB_URL_<TYPE>` | (없음) | 세션별로 따로 지정 (예: `BOOKOASIS_DB_URL_ADULT`) |
 | `LIBRARIES_FILE` | `DATA_DIR/libraries.manual.json` | DB 없이 쓸 때 보관함 정의 파일 |
 | `GDW_ENABLED` / `WTM_ENABLED` / `MINI_ENABLED` | `true` / `false` / `true` | 모듈 켜기/끄기. 드라이브 변경 감시를 끄면 `/`는 웹툰(또는 미니게임) 화면으로 넘어감 |
+| `GDWPLX_ENABLED` | `false` | 드라이브 변경 감시 FOR PLEX - [드라이브 변경 감시 > Plex 설정] 메뉴와 Plex 부분 스캔 (`GDW_ENABLED`도 켜져 있을 때) |
 | `MINI_COVERS_DIR` | `mini/games/picture-territory/covers` | 그림 땅따먹기 표지 그림 폴더 |
 | `WTM_DATA_DIR` | `DATA_DIR/webtoon` | 웹툰 데이터(titles.json, 이력, 로그, settings.json) |
 | `WTM_HANDOFF_GDW` | `true` | 받은 회차를 드라이브 변경 감시에 바로 넘김 |
@@ -449,6 +450,7 @@ Drive Changes/Activity 확인 (기본 60초)
 ### Plex에도 스캔 보내기 (드라이브 변경 감시 FOR PLEX)
 감시는 그대로(구글 드라이브 변경 감지 → rclone VFS 새로고침) 두고, 바뀐 폴더가 **Plex 라이브러리 폴더 안**이면 Plex에 그 폴더만
 부분 스캔하라고 보냅니다 (`/library/sections/{id}/refresh?path=폴더`). BookOasis 보관함과 같은 폴더면 둘 다 보냅니다.
+- `.env`에 `GDWPLX_ENABLED=true`를 넣고 다시 시작하면 메뉴가 보입니다(기본 false - 메뉴 숨김, Plex 스캔 안 함).
 - [드라이브 변경 감시 > **Plex 설정**]에서 **Plex 주소 · PLEX_TOKEN · 경로 매핑**을 넣고 저장 → **Plex 확인**으로 라이브러리와 폴더가 보이는지 확인
   (`.env`의 `PLEX_URL`, `PLEX_TOKEN`, `PLEX_PATH_MAP`). 라이브러리 목록은 Plex에서 10분마다 자동으로 읽습니다.
 - Plex가 도커 등에서 다른 경로로 보면 경로 매핑: `이 프로그램 경로=Plex 경로` (예: `/mnt/gds2=/data`), 여러 개는 `;`.

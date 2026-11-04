@@ -140,6 +140,11 @@ def data_dir():
     return os.path.abspath(path if os.path.isabs(path) else os.path.join(ROOT, path))
 
 
+def plex_enabled():
+    """GDWPLX_ENABLED: 드라이브 변경 감시 FOR PLEX (Plex 설정 메뉴 + Plex 부분 스캔). 기본 끔"""
+    return env_bool("GDWPLX_ENABLED", False)
+
+
 def settings():
     """워커·화면이 쓰는 실행 환경 (예전 플러그인 설정 자리)."""
     return {
@@ -149,7 +154,7 @@ def settings():
         "webhook_token": env("WEBHOOK_TOKEN"),
         "auto_start": env_bool("AUTO_START", True),
         # Plex: 비워 두면 Plex 스캔 안 함. 경로 매핑은 '이 프로그램 경로=Plex 서버 경로'를 ; 로 여러 개
-        "plex_url": (env("PLEX_URL") or "").strip().rstrip("/"),
+        "plex_url": (env("PLEX_URL") or "").strip().rstrip("/") if plex_enabled() else "",
         "plex_token": env("PLEX_TOKEN"),
         "plex_path_map": env("PLEX_PATH_MAP"),
     }

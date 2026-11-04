@@ -59,7 +59,7 @@
       items: [
         { tab: 'events', label: '변경 기록', icon: 'list-check' },
         { tab: 'setup', label: '감시 설정', icon: 'sliders' },
-        { tab: 'plex', label: 'Plex 설정', icon: 'film' },
+        { tab: 'plex', label: 'Plex 설정', icon: 'film', needs: 'gdwplx' },  // .env GDWPLX_ENABLED=true 일 때만
         { tab: 'schedule', label: '스캔 일정', icon: 'calendar-days' },
         { tab: 'log', label: '로그', icon: 'terminal' }
       ] },
@@ -338,6 +338,7 @@
           h('div', { class: 'about-row nav-order-head' }, [h('b', { text: m.title }),
             arrows(groupIds, gi, function (l) { navOrder.groups = l; }, m.title)])]);
         orderedItems(m).forEach(function (it, ii) {
+          if (it.needs && info[it.needs] === false) return;   // 설정으로 꺼진 하위 메뉴
           card.appendChild(h('div', { class: 'nav-order-item' }, [h('span', { text: it.label }),
             arrows(tabs, ii, function (l) { navOrder.items[m.id] = l; }, it.label)]));
         });
@@ -631,6 +632,26 @@
       navOrder = { groups: m.ui.nav.groups || [], items: m.ui.nav.items || {} };
       storeSet(NAV_KEY, JSON.stringify(navOrder));
     }
+    // 설정으로 꺼진 하위 메뉴 숨기기 (needs: /api/modules의 키 - 예: Plex 설정은 gdwplx)
+    MENU.forEach(function (g) {
+      (g.items || []).forEach(function (it) {
+        if (!it.needs || m[it.needs]) return;
+        var link = g.itemsEl && g.itemsEl.querySelector('.nav-link[data-tab="' + CSS.escape(it.tab) + '"]');
+        if (link) link.hidden = true;
+        if (g.id === current) {
+          var btn = tabButton(it.tab);
+          if (btn) {
+            btn.hidden = true;
+            var pane = document.querySelector('[data-pane="' + CSS.escape(it.tab) + '"]');
+            if (pane) pane.hidden = true;
+            if (btn.classList.contains('is-on') || btn.classList.contains('active') || location.hash === '#' + it.tab) {
+              var first = tabBar() && tabBar().querySelector('[data-tab]:not([hidden])');
+              if (first) first.click();
+            }
+          }
+        }
+      });
+    });
     applyNavOrder();  // 서버에서 받은 게임 메뉴도 순서대로
     syncActive();
     // 아이콘 배지: 지금 보는 화면의 모듈 버전 (드라이브 변경 감시 / 웹툰 다운로더 / 미니게임마다 다름)

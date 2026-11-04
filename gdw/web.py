@@ -171,8 +171,10 @@ def modules():
     # 웹툰 다운로더가 이 프로그램의 기본 모듈 (드라이브 변경 감시는 필요할 때 켜는 부가 모듈)
     # 드라이브 변경 감시는 리눅스 전용(경로를 /로 시작하는 리눅스 경로로 다루고, 실시간 감지는 inotify) -
     # 윈도우에서는 기본으로 끈다
-    return {"wtm": config.env_bool("WTM_ENABLED", True), "gdw": config.env_bool("GDW_ENABLED", os.name != "nt"),
-            "mini": config.env_bool("MINI_ENABLED", True)}
+    gdw = config.env_bool("GDW_ENABLED", os.name != "nt")
+    # gdwplx: 드라이브 변경 감시의 Plex 설정 메뉴와 Plex 스캔 (드라이브 변경 감시가 켜져 있을 때만, 기본 끔)
+    return {"wtm": config.env_bool("WTM_ENABLED", True), "gdw": gdw,
+            "gdwplx": gdw and config.plex_enabled(), "mini": config.env_bool("MINI_ENABLED", True)}
 
 
 class Handler(BaseHTTPRequestHandler):
