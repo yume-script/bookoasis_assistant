@@ -65,6 +65,11 @@
     border-radius: 8px; background: #fff; color: #1d1e20; min-width: 0; }
   .l3d-ai .warn { color: #b3261e; }
   .l3d-ai .body { flex: 1; overflow: auto; }
+  .l3d-ppl { width: min(560px, calc(100% - 24px)); }
+  .l3d-ppl-t { border-collapse: collapse; width: 100%; font-size: 0.82rem; }
+  .l3d-ppl-t th, .l3d-ppl-t td { padding: 4px 5px; text-align: left; border-bottom: 1px solid #eee8de; }
+  .l3d-ppl-t th { font-weight: 700; white-space: nowrap; }
+  .l3d-ppl-t input { width: 100%; min-width: 48px; box-sizing: border-box; }
   .l3d-ask { position: absolute; right: 12px; top: 12px; bottom: 70px; width: min(400px, calc(100% - 24px)); z-index: 6; display: none;
     flex-direction: column; gap: 8px; background: rgba(255, 255, 255, 0.97); color: #1d1e20; border-radius: 16px; padding: 14px;
     box-shadow: 0 10px 40px rgba(0, 0, 0, 0.18); }
@@ -184,6 +189,7 @@
         <button type="button" class="l3d-btn" id="l3d-set-all">전부 보기</button>
         <button type="button" class="l3d-btn" id="l3d-set-close">닫기</button>
         <button type="button" class="l3d-btn" id="l3d-set-ai">AI 설정</button>
+        <button type="button" class="l3d-btn" id="l3d-set-ppl">인물 수</button>
       </div>
     </div>
     <div class="l3d-set l3d-ai" id="l3d-ai" role="dialog" aria-label="3D 서재 AI 설정">
@@ -214,6 +220,17 @@
         <button type="button" class="l3d-btn primary" id="l3d-ai-save">저장</button>
         <button type="button" class="l3d-btn" id="l3d-ai-test">MCP 연결 시험</button>
         <button type="button" class="l3d-btn" id="l3d-ai-close">닫기</button>
+      </div>
+    </div>
+    <div class="l3d-set l3d-ai l3d-ppl" id="l3d-ppl" role="dialog" aria-label="층별 인물 수">
+      <h3>층별 인물 수</h3>
+      <p class="sub">층마다 각 인물을 몇 명 둘지 정합니다 (0~20). 비워 두면 자동입니다 — 걷는 손님은 보관함 수에 따라 2~5명, 책 고르는·서서 읽는 손님은 구역마다 확률로, 대화하는 손님은 AI 손님 대화가 켜졌을 때 한 쌍, 숨은 인물은 층에 들어올 때 3번에 1번꼴, 나머지는 1명.</p>
+      <div class="body"><table class="l3d-ppl-t" id="l3d-ppl-t"></table></div>
+      <p class="sub" id="l3d-ppl-msg"></p>
+      <div class="row">
+        <button type="button" class="l3d-btn primary" id="l3d-ppl-save">저장</button>
+        <button type="button" class="l3d-btn" id="l3d-ppl-auto">모두 자동</button>
+        <button type="button" class="l3d-btn" id="l3d-ppl-close">닫기</button>
       </div>
     </div>
     <div class="l3d-ask" id="l3d-ask" role="dialog" aria-label="안내 데스크에 질문">

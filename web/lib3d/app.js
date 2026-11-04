@@ -917,80 +917,106 @@
     p.head.rotation.x = 0.35;
   }
 
+  // 층별 인물 수 ([설정 > 인물 수], lib3d.json의 people.{층 키}.{종류}) - 비우면 자동
+  var PEOPLE = {};
+  var PEOPLE_KINDS = [
+    { k: 'walk', label: '걷는 손님' }, { k: 'browse', label: '책 고르는 손님' }, { k: 'read', label: '서서 읽는 손님' },
+    { k: 'sit', label: '벤치 손님' }, { k: 'chat', label: '대화하는 손님(쌍)' }, { k: 'staff', label: '안내 직원' },
+    { k: 'trooper', label: '스톰트루퍼' }, { k: 'elf', label: '엘프' }, { k: 'beach', label: '숨은 인물(비키니)' },
+  ];
+  var PEOPLE_MAX = 20;
   function spawnPeople(fl, seed) {
     people = [];
+    chatPair = null;
     if (!layout) return;
-    var r = rnd(seed + 99), L = layout, n = 0;
+    var r = rnd(seed + 99), L = layout, n = 0, secs = L.sections || [];
+    var cfg = PEOPLE[fl.key] || {};
+    function cnt(kind, auto) {   // 저장한 수가 있으면 그 수, 없으면 자동
+      var v = cfg[kind];
+      return (typeof v === 'number' && v >= 0) ? Math.min(PEOPLE_MAX, v) : auto;
+    }
     function place(p, x, z, ry) { p.g.position.set(x, 0, z); p.g.rotation.y = ry; parent.add(p.g); people.push(p); n++; return p; }
     // 통로 격자 (서가 사이 세로 통로 x, 서가 줄 앞 가로 통로 z, 로비)
     var lanes = [], rowsZ = [L.front - 6.5];
     for (var c = 0; c <= L.cols; c++) lanes.push((c - L.cols / 2) * (BOOTH_W + GAP));
     for (var rr = 0; rr < L.rows; rr++) rowsZ.push(-LOBBY + GAP / 2 - rr * (BOOTH_D + GAP));
     L.lanes = lanes; L.rowsZ = rowsZ;
-    var walkers = Math.min(5, 2 + Math.floor(fl.libs.length / 2));
-    for (var i = 0; i < walkers; i++) {
-      var p = makePerson(seed * 31 + i), li = Math.floor(r() * lanes.length), zi = Math.floor(r() * rowsZ.length);
-      p.kind = 'walk'; p.node = [li, zi]; p.speed = 0.95 + r() * 0.45;
+    function walker(p, speed, row) {   // 통로를 걷는 사람으로 세운다
+      var li = Math.floor(r() * lanes.length), zi = row === undefined ? Math.floor(r() * rowsZ.length) : Math.min(row, rowsZ.length - 1);
+      p.kind = 'walk'; p.node = [li, zi]; p.speed = speed;
       place(p, lanes[li], rowsZ[zi], 0);
       nextNode(p);
+      return p;
     }
-    // 서가 앞에서 고르는 손님 (구역마다 반쯤)
-    (L.sections || []).forEach(function (s, j) {
-      if (r() < 0.3) {
-        var p2 = makePerson(seed * 53 + j + 400);
-        p2.kind = 'browse'; p2.t = r() * 4;
-        if (p2.mixer) { setLook(p2, 'browse'); if (r() < 0.4) carryBook(p2); }
-        if (r() < 0.5) place(p2, s.x + (r() - 0.5) * 2.4, s.z + 3.15, Math.PI);          // 평대 앞
-        else place(p2, s.x - BOOTH_W / 2 + 1.05, s.z - 0.2 + (r() - 0.5) * 3, Math.PI / 2);   // 옆 서가 앞
-      }
-      if (r() < 0.12) {   // 서서 읽는 손님
-        var p3 = makePerson(seed * 71 + j + 800);
-        p3.kind = 'read'; place(p3, s.x + BOOTH_W / 2 - 1.2, s.z + 2.6, -Math.PI / 2 - 0.4); heldBook(p3);
-      }
+    // 정한 수만큼 구역을 고른다 (자동이면 구역마다 확률로)
+    function pickSections(kind, chance) {
+      var out = [];
+      if (!secs.length) return out;
+      var v = cnt(kind, -1);
+      if (v < 0) { secs.forEach(function (s, j) { if (r() < chance) out.push([s, j]); }); return out; }
+      var start = Math.floor(r() * secs.length);
+      for (var q = 0; q < v; q++) out.push([secs[(start + q) % secs.length], q]);
+      return out;
+    }
+    var i;
+    // 걷는 손님
+    var walkers = cnt('walk', Math.min(5, 2 + Math.floor(fl.libs.length / 2)));
+    for (i = 0; i < walkers; i++) walker(makePerson(seed * 31 + i), 0.95 + r() * 0.45);
+    // 서가 앞에서 고르는 손님 (평대 앞 또는 옆 서가 앞)
+    pickSections('browse', 0.3).forEach(function (sj, q) {
+      var s = sj[0], p2 = makePerson(seed * 53 + sj[1] + 400 + q * 7);
+      p2.kind = 'browse'; p2.t = r() * 4;
+      if (p2.mixer) { setLook(p2, 'browse'); if (r() < 0.4) carryBook(p2); }
+      if (r() < 0.5) place(p2, s.x + (r() - 0.5) * 2.4, s.z + 3.15, Math.PI);
+      else place(p2, s.x - BOOTH_W / 2 + 1.05, s.z - 0.2 + (r() - 0.5) * 3, Math.PI / 2);
     });
-    // 벤치에 앉은 손님 (책을 읽으며)
-    var sit = makePerson(seed * 97 + 5);
-    if (sit.mixer) {   // 관절 모형은 벤치 옆에 서서 읽는다
-      sit.kind = 'read'; place(sit, -1.6, L.front - 2.6, Math.PI + 0.5); heldBook(sit);
-    } else {
-      sit.kind = 'sit'; place(sit, -2.8, L.front - 3.25, Math.PI);
-      sit.body.position.y = -0.47; sit.legL.rotation.x = -1.5; sit.legR.rotation.x = -1.5; heldBook(sit);
+    // 서서 읽는 손님
+    pickSections('read', 0.12).forEach(function (sj, q) {
+      var s = sj[0], p3 = makePerson(seed * 71 + sj[1] + 800 + q * 7);
+      p3.kind = 'read'; place(p3, s.x + BOOTH_W / 2 - 1.2, s.z + 2.6 - Math.floor(q / secs.length) * 1.4, -Math.PI / 2 - 0.4); heldBook(p3);
+    });
+    // 벤치 손님 (관절 모형은 벤치 옆에 서서 읽는다)
+    var sits = cnt('sit', 1);
+    for (i = 0; i < sits; i++) {
+      var sit = makePerson(seed * 97 + 5 + i * 11);
+      if (sit.mixer) {
+        sit.kind = 'read'; place(sit, -1.6 - i * 0.9, L.front - 2.6, Math.PI + 0.5); heldBook(sit);
+      } else {
+        sit.kind = 'sit'; place(sit, -2.8 + (i % 3) * 0.75, L.front - 3.25, Math.PI);
+        sit.body.position.y = -0.47; sit.legL.rotation.x = -1.5; sit.legR.rotation.x = -1.5; heldBook(sit);
+      }
     }
-    // 숨은 인물: 층에 들어올 때 가끔(약 3번에 1번) 나타나 통로를 지나간다
-    if (r() < 0.34) {
-      var bk = makePerson(seed * 101 + 3, true), li2 = Math.floor(r() * lanes.length);
-      bk.kind = 'walk'; bk.node = [li2, 0]; bk.speed = 1.25; bk.hidden = true;
-      place(bk, lanes[li2], rowsZ[0], 0);
-      nextNode(bk);
-    }
-    // 책 이야기를 나누는 두 손님 (AI 손님 대화가 켜졌을 때): 서가 앞 통로에서 마주 본다
-    chatPair = null;
-    if (AI.chat && (L.sections || []).length) {
-      var cs = L.sections[Math.floor(r() * L.sections.length)];
-      var ca = makePerson(seed * 151 + 11), cb = makePerson(seed * 157 + 13);
+    // 숨은 인물: 자동이면 층에 들어올 때 가끔(약 3번에 1번)
+    var beach = cnt('beach', r() < 0.34 ? 1 : 0);
+    for (i = 0; i < beach; i++) { var bk = walker(makePerson(seed * 101 + 3 + i * 13, true), 1.25, 0); bk.hidden = true; }
+    // 책 이야기를 나누는 두 손님: 서가 입구 쪽에서 마주 본다 (AI 손님 대화가 켜지면 첫 쌍이 말풍선으로 이야기)
+    var pairs = secs.length ? cnt('chat', AI.chat ? 1 : 0) : 0, pstart = Math.floor(r() * Math.max(1, secs.length));
+    for (i = 0; i < pairs; i++) {
+      var cs = secs[(pstart + i) % secs.length], dz = Math.floor(i / secs.length) * 1.6;
+      var ca = makePerson(seed * 151 + 11 + i * 17), cb = makePerson(seed * 157 + 13 + i * 17);
       ca.kind = 'chat'; cb.kind = 'chat';
-      place(ca, cs.x + 2.3, cs.z + 3.3, Math.PI / 2 + 0.3);   // 평대 오른쪽, 서가 입구 쪽 (지도로 오면 정면 오른쪽에 보인다)
-      place(cb, cs.x + 3.3, cs.z + 3.3, -Math.PI / 2 - 0.3);
-      chatPair = [ca, cb];
+      place(ca, cs.x + 2.3, cs.z + 3.3 - dz, Math.PI / 2 + 0.3);
+      place(cb, cs.x + 3.3, cs.z + 3.3 - dz, -Math.PI / 2 - 0.3);
+      if (!chatPair) chatPair = [ca, cb];
     }
-    // 스톰트루퍼: 층마다 한 명이 통로를 순찰한다
+    // 스톰트루퍼: 통로를 순찰
     if (HUMAN.trooper) {
-      var tp = trooperHuman(rnd(seed * 131 + 9)), li3 = Math.floor(r() * lanes.length);
-      tp.kind = 'walk'; tp.node = [li3, Math.min(1, rowsZ.length - 1)]; tp.speed = 0.85;
-      place(tp, lanes[li3], rowsZ[tp.node[1]], 0);
-      nextNode(tp);
+      var troops = cnt('trooper', 1);
+      for (i = 0; i < troops; i++) walker(trooperHuman(rnd(seed * 131 + 9 + i * 19)), 0.85, i === 0 ? 1 : undefined);
     }
-    // 엘프 피규어: 들어서면 바로 보이는 로비 오른쪽 앞, 입구를 바라보게 전시
-    if (HUMAN.elfRig) {   // 엘프: 로비에서 시작해 통로를 걸어 다닌다
-      var ef = elfWalker(rnd(seed * 163 + 17)), li4 = Math.floor(r() * lanes.length);
-      ef.kind = 'walk'; ef.node = [li4, 0]; ef.speed = 1.0;
-      place(ef, lanes[li4], rowsZ[0], 0);
-      nextNode(ef);
-    } else if (HUMAN.elf) place(elfStatue(), 4, L.front - 8.5, -0.3);
+    // 엘프: 로비에서 시작해 통로를 걷는다 (뼈대를 못 심었으면 로비에 피규어로)
+    var elves = cnt('elf', 1);
+    for (i = 0; i < elves; i++) {
+      if (HUMAN.elfRig) walker(elfWalker(rnd(seed * 163 + 17 + i * 23)), 1.0, i === 0 ? 0 : undefined);
+      else if (HUMAN.elf) place(elfStatue(), 4 + i * 1.6, L.front - 8.5, -0.3);
+    }
     // 안내 데스크 직원
-    var staff = makePerson(seed * 13 + 7);
-    staff.kind = 'staff'; place(staff, L.w / 2 - 5.5, L.front - 6.35, 0);
-    if (staff.mixer) setLook(staff, 'calm');
+    var staffs = cnt('staff', 1);
+    for (i = 0; i < staffs; i++) {
+      var staff = makePerson(seed * 13 + 7 + i * 29);
+      staff.kind = 'staff'; place(staff, L.w / 2 - 5.5 - i * 1.1, L.front - 6.35, 0);
+      if (staff.mixer) setLook(staff, 'calm');
+    }
   }
 
   function nextNode(p) {
@@ -1639,7 +1665,50 @@
     bubble.style.left = ((tmpV.x + 1) / 2 * wrap.clientWidth) + 'px';
     bubble.style.top = ((1 - tmpV.y) / 2 * wrap.clientHeight - 6) + 'px';
   }
-  function hashNav() { if (location.hash === '#settings') openSettings(); if (location.hash === '#ai') openAI(); }
+  // 층별 인물 수: 층(열) × 인물 종류(행) 숫자 칸, 비우면 자동
+  var pplBox = el('l3d-ppl');
+  function openPeople() {
+    setBox.classList.remove('on'); aiBox.classList.remove('on'); pplBox.classList.add('on');
+    var t = el('l3d-ppl-t'); t.textContent = ''; el('l3d-ppl-msg').textContent = '';
+    if (!floors.length) { el('l3d-ppl-msg').textContent = '서재를 다 지은 뒤 다시 여세요.'; return; }
+    var hr = document.createElement('tr'); hr.appendChild(document.createElement('th'));
+    floors.forEach(function (f) { var th = document.createElement('th'); th.textContent = f.label; hr.appendChild(th); });
+    t.appendChild(hr);
+    PEOPLE_KINDS.forEach(function (pk) {
+      var tr = document.createElement('tr'), th = document.createElement('th'); th.textContent = pk.label; tr.appendChild(th);
+      floors.forEach(function (f) {
+        var td = document.createElement('td'), inp = document.createElement('input');
+        inp.type = 'number'; inp.min = 0; inp.max = PEOPLE_MAX; inp.placeholder = '자동';
+        inp.dataset.floor = f.key; inp.dataset.kind = pk.k;
+        var v = (PEOPLE[f.key] || {})[pk.k]; if (typeof v === 'number') inp.value = v;
+        td.appendChild(inp); tr.appendChild(td);
+      });
+      t.appendChild(tr);
+    });
+  }
+  function savePeople(auto) {
+    var out = {};
+    if (!auto) Array.prototype.forEach.call(pplBox.querySelectorAll('input[data-floor]'), function (inp) {
+      if (inp.value === '') return;
+      (out[inp.dataset.floor] = out[inp.dataset.floor] || {})[inp.dataset.kind] = Math.max(0, Math.min(PEOPLE_MAX, parseInt(inp.value, 10) || 0));
+    });
+    el('l3d-ppl-msg').textContent = '저장 중...';
+    postJSON('api/lib3d/settings', { people: out }).then(function (d) {
+      PEOPLE = d.people || {}; respawn(); stopChat();
+      if (auto) openPeople();
+      el('l3d-ppl-msg').textContent = '저장했습니다. 지금 층에 바로 반영했습니다.';
+    }).catch(function (e) { el('l3d-ppl-msg').textContent = e.message; });
+  }
+  el('l3d-set-ppl').addEventListener('click', openPeople);
+  el('l3d-ppl-save').addEventListener('click', function () { savePeople(false); });
+  el('l3d-ppl-auto').addEventListener('click', function () { savePeople(true); });
+  el('l3d-ppl-close').addEventListener('click', function () { pplBox.classList.remove('on'); });
+  function hashNav() {
+    if (location.hash === '#settings') openSettings();
+    if (location.hash === '#ai') openAI();
+    if (location.hash === '#people') { if (floors.length) openPeople(); else pendingPeople = true; }
+  }
+  var pendingPeople = false;
   window.addEventListener('hashchange', hashNav);
   setTimeout(hashNav, 0);
 
@@ -1749,6 +1818,7 @@
           return;
         }
         if (d.ai) setAI(d.ai);
+        PEOPLE = d.people || {};
         floors = makeFloors(libs);
         floors.forEach(function (f, i) {
           var cols = Math.max(2, Math.min(4, f.libs.length));
@@ -1760,6 +1830,7 @@
         buildFloor(Math.max(0, Math.min(cur, floors.length - 1)));
         home();
         msg.style.display = 'none';
+        if (pendingPeople) { pendingPeople = false; openPeople(); }
       })
       .catch(function (e) { msg.textContent = '불러오지 못했습니다: ' + e.message; });
   }

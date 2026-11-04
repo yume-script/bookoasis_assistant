@@ -22,7 +22,7 @@ from urllib.request import Request, urlopen
 
 from . import bookoasis_db, config
 
-VERSION = "2.9.0"
+VERSION = "2.10.0"
 CACHE_SEC = 300
 COVER_WIDTH = 200
 _DATA = {"at": 0.0, "v": None}
@@ -98,6 +98,35 @@ def save_settings(libraries):
     with _LOCK:
         _DATA.update(at=0.0, v=None)
     return data_
+
+
+PEOPLE_KINDS = ("walk", "browse", "read", "sit", "chat", "staff", "trooper", "elf", "beach")
+PEOPLE_MAX = 20
+
+
+def save_people(people):
+    """층별 인물 수 {"general": {"walk": 3, ...}, ...} 저장. 빈 값·없는 종류는 자동(저장하지 않음)"""
+    clean = {}
+    for floor, kinds in (people or {}).items():
+        if not re.match(r"^[A-Za-z0-9_]+$", str(floor)) or not isinstance(kinds, dict):
+            continue
+        row = {}
+        for kind, value in kinds.items():
+            if kind not in PEOPLE_KINDS or value is None or value == "":
+                continue
+            try:
+                row[kind] = max(0, min(PEOPLE_MAX, int(value)))
+            except (TypeError, ValueError):
+                raise ValueError("인물 수는 0~%d 사이 숫자여야 합니다: %s %s" % (PEOPLE_MAX, floor, kind))
+        if row:
+            clean[str(floor)] = row
+    data_ = dict(load_settings(), people=clean)
+    os.makedirs(config.data_dir(), exist_ok=True)
+    tmp = _settings_path() + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data_, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, _settings_path())
+    return clean
 
 
 def all_libraries():
