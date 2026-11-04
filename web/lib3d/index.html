@@ -48,15 +48,77 @@
     background: rgba(20, 21, 23, 0.25); display: none; pointer-events: none; }
   .l3d-stick i { position: absolute; left: 50%; top: 50%; width: 40px; height: 40px; margin: -20px 0 0 -20px; border-radius: 50%;
     background: rgba(255, 255, 255, 0.7); }
+  /* 설정 패널 */
+  .l3d-set { position: absolute; inset: 12px auto 12px 12px; width: min(380px, calc(100% - 24px)); z-index: 6; display: none; flex-direction: column;
+    background: rgba(255, 255, 255, 0.97); color: #1d1e20; border-radius: 16px; padding: 16px; box-shadow: 0 10px 40px rgba(0, 0, 0, 0.18); }
+  .l3d-set.on { display: flex; }
+  .l3d-set h3 { margin: 0 0 4px; font-size: 1rem; }
+  .l3d-set .sub { margin: 0 0 8px; font-size: 0.78rem; opacity: 0.7; }
+  .l3d-set .list { flex: 1; overflow: auto; border-top: 1px solid #e6e1d8; border-bottom: 1px solid #e6e1d8; padding: 4px 0; margin-bottom: 8px; }
+  .l3d-set-h { font-weight: 700; font-size: 0.85rem; padding: 10px 4px 4px; }
+  .l3d-set-row { display: block; padding: 5px 4px 5px 22px; font-size: 0.86rem; cursor: pointer; }
+  .l3d-set .row { display: flex; gap: 8px; flex-wrap: wrap; }
   /* 서재 안에서 읽기 (뷰어) */
-  .l3d-reader { position: absolute; inset: 0; z-index: 5; display: none; flex-direction: column; background: #121314; color: #eee; }
+  .l3d-reader { position: absolute; inset: 0; z-index: 5; display: none; flex-direction: column; background: rgba(24, 22, 20, 0.62);
+    backdrop-filter: blur(7px); -webkit-backdrop-filter: blur(7px); color: #eee; }
+  .l3d-r-stage { flex: 1; position: relative; display: flex; align-items: center; justify-content: center; perspective: 2400px;
+    overflow: hidden; cursor: pointer; padding: 18px 0 70px; }
+  .l3d-r-stage[hidden] { display: none; }
+  .l3d-book { position: relative; height: 100%; max-height: 900px; aspect-ratio: 0.7; max-width: 92%; transform: rotateX(9deg);
+    transform-style: preserve-3d; transition: transform 0.6s ease; }
+  .l3d-book.two { aspect-ratio: 1.4; }
+  .l3d-book.turning { transform: rotateX(9deg) translateY(-4px); }
+  .l3d-book::before { content: ''; position: absolute; inset: -10px -12px -12px; border-radius: 6px; background: #4a3424;
+    box-shadow: 0 30px 60px rgba(0, 0, 0, 0.45), inset 0 0 0 2px rgba(0, 0, 0, 0.25); transform: translateZ(-3px); }
+  .l3d-page, .l3d-face { position: absolute; top: 0; bottom: 0; background: #faf7f0; overflow: hidden;
+    box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.05); }
+  .l3d-page.l { left: 0; width: 50%; display: none; }
+  .l3d-page.r { left: 0; width: 100%; }
+  .l3d-book.two .l3d-page.l { display: block; }
+  .l3d-book.two .l3d-page.r { left: 50%; width: 50%; }
+  .l3d-page::after, .l3d-face::after { content: ''; position: absolute; inset: 0; pointer-events: none; }
+  .l3d-book.two .l3d-page.l::after { background: linear-gradient(to left, rgba(0, 0, 0, 0.18), rgba(0, 0, 0, 0) 9%); }
+  .l3d-book.two .l3d-page.r::after { background: linear-gradient(to right, rgba(0, 0, 0, 0.2), rgba(0, 0, 0, 0) 9%); }
+  .l3d-book:not(.two) .l3d-page.r::after { background: linear-gradient(to right, rgba(0, 0, 0, 0.12), rgba(0, 0, 0, 0) 5%); }
+  .l3d-page.r { box-shadow: 3px 3px 0 #ece6da, 6px 6px 0 #e2dccf, inset 0 0 0 1px rgba(0, 0, 0, 0.05); }
+  .l3d-page img, .l3d-face img { width: 100%; height: 100%; object-fit: contain; display: block; user-select: none; }
+  .l3d-page.blank, .l3d-face.blank { background: #f6f2e9; }
+  .l3d-leaf { position: absolute; top: 0; bottom: 0; display: none; transform-style: preserve-3d; transform-origin: left center;
+    transition: transform 0.6s cubic-bezier(0.45, 0.05, 0.3, 1); z-index: 3; }
+  .l3d-leaf.half { left: 50%; width: 50%; }
+  .l3d-leaf.full { left: 0; width: 100%; }
+  .l3d-leaf.fwd { display: block; transform: rotateY(0deg); }
+  .l3d-leaf.fwd.go { transform: rotateY(-180deg); }
+  .l3d-leaf.back { display: block; transform: rotateY(-180deg); }
+  .l3d-leaf.back.go { transform: rotateY(0deg); }
+  .l3d-leaf.full.fwd.go { transform: rotateY(-180deg) translateZ(1px); opacity: 0; transition: transform 0.6s cubic-bezier(0.45, 0.05, 0.3, 1), opacity 0.6s ease-in; }
+  .l3d-face { inset: 0; backface-visibility: hidden; -webkit-backface-visibility: hidden; }
+  .l3d-face.back { transform: rotateY(180deg); }
+  .l3d-leaf.go .l3d-face.front::after { background: linear-gradient(to left, rgba(0, 0, 0, 0.25), rgba(0, 0, 0, 0) 60%); }
+  .l3d-book.rtl { transform: rotateX(9deg) scaleX(-1); }
+  .l3d-book.rtl img { transform: scaleX(-1); }
+  .l3d-txt { position: absolute; inset: 7% 9% 8%; overflow: hidden; color: #2b2622; }
+  .l3d-txt article { height: 100%; column-gap: 48px; column-fill: auto; font: 400 clamp(13px, 1.5vh, 17px)/1.85 "Noto Serif KR", "Noto Sans KR", serif; }
+  .l3d-txt article p { margin: 0 0 0.8em; text-indent: 1em; }
+  .l3d-txt article h2, .l3d-txt article h3 { margin: 0 0 0.8em; font-size: 1.2em; }
+  .l3d-txt article img { max-width: 100%; max-height: 60%; display: block; margin: 8px auto; }
+  .l3d-pno { position: absolute; bottom: 3%; left: 0; right: 0; text-align: center; font-size: 11px; color: #9a9184; }
+  /* 책을 쥔 손 (아래쪽 양 모서리, 엄지가 종이 위로) */
+  .l3d-hand { position: absolute; bottom: -78px; width: 150px; height: 196px; z-index: 4; pointer-events: none;
+    filter: drop-shadow(0 6px 10px rgba(0, 0, 0, 0.35)); transition: transform 0.6s ease; }
+  .l3d-hand.left { left: -62px; transform: rotate(8deg); }
+  .l3d-hand.right { right: -62px; transform: scaleX(-1) rotate(8deg); }
+  .l3d-book.turning .l3d-hand.right { transform: scaleX(-1) rotate(4deg) translateY(-6px); }
+  .l3d-hand .palm, .l3d-hand .fing { fill: #e6b593; }
+  .l3d-hand .thumb { fill: #eebf9e; stroke: rgba(120, 70, 40, 0.25); stroke-width: 2; }
+  .l3d-book.rtl .l3d-hand.left { transform: rotate(8deg); }
   .l3d-reader.on { display: flex; }
-  .l3d-r-top { display: flex; align-items: center; gap: 8px; padding: 8px 10px; background: #1b1c1e; flex-wrap: wrap; }
+  .l3d-r-top { display: flex; align-items: center; gap: 8px; padding: 8px 10px; background: rgba(20, 20, 22, 0.75); flex-wrap: wrap; position: relative; z-index: 5; }
   .l3d-r-top b { flex: 1 1 160px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.92rem; }
   .l3d-r-top select { max-width: 220px; background: #2a2b2e; color: #eee; border: 1px solid #3a3b3f; border-radius: 8px; padding: 6px 8px; font: inherit; font-size: 0.82rem; }
   .l3d-r-top .pos { font-size: 0.8rem; opacity: 0.75; min-width: 64px; text-align: center; }
   .l3d-r-body { flex: 1; overflow: auto; display: flex; align-items: center; justify-content: center; position: relative; }
-  .l3d-r-body.images:not(.scroll) img { max-width: 100%; max-height: 100%; object-fit: contain; cursor: pointer; user-select: none; }
+  .l3d-r-body[hidden] { display: none; }
   .l3d-r-body.scroll { display: block; }
   .l3d-r-body.scroll img { display: block; width: min(820px, 100%); margin: 0 auto; }
   .l3d-r-body.epub { display: block; background: #f6f1e7; color: #2b2622; }
@@ -93,6 +155,17 @@
       </div>
     </div>
     <div class="l3d-map" id="l3d-map"></div>
+    <div class="l3d-set" id="l3d-set" role="dialog" aria-label="3D 서재 설정">
+      <h3>보여 줄 보관함</h3>
+      <p class="sub">고른 보관함만 서재에 진열합니다. 세션마다 한 층이고, 고른 것이 없는 세션은 층이 없어집니다.</p>
+      <div class="list" id="l3d-set-list"></div>
+      <p class="sub" id="l3d-set-msg"></p>
+      <div class="row">
+        <button type="button" class="l3d-btn primary" id="l3d-set-save">저장</button>
+        <button type="button" class="l3d-btn" id="l3d-set-all">전부 보기</button>
+        <button type="button" class="l3d-btn" id="l3d-set-close">닫기</button>
+      </div>
+    </div>
     <div class="l3d-reader" id="l3d-reader" role="dialog" aria-label="읽기">
       <div class="l3d-r-top">
         <b id="l3d-r-title"></b>
@@ -101,10 +174,19 @@
         <span class="pos" id="l3d-r-pos"></span>
         <button type="button" class="l3d-btn" id="l3d-r-next" aria-label="다음">▶</button>
         <button type="button" class="l3d-btn" id="l3d-r-mode" hidden>세로 스크롤</button>
+        <button type="button" class="l3d-btn" id="l3d-r-dir" hidden title="넘기는 방향 (만화는 보통 오른쪽→왼쪽)">왼쪽→오른쪽</button>
         <button type="button" class="l3d-btn" id="l3d-r-bo">BookOasis 뷰어</button>
         <button type="button" class="l3d-btn primary" id="l3d-r-close">서재로</button>
       </div>
-      <div class="l3d-r-body" id="l3d-r-body"></div>
+      <div class="l3d-r-stage" id="l3d-r-stage">
+        <div class="l3d-book" id="l3d-book">
+          <div class="l3d-page l" id="l3d-pg-l"></div>
+          <div class="l3d-page r" id="l3d-pg-r"></div>
+          <div class="l3d-leaf" id="l3d-leaf"><div class="l3d-face front"></div><div class="l3d-face back"></div></div>
+          <svg class="l3d-hand left" viewBox="0 0 160 210" aria-hidden="true"><path class="fing" d="M30 120 q-18 40 -6 80 l26 4 q4 -40 14 -70 z"/><path class="fing" d="M58 112 q-10 48 2 92 l26 2 q0 -44 6 -84 z"/><path class="fing" d="M88 116 q-4 44 10 84 l24 -6 q-8 -36 -6 -72 z"/><path class="palm" d="M18 150 q-6 -70 46 -90 q60 -16 84 30 q10 34 -14 64 q-50 30 -116 -4 z"/><path class="thumb" d="M96 58 q20 -46 50 -50 q14 4 8 22 q-12 34 -40 54 z"/></svg><svg class="l3d-hand right" viewBox="0 0 160 210" aria-hidden="true"><path class="fing" d="M30 120 q-18 40 -6 80 l26 4 q4 -40 14 -70 z"/><path class="fing" d="M58 112 q-10 48 2 92 l26 2 q0 -44 6 -84 z"/><path class="fing" d="M88 116 q-4 44 10 84 l24 -6 q-8 -36 -6 -72 z"/><path class="palm" d="M18 150 q-6 -70 46 -90 q60 -16 84 30 q10 34 -14 64 q-50 30 -116 -4 z"/><path class="thumb" d="M96 58 q20 -46 50 -50 q14 4 8 22 q-12 34 -40 54 z"/></svg>
+        </div>
+      </div>
+      <div class="l3d-r-body" id="l3d-r-body" hidden></div>
       <div class="l3d-r-msg" id="l3d-r-msg" hidden></div>
     </div>
     <div class="l3d-stick" id="l3d-stick"><i></i></div>
@@ -113,6 +195,7 @@
       <button type="button" class="l3d-btn" id="l3d-map-btn">지도</button>
       <button type="button" class="l3d-btn" id="l3d-home">입구로</button>
       <button type="button" class="l3d-btn" id="l3d-reload">새로고침</button>
+      <button type="button" class="l3d-btn" id="l3d-set-btn">설정</button>
     </div>
   </div>
 </main>

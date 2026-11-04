@@ -322,6 +322,8 @@ class Handler(BaseHTTPRequestHandler):
         q = parse_qs(self.path.partition("?")[2])
         key = (q.get("k") or [""])[0]
         try:
+            if path == "/api/lib3d/libraries":   # 설정 화면: 보관함 전부 + 보이는지
+                return self._send(200, dict(lib3d.all_libraries(), success=True))
             if path == "/api/lib3d/data":
                 return self._send(200, dict(lib3d.data(force=bool(q.get("refresh"))), success=True))
             if path == "/api/lib3d/cover":
@@ -406,7 +408,8 @@ class Handler(BaseHTTPRequestHandler):
         user = self._user()
         if not user and path not in PUBLIC:
             return self._deny(path)
-        if not path.startswith(("/api/rpc/", "/api/auth/", "/api/users")) and path not in ("/api/wtm/action", "/api/ui-prefs", "/api/mcp"):
+        if not path.startswith(("/api/rpc/", "/api/auth/", "/api/users")) and path not in ("/api/wtm/action", "/api/ui-prefs", "/api/mcp",
+                                                                                          "/api/lib3d/settings"):
             return self._send(404, {"success": False, "error": "없는 주소입니다."})
         if (self.headers.get("Content-Type") or "").split(";")[0].strip().lower() != "application/json":
             return self._send(415, {"success": False, "error": "Content-Type은 application/json이어야 합니다."})
@@ -424,6 +427,13 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(400, {"success": False, "error": "JSON 객체를 보내세요."})
         if path.startswith(("/api/auth/", "/api/users")):
             return self._auth_post(path, context, user)
+        if path == "/api/lib3d/settings":  # 3D 서재 설정: 보여 줄 보관함 ({"libraries": [키…] 또는 null=전부})
+            if not modules()["lib3d"]:
+                return self._send(404, {"success": False, "error": "BookOasis 3D 서재가 꺼져 있습니다 (LIB3D_ENABLED)."})
+            libs = context.get("libraries")
+            if libs is not None and not isinstance(libs, list):
+                return self._send(400, {"success": False, "error": "libraries는 목록이나 null이어야 합니다."})
+            return self._send(200, dict(lib3d.save_settings(libs), success=True))
         if path == "/api/mcp":  # 설정 > MCP: 토큰 만들기 / 끄기
             if config.overridden(["MCP_TOKEN"]):
                 return self._send(400, {"success": False, "error": "MCP_TOKEN이 실제 환경변수로 지정돼 있어 화면에서 바꿀 수 없습니다."})

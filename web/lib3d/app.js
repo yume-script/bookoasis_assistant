@@ -2,7 +2,9 @@
  * 세션별로 층(1층 일반 · 2층 성인 · 3층 오디오북 · 4층 비디오 …), 보관함은 서가 구역, 작품(시리즈)은
  * 평대의 표지 · 눈높이 칸의 표지 진열 · 나머지 칸의 책등(제목)으로. 빈칸은 장식용 책으로 채운다.
  * 데이터: api/lib3d/data · 표지: api/lib3d/cover · 열기: api/lib3d/open · 읽기: api/lib3d/volumes|book|page|chapter|pdf
- * 조작: W A S D·방향키 이동(Shift 빠르게), 끌기로 둘러보기, 책 누르기, 휴대폰은 왼쪽 아래 끌기로 이동 */
+ * 조작: W A S D·방향키 이동(Shift 빠르게), 끌기로 둘러보기, 책 누르기, 휴대폰은 왼쪽 아래 끌기로 이동
+ * 읽기: 두 손에 든 책 모양, 책장 넘김(넓은 화면은 두 쪽 펼침, 만화는 오른쪽→왼쪽도). 매장에는 걷고 책을 고르는 사람들.
+ * 설정(#settings): 보여 줄 보관함 고르기 - api/lib3d/libraries, POST api/lib3d/settings */
 (function () {
   'use strict';
   var wrap = document.getElementById('l3d');
@@ -280,6 +282,7 @@
     var bulb = new T.Mesh(new T.CircleGeometry(0.33, 24), M.lamp); bulb.rotation.x = Math.PI / 2; bulb.position.set(0, 2.33, 1.6); g.add(bulb);
     var cord = new T.Mesh(new T.CylinderGeometry(0.006, 0.006, CEIL - 2.58, 6), M.black); cord.position.set(0, (CEIL + 2.58) / 2, 1.6); g.add(cord);
     booths.push({ name: lib.name, x: cx, z: cz, count: lib.series.length });
+    if (layout) layout.sections.push({ x: cx, z: cz });
   }
 
   // ── 건물 (한 층) ──
@@ -289,6 +292,7 @@
     var w = cols * BOOTH_W + (cols - 1) * GAP + 12, back = -LOBBY - rows * (BOOTH_D + GAP) - 2, front = 10;
     var d = front - back, cz = (front + back) / 2;
     hall = { x0: -w / 2 + 0.6, x1: w / 2 - 0.6, z0: back + 0.6, z1: front - 0.6 };
+    layout = { w: w, front: front, back: back, cols: cols, rows: rows, sections: [] };
     floorTex.repeat.set(w / 7, d / 7);
     var fl0 = new T.Mesh(new T.PlaneGeometry(w, d), M.floor);
     fl0.rotation.x = -Math.PI / 2; fl0.receiveShadow = true; add(fl0, 0, 0, cz);
@@ -362,6 +366,145 @@
     lab.position.set(0, 3.05, 0.06); ev.add(lab);
     doorM.userData.elevator = true;
     elevator = doorM;
+  }
+
+  // ── 사람들: 통로를 걷는 손님, 서가 앞에서 책을 고르는 손님, 서서 읽는 손님, 벤치에 앉은 손님, 안내 직원 ──
+  // 둥근 몸통(회전체)·원통 팔다리·구 머리로 만든 단순한 사람. 누를 수 없고 걸어 다니는 사람과 부딪히지 않는다.
+  var people = [], layout = null;
+  var SKIN = [0xf1c9a5, 0xe5b48e, 0xc99067, 0x9c6845, 0xf6d9c4];
+  var CLOTH = [0x2f3b4c, 0x7a3b3b, 0xe4e0d8, 0x3f5a4a, 0x9b8f7a, 0x26292f, 0x5e6f86, 0xb07a4f, 0x6d5a7e, 0xcfc7b8, 0x8a9a6b];
+  var PANTS = [0x23262b, 0x3a4352, 0x5b5248, 0x2e3a2f, 0xb9b0a0, 0x1f2633];
+  var HAIR = [0x1d1a17, 0x3b2a1e, 0x6b4a2e, 0x9a7b5a, 0x2a2a2a, 0xb8b1a6];
+  var torsoGeo = new T.LatheGeometry([new T.Vector2(0.15, 0), new T.Vector2(0.17, 0.14), new T.Vector2(0.195, 0.4),
+    new T.Vector2(0.205, 0.5), new T.Vector2(0.17, 0.58), new T.Vector2(0.07, 0.63), new T.Vector2(0.0, 0.64)], 24);
+  var legGeo = new T.CylinderGeometry(0.075, 0.058, 0.86, 14);
+  var armGeo = new T.CylinderGeometry(0.052, 0.042, 0.6, 12);
+  var ballGeo = new T.SphereGeometry(1, 20, 14);
+  var hairGeo = new T.SphereGeometry(0.118, 22, 14, 0, Math.PI * 2, 0, Math.PI * 0.56);
+  var neckGeo = new T.CylinderGeometry(0.048, 0.052, 0.12, 12);
+  function std(c, r) { return new T.MeshStandardMaterial({ color: c, roughness: r || 0.8 }); }
+
+  function person(seed) {
+    var r = rnd(seed * 7919 + 13), pick = function (a) { return a[Math.floor(r() * a.length)]; };
+    var skin = std(pick(SKIN), 0.7), shirt = std(pick(CLOTH)), pants = std(pick(PANTS)), hair = std(pick(HAIR), 0.9),
+        shoe = std(r() < 0.5 ? 0x1b1b1b : 0xe8e4dc, 0.6);
+    var g = new T.Group(), body = new T.Group();
+    g.add(body);
+    function limb(geo, mat, px, py, len) {
+      var pivot = new T.Group(); pivot.position.set(px, py, 0); body.add(pivot);
+      var m = new T.Mesh(geo, mat); m.position.y = -len / 2; m.castShadow = true; pivot.add(m);
+      return pivot;
+    }
+    var legL = limb(legGeo, pants, -0.09, 0.92, 0.86), legR = limb(legGeo, pants, 0.09, 0.92, 0.86);
+    [legL, legR].forEach(function (leg) {
+      var s = new T.Mesh(ballGeo, shoe); s.scale.set(0.065, 0.045, 0.13); s.position.set(0, -0.88, 0.035); leg.add(s);
+    });
+    var torso = new T.Mesh(torsoGeo, shirt); torso.position.y = 0.88; torso.castShadow = true; body.add(torso);
+    var armL = limb(armGeo, shirt, -0.235, 1.46, 0.6), armR = limb(armGeo, shirt, 0.235, 1.46, 0.6);
+    [armL, armR].forEach(function (arm) { var hnd = new T.Mesh(ballGeo, skin); hnd.scale.setScalar(0.048); hnd.position.y = -0.64; arm.add(hnd); });
+    var neck = new T.Mesh(neckGeo, skin); neck.position.y = 1.55; body.add(neck);
+    var head = new T.Group(); head.position.y = 1.7; body.add(head);
+    var face = new T.Mesh(ballGeo, skin); face.scale.set(0.105, 0.125, 0.11); face.castShadow = true; head.add(face);
+    var hr = new T.Mesh(hairGeo, hair); hr.position.set(0, 0.025, -0.008); hr.rotation.x = -0.25; head.add(hr);
+    var sc = 0.9 + r() * 0.16;
+    g.scale.setScalar(sc);
+    return { g: g, body: body, legL: legL, legR: legR, armL: armL, armR: armR, head: head, r: r, phase: r() * 6, sc: sc };
+  }
+  function heldBook(p) {   // 가슴 앞에 펼쳐 든 책
+    var bk = new T.Mesh(new T.BoxGeometry(0.32, 0.22, 0.03), [M.white, M.white, M.white, M.white, std(PALETTE[Math.floor(p.r() * PALETTE.length)], 0.6), M.white]);
+    bk.position.set(0, 1.22, 0.3); bk.rotation.x = -0.9; p.body.add(bk);
+    p.armL.rotation.set(-1.15, 0, 0.25); p.armR.rotation.set(-1.15, 0, -0.25);
+    p.head.rotation.x = 0.35;
+  }
+
+  function spawnPeople(fl, seed) {
+    people = [];
+    if (!layout) return;
+    var r = rnd(seed + 99), L = layout, n = 0;
+    function place(p, x, z, ry) { p.g.position.set(x, 0, z); p.g.rotation.y = ry; parent.add(p.g); people.push(p); n++; return p; }
+    // 통로 격자 (서가 사이 세로 통로 x, 서가 줄 앞 가로 통로 z, 로비)
+    var lanes = [], rowsZ = [L.front - 6.5];
+    for (var c = 0; c <= L.cols; c++) lanes.push((c - L.cols / 2) * (BOOTH_W + GAP));
+    for (var rr = 0; rr < L.rows; rr++) rowsZ.push(-LOBBY + GAP / 2 - rr * (BOOTH_D + GAP));
+    L.lanes = lanes; L.rowsZ = rowsZ;
+    var walkers = Math.min(10, 3 + fl.libs.length);
+    for (var i = 0; i < walkers; i++) {
+      var p = person(seed * 31 + i), li = Math.floor(r() * lanes.length), zi = Math.floor(r() * rowsZ.length);
+      p.kind = 'walk'; p.node = [li, zi]; p.speed = 0.95 + r() * 0.45;
+      place(p, lanes[li], rowsZ[zi], 0);
+      nextNode(p);
+    }
+    // 서가 앞에서 고르는 손님 (구역마다 반쯤)
+    (L.sections || []).forEach(function (s, j) {
+      if (r() < 0.55) {
+        var p2 = person(seed * 53 + j + 400);
+        p2.kind = 'browse'; p2.t = r() * 4;
+        if (r() < 0.5) place(p2, s.x + (r() - 0.5) * 2.4, s.z + 3.15, Math.PI);          // 평대 앞
+        else place(p2, s.x - BOOTH_W / 2 + 1.05, s.z - 0.2 + (r() - 0.5) * 3, Math.PI / 2);   // 옆 서가 앞
+      }
+      if (r() < 0.22) {   // 서서 읽는 손님
+        var p3 = person(seed * 71 + j + 800);
+        p3.kind = 'read'; place(p3, s.x + BOOTH_W / 2 - 1.2, s.z + 2.6, -Math.PI / 2 - 0.4); heldBook(p3);
+      }
+    });
+    // 벤치에 앉은 손님 (책을 읽으며)
+    var sit = person(seed * 97 + 5);
+    sit.kind = 'sit'; place(sit, -2.8, L.front - 3.25, Math.PI);
+    sit.body.position.y = -0.47; sit.legL.rotation.x = -1.5; sit.legR.rotation.x = -1.5; heldBook(sit);
+    // 안내 데스크 직원
+    var staff = person(seed * 13 + 7);
+    staff.kind = 'staff'; place(staff, L.w / 2 - 5.5, L.front - 6.35, 0);
+  }
+
+  function nextNode(p) {
+    var L = layout, li = p.node[0], zi = p.node[1], opts = [];
+    if (li > 0) opts.push([li - 1, zi]);
+    if (li < L.lanes.length - 1) opts.push([li + 1, zi]);
+    if (zi > 0) opts.push([li, zi - 1]);
+    if (zi < L.rowsZ.length - 1) opts.push([li, zi + 1]);
+    if (p.prev && opts.length > 1) opts = opts.filter(function (o) { return o[0] !== p.prev[0] || o[1] !== p.prev[1]; });
+    var o = opts[Math.floor(p.r() * opts.length)];
+    p.prev = p.node; p.node = o;
+    p.tx = L.lanes[o[0]] + (p.r() - 0.5) * 1.2; p.tz = L.rowsZ[o[1]] + (p.r() - 0.5) * 1.2;
+    if (p.r() < 0.18) p.pause = 1 + p.r() * 3;   // 가끔 멈춰 두리번
+  }
+
+  function updatePeople(dt, now) {
+    for (var i = 0; i < people.length; i++) {
+      var p = people[i];
+      if (p.kind === 'walk') {
+        if (p.pause > 0) {
+          p.pause -= dt;
+          p.legL.rotation.x *= 0.85; p.legR.rotation.x *= 0.85; p.armL.rotation.x *= 0.85; p.armR.rotation.x *= 0.85;
+          p.head.rotation.y = Math.sin(now / 700 + p.phase) * 0.6;
+          continue;
+        }
+        var dx = p.tx - p.g.position.x, dz = p.tz - p.g.position.z, d = Math.hypot(dx, dz);
+        if (d < 0.15) { nextNode(p); continue; }
+        var want = Math.atan2(dx, dz), cur = p.g.rotation.y, diff = Math.atan2(Math.sin(want - cur), Math.cos(want - cur));
+        p.g.rotation.y = cur + diff * Math.min(1, dt * 6);
+        var stepLen = Math.min(d, p.speed * dt);
+        p.g.position.x += dx / d * stepLen; p.g.position.z += dz / d * stepLen;
+        p.phase += dt * p.speed * 5.2;
+        var sw = Math.sin(p.phase);
+        p.legL.rotation.x = sw * 0.5; p.legR.rotation.x = -sw * 0.5;
+        p.armL.rotation.x = -sw * 0.38; p.armR.rotation.x = sw * 0.38;
+        p.body.position.y = Math.abs(Math.cos(p.phase)) * 0.025;
+        p.head.rotation.y *= 0.9;
+      } else if (p.kind === 'browse') {   // 책장을 훑어보다 가끔 손을 뻗는다
+        p.t += dt;
+        p.head.rotation.y = Math.sin(now / 1500 + p.phase) * 0.45;
+        p.head.rotation.x = 0.1 + Math.sin(now / 2300 + p.phase) * 0.12;
+        var reach = Math.max(0, Math.sin(p.t * 0.6 + p.phase)) ;
+        p.armR.rotation.x = -reach * 1.25;
+        p.body.rotation.y = Math.sin(now / 4000 + p.phase) * 0.08;
+      } else if (p.kind === 'read' || p.kind === 'sit') {   // 숨쉬기·고개 끄덕임
+        p.body.rotation.x = Math.sin(now / 1800 + p.phase) * 0.015;
+        p.head.rotation.y = Math.sin(now / 3000 + p.phase) * 0.12;
+      } else if (p.kind === 'staff') {
+        p.head.rotation.y = Math.sin(now / 2600 + p.phase) * 0.5;
+      }
+    }
   }
 
   // ── 이동·시점 ──
@@ -543,9 +686,14 @@
     }).catch(function (e) { el('l3d-card-path').textContent = e.message; });
   });
 
-  // ── 뷰어 (서재 안에서 읽기) ──
-  var R = { box: el('l3d-reader'), body: el('l3d-r-body'), vols: el('l3d-r-vols'), pos: el('l3d-r-pos'), mode: el('l3d-r-mode'),
-            info: null, idx: 0, list: [], scroll: false, vi: 0 };
+  // ── 뷰어 (서재 안에서 읽기): 두 손에 든 책, 책장 넘김 ──
+  // 만화·웹툰(그림)과 epub은 책 모양으로 펼쳐 한 장씩 넘긴다(넓은 화면은 두 쪽 펼침). 웹툰은 '세로 스크롤'로도.
+  // epub은 장(章) 본문을 쪽 크기로 나눠(CSS 다단) 책장처럼 넘긴다. pdf는 브라우저 PDF 보기.
+  var R = { box: el('l3d-reader'), stage: el('l3d-r-stage'), body: el('l3d-r-body'), vols: el('l3d-r-vols'),
+            pos: el('l3d-r-pos'), mode: el('l3d-r-mode'), dirBtn: el('l3d-r-dir'),
+            info: null, idx: 0, list: [], scroll: false, vi: 0, rtl: false, busy: false, pages: 0, html: '' };
+  var book = el('l3d-book'), pgL = el('l3d-pg-l'), pgR = el('l3d-pg-r'), leaf = el('l3d-leaf');
+  var leafF = leaf.querySelector('.front'), leafB = leaf.querySelector('.back');
   function api(url) {
     return fetch(url, { credentials: 'same-origin' }).then(function (r) { return r.json(); }).then(function (d) {
       if (!d.success) throw new Error(d.error || '불러오지 못했습니다');
@@ -553,12 +701,14 @@
     });
   }
   function note(t) { var m = el('l3d-r-msg'); m.textContent = t || ''; m.hidden = !t; }
+  function spread() { return R.box.clientWidth > 900 && R.info && R.info.kind !== 'pdf'; }
   function openReader(b) {
     reading = true; keys = {};
-    R.box.classList.add('on'); R.body.innerHTML = ''; note('불러오는 중...');
+    R.box.classList.add('on'); note('불러오는 중...');
     el('l3d-r-title').textContent = b.title;
     var saved = null;
     try { saved = JSON.parse(localStorage.getItem('l3d_read_' + b.key) || 'null'); } catch (e) { saved = null; }
+    try { R.rtl = localStorage.getItem('l3d_rtl') === '1'; } catch (e) { R.rtl = false; }
     R.series = b.key;
     api('api/lib3d/volumes?k=' + encodeURIComponent(b.key)).then(function (d) {
       R.list = d.volumes || [];
@@ -571,10 +721,11 @@
       loadVolume(start, saved && saved.key ? saved.page || 0 : 0);
     }).catch(function (e) { note(e.message); });
   }
-  function closeReader() { reading = false; R.box.classList.remove('on'); R.body.innerHTML = ''; }
+  function closeReader() { reading = false; R.box.classList.remove('on'); R.body.innerHTML = ''; clearPage(pgL); clearPage(pgR); }
   function remember() {
     if (!R.info) return;
-    try { localStorage.setItem('l3d_read_' + R.series, JSON.stringify({ key: R.info.key, page: R.idx })); } catch (e) { /* 무시 */ }
+    var at = R.info.kind === 'epub' ? { c: R.chap || 0, p: R.idx } : R.idx;
+    try { localStorage.setItem('l3d_read_' + R.series, JSON.stringify({ key: R.info.key, page: at })); } catch (e) { /* 무시 */ }
   }
   function loadVolume(i, page) {
     var v = R.list[i];
@@ -582,30 +733,53 @@
     R.vols.value = i;
     note('불러오는 중...');
     api('api/lib3d/book?b=' + encodeURIComponent(v.key)).then(function (info) {
-      R.info = info; R.vi = i; R.idx = Math.max(0, Math.min(page || 0, Math.max(0, info.count - 1)));
+      R.info = info; R.vi = i;
       R.mode.hidden = info.kind !== 'images';
-      if (info.kind === 'unsupported') { R.body.innerHTML = ''; note('이 형식은 여기서 읽을 수 없습니다. [BookOasis 뷰어]로 읽으세요.'); return; }
+      R.dirBtn.hidden = info.kind !== 'images';
+      if (info.kind === 'unsupported') { showStage(false); note('이 형식은 여기서 읽을 수 없습니다. [BookOasis 뷰어]로 읽으세요.'); return; }
+      if (info.kind === 'epub') { loadChapter(page && page.c || 0, page && page.p || 0); return; }
       if (!info.count) { note('읽을 쪽이 없습니다.'); return; }
+      R.pages = info.count;
+      R.idx = Math.max(0, Math.min(typeof page === 'number' ? page : 0, info.count - 1));
       note('');
       render();
     }).catch(function (e) { note(e.message); });
   }
   function pageUrl(i) { return 'api/lib3d/page?b=' + encodeURIComponent(R.info.key) + '&i=' + i; }
+  function showStage(on) { R.stage.hidden = !on; R.body.hidden = on; }
+
+  // 한 쪽 그리기: 그림 / epub 쪽 / 빈 종이
+  function clearPage(node) { node.innerHTML = ''; node.classList.remove('blank'); }
+  function fillPage(node, i) {
+    clearPage(node);
+    if (i < 0 || i >= R.pages) { node.classList.add('blank'); return; }
+    if (R.info.kind === 'epub') {
+      var view = document.createElement('div'); view.className = 'l3d-txt';
+      var art = document.createElement('article'); art.innerHTML = R.html;
+      view.appendChild(art); node.appendChild(view);
+      requestAnimationFrame(function () {   // 한 단 = 한 쪽 (단 너비 = 쪽 안쪽 너비)
+        art.style.columnWidth = view.clientWidth + 'px';
+        art.style.transform = 'translateX(' + (-i * (view.clientWidth + 48)) + 'px)';
+      });
+      var no = document.createElement('span'); no.className = 'l3d-pno'; no.textContent = i + 1; node.appendChild(no);
+      return;
+    }
+    var img = document.createElement('img'); img.src = pageUrl(i); img.alt = (i + 1) + '쪽'; img.draggable = false;
+    node.appendChild(img);
+  }
+  function pageStep() { var v = pgR.querySelector('.l3d-txt'); return v ? v.clientWidth + 48 : 0; }
+
   function render() {
     var info = R.info;
-    R.body.innerHTML = ''; R.body.className = 'l3d-r-body ' + info.kind + (R.scroll ? ' scroll' : '');
     if (info.kind === 'pdf') {
+      showStage(false);
+      R.body.className = 'l3d-r-body pdf'; R.body.innerHTML = '';
       var f = document.createElement('iframe'); f.src = 'api/lib3d/pdf?b=' + encodeURIComponent(info.key); f.title = info.title;
       R.body.appendChild(f); R.pos.textContent = 'PDF'; return;
     }
-    if (info.kind === 'epub') {
-      R.pos.textContent = (R.idx + 1) + ' / ' + info.count + ' 장';
-      api('api/lib3d/chapter?b=' + encodeURIComponent(info.key) + '&i=' + R.idx).then(function (d) {
-        var art = document.createElement('article'); art.innerHTML = d.html; R.body.appendChild(art); R.body.scrollTop = 0;
-      }).catch(function (e) { note(e.message); });
-      remember(); return;
-    }
-    if (R.scroll) {   // 세로 스크롤 (웹툰)
+    if (info.kind === 'images' && R.scroll) {   // 세로 스크롤 (웹툰)
+      showStage(false);
+      R.body.className = 'l3d-r-body scroll'; R.body.innerHTML = '';
       for (var i = 0; i < info.count; i++) {
         var im = document.createElement('img'); im.loading = 'lazy'; im.src = pageUrl(i); im.alt = (i + 1) + '쪽';
         R.body.appendChild(im);
@@ -613,39 +787,153 @@
       R.pos.textContent = info.count + '장 · 스크롤';
       return;
     }
-    var img = document.createElement('img'); img.src = pageUrl(R.idx); img.alt = (R.idx + 1) + '쪽';
-    R.body.appendChild(img);
-    if (R.idx + 1 < info.count) { var pre = new Image(); pre.src = pageUrl(R.idx + 1); }   // 다음 쪽 미리
-    R.pos.textContent = (R.idx + 1) + ' / ' + info.count;
+    showStage(true);
+    book.classList.toggle('two', spread());
+    book.classList.toggle('rtl', R.rtl && info.kind === 'images');
+    if (spread()) { R.idx -= R.idx % 2; fillPage(pgL, R.idx); fillPage(pgR, R.idx + 1); }
+    else fillPage(pgR, R.idx);
+    var last = spread() ? Math.min(R.idx + 2, R.pages) : R.idx + 1;
+    R.pos.textContent = (info.kind === 'epub' ? (R.chap + 1) + '장 · ' : '') + (R.idx + 1) + (spread() && last > R.idx + 1 ? '-' + last : '') + ' / ' + R.pages;
+    if (info.kind === 'images') for (var k = 1; k <= 2; k++) if (R.idx + k + 1 < R.pages) { var pre = new Image(); pre.src = pageUrl(R.idx + k + 1); }
     remember();
+  }
+
+  // 책장 넘김: 앞면·뒷면이 있는 한 장(leaf)을 책등을 축으로 180도 돌린다
+  function flip(dir) {
+    if (R.busy) return;
+    var n = spread() ? 2 : 1, to = R.idx + dir * n;
+    if (to < 0 || to >= R.pages) {
+      if (R.info.kind === 'epub') { nextChapter(dir); return; }
+      if (dir > 0) { if (R.vi + 1 < R.list.length) loadVolume(R.vi + 1, 0); else note('마지막 권의 끝입니다.'); }
+      else if (R.vi > 0) loadVolume(R.vi - 1, 1e9);
+      return;
+    }
+    R.busy = true;
+    var two = spread();
+    leaf.className = 'l3d-leaf ' + (two ? 'half' : 'full') + (dir > 0 ? ' fwd' : ' back');
+    if (dir > 0) {
+      fillPage(leafF, two ? R.idx + 1 : R.idx);           // 지금 오른쪽 쪽이 넘어간다
+      fillPage(leafB, two ? R.idx + 2 : -1);              // 넘어간 장의 뒷면 = 다음 왼쪽 쪽
+      fillPage(pgR, two ? R.idx + 3 : R.idx + 1);         // 그 아래 = 다음 오른쪽 쪽
+    } else {
+      fillPage(leafF, two ? R.idx - 1 : R.idx - 1);       // 되돌아오는 장의 앞면 = 이전 오른쪽 쪽
+      fillPage(leafB, two ? R.idx : -1);
+      if (two) fillPage(pgL, R.idx - 2);
+    }
+    void leaf.offsetWidth;   // 시작 자세를 먼저 그리고
+    leaf.classList.add('go');
+    book.classList.add('turning');
+    setTimeout(function () {
+      R.idx = to; leaf.className = 'l3d-leaf'; clearPage(leafF); clearPage(leafB);
+      book.classList.remove('turning'); R.busy = false; render();
+    }, 620);
   }
   function go(dir) {
     if (!R.info) return;
     if (R.info.kind === 'images' && R.scroll) { R.body.scrollBy({ top: dir * R.body.clientHeight * 0.85, behavior: 'smooth' }); return; }
-    var n = R.idx + dir;
-    if (n < 0) { if (R.vi > 0) loadVolume(R.vi - 1, 1e9); return; }
-    if (n >= R.info.count) { if (R.vi + 1 < R.list.length) loadVolume(R.vi + 1, 0); else note('마지막 권의 끝입니다.'); return; }
-    R.idx = n; render();
+    if (R.info.kind === 'pdf') return;
+    flip(dir);
   }
+
+  // epub: 장 본문을 쪽 크기로 나눈다 (CSS 다단 - 한 단이 한 쪽)
+  function loadChapter(c, p) {
+    note('불러오는 중...');
+    api('api/lib3d/chapter?b=' + encodeURIComponent(R.info.key) + '&i=' + c).then(function (d) {
+      R.chap = c; R.html = d.html; R.pages = 1; R.idx = 0;
+      showStage(true);
+      book.classList.toggle('two', spread()); book.classList.remove('rtl');
+      fillPage(pgR, 0);
+      requestAnimationFrame(function () {   // 쪽 수 세기
+        var art = pgR.querySelector('article');
+        R.pages = Math.max(1, Math.round((art.scrollWidth + 48) / pageStep()));
+        R.idx = p === 'end' ? R.pages - 1 : Math.max(0, Math.min(p || 0, R.pages - 1));
+        note(''); render();
+      });
+    }).catch(function (e) { note(e.message); });
+  }
+  function nextChapter(dir) {
+    var c = (R.chap || 0) + dir;
+    if (c < 0) { if (R.vi > 0) loadVolume(R.vi - 1, { c: 0, p: 0 }); return; }
+    if (c >= R.info.count) { if (R.vi + 1 < R.list.length) loadVolume(R.vi + 1, { c: 0, p: 0 }); else note('마지막 장입니다.'); return; }
+    loadChapter(c, dir < 0 ? 'end' : 0);
+  }
+
   function readerKey(e) {
     var k = e.key;
     if (k === 'Escape') { closeReader(); return; }
-    if (k === 'ArrowRight' || k === 'PageDown' || k === ' ') { e.preventDefault(); go(1); }
-    if (k === 'ArrowLeft' || k === 'PageUp') { e.preventDefault(); go(-1); }
+    var fwd = R.rtl && R.info && R.info.kind === 'images' ? 'ArrowLeft' : 'ArrowRight';
+    var bwd = fwd === 'ArrowLeft' ? 'ArrowRight' : 'ArrowLeft';
+    if (k === fwd || k === 'PageDown' || k === ' ') { e.preventDefault(); go(1); }
+    if (k === bwd || k === 'PageUp') { e.preventDefault(); go(-1); }
   }
-  el('l3d-r-prev').addEventListener('click', function () { go(-1); });
-  el('l3d-r-next').addEventListener('click', function () { go(1); });
+  el('l3d-r-prev').addEventListener('click', function () { go(R.rtl && R.info && R.info.kind === 'images' ? 1 : -1); });
+  el('l3d-r-next').addEventListener('click', function () { go(R.rtl && R.info && R.info.kind === 'images' ? -1 : 1); });
   el('l3d-r-close').addEventListener('click', closeReader);
   R.vols.addEventListener('change', function () { loadVolume(parseInt(R.vols.value, 10) || 0, 0); });
-  R.mode.addEventListener('click', function () { R.scroll = !R.scroll; R.mode.textContent = R.scroll ? '한 장씩' : '세로 스크롤'; render(); });
-  R.body.addEventListener('click', function (e) {   // 그림 왼쪽·오른쪽 눌러 넘기기
-    if (!R.info || R.info.kind !== 'images' || R.scroll) return;
-    var r = R.body.getBoundingClientRect();
-    go(e.clientX - r.left < r.width / 3 ? -1 : 1);
+  R.mode.addEventListener('click', function () { R.scroll = !R.scroll; R.mode.textContent = R.scroll ? '책으로' : '세로 스크롤'; render(); });
+  R.dirBtn.addEventListener('click', function () {
+    R.rtl = !R.rtl;
+    try { localStorage.setItem('l3d_rtl', R.rtl ? '1' : '0'); } catch (e) { /* 무시 */ }
+    R.dirBtn.textContent = R.rtl ? '오른쪽→왼쪽' : '왼쪽→오른쪽';
+    render();
   });
+  R.stage.addEventListener('click', function (e) {   // 책 왼쪽·오른쪽을 눌러 넘기기
+    if (!R.info || R.info.kind === 'pdf') return;
+    var r = book.getBoundingClientRect();
+    var left = e.clientX < r.left + r.width / 2;
+    var dir = left ? -1 : 1;
+    if (R.rtl && R.info.kind === 'images') dir = -dir;
+    go(dir);
+  });
+  window.addEventListener('resize', function () { if (reading && R.info && !R.scroll && R.info.kind !== 'pdf') render(); });
   el('l3d-r-bo').addEventListener('click', function () {
     if (R.info) location.href = R.info.kiosk + '&return=' + encodeURIComponent(backUrl());
   });
+
+  // ── 설정: 보여 줄 보관함 ──
+  var setBox = el('l3d-set');
+  function openSettings() {
+    setBox.classList.add('on');
+    var list = el('l3d-set-list');
+    list.textContent = '불러오는 중...';
+    api('api/lib3d/libraries').then(function (d) {
+      list.textContent = '';
+      var groups = {};
+      d.libraries.forEach(function (l) { (groups[l.db_type] = groups[l.db_type] || []).push(l); });
+      FLOOR_ORDER.concat(Object.keys(groups).filter(function (k) { return FLOOR_ORDER.indexOf(k) < 0; })).forEach(function (k) {
+        if (!groups[k]) return;
+        var h = document.createElement('div'); h.className = 'l3d-set-h';
+        var all = document.createElement('input'); all.type = 'checkbox';
+        all.checked = groups[k].every(function (l) { return l.shown; });
+        var lab = document.createElement('label'); lab.appendChild(all); lab.appendChild(document.createTextNode(' ' + (FLOOR_NAMES[k] || k) + ' (' + groups[k].length + ')'));
+        h.appendChild(lab); list.appendChild(h);
+        var boxes = [];
+        groups[k].forEach(function (l) {
+          var row = document.createElement('label'); row.className = 'l3d-set-row';
+          var c = document.createElement('input'); c.type = 'checkbox'; c.checked = l.shown; c.value = l.key;
+          row.appendChild(c); row.appendChild(document.createTextNode(' ' + l.name));
+          list.appendChild(row); boxes.push(c);
+        });
+        all.addEventListener('change', function () { boxes.forEach(function (c) { c.checked = all.checked; }); });
+      });
+      if ((d.errors || []).length) { var er = document.createElement('p'); er.textContent = d.errors.join(' / '); list.appendChild(er); }
+    }).catch(function (e) { list.textContent = e.message; });
+  }
+  function saveSettings(all) {
+    var keys = all ? null : Array.prototype.map.call(setBox.querySelectorAll('.l3d-set-row input:checked'), function (c) { return c.value; });
+    fetch('api/lib3d/settings', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+                                  body: JSON.stringify({ libraries: keys }) })
+      .then(function (r) { return r.json(); })
+      .then(function (d) { if (!d.success) throw new Error(d.error || '저장 실패'); setBox.classList.remove('on'); cur = 0; build(true); })
+      .catch(function (e) { el('l3d-set-msg').textContent = e.message; });
+  }
+  el('l3d-set-btn').addEventListener('click', openSettings);
+  el('l3d-set-save').addEventListener('click', function () { saveSettings(false); });
+  el('l3d-set-all').addEventListener('click', function () { saveSettings(true); });
+  el('l3d-set-close').addEventListener('click', function () { setBox.classList.remove('on'); });
+  function hashNav() { if (location.hash === '#settings') openSettings(); }
+  window.addEventListener('hashchange', hashNav);
+  setTimeout(hashNav, 0);
 
   // ── 지도·층 ──
   var map = el('l3d-map');
@@ -713,7 +1001,7 @@
   var shared = Object.keys(M).map(function (k) { return M[k]; });
   function disposeGroup(g) {
     g.traverse(function (o) {
-      if (o.geometry && o.geometry !== faceGeo) o.geometry.dispose();
+      if (o.geometry && [faceGeo, torsoGeo, legGeo, armGeo, ballGeo, hairGeo, neckGeo].indexOf(o.geometry) < 0) o.geometry.dispose();
       var ms = Array.isArray(o.material) ? o.material : (o.material ? [o.material] : []);
       ms.forEach(function (m) {
         if (shared.indexOf(m) >= 0) return;   // 공용 재질은 그대로
@@ -733,6 +1021,7 @@
     COLS = Math.max(2, Math.min(4, fl.libs.length));
     addBuilding(fl, COLS, Math.ceil(fl.libs.length / COLS));
     fl.libs.forEach(function (lib, j) { addSection(lib, j); });
+    spawnPeople(fl, i + 1);
     booths.forEach(function (b) { b.floor = i; });
     fl.booths = booths.slice();
     parent = scene;
@@ -772,6 +1061,7 @@
     var dt = Math.min(0.05, (now - last) / 1000);
     last = now;
     step(dt);
+    if (!reading) updatePeople(dt, now);
     acc += dt;
     if (acc > 0.3) { acc = 0; loadNear(); where(); }
     if (!reading) renderer.render(scene, camera);

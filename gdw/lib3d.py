@@ -22,7 +22,7 @@ from urllib.request import Request, urlopen
 
 from . import bookoasis_db, config
 
-VERSION = "2.0.0"
+VERSION = "2.1.0"
 CACHE_SEC = 300
 COVER_WIDTH = 200
 _DATA = {"at": 0.0, "v": None}
@@ -70,6 +70,53 @@ def _series(gw, library_id, limit):
     return list(groups.values())[:limit]
 
 
+# ── 설정: 보여 줄 보관함 (DATA_DIR/lib3d.json {"libraries": ["세션:번호", …]} - 없거나 null이면 전부) ──
+def _settings_path():
+    return os.path.join(config.data_dir(), "lib3d.json")
+
+
+def load_settings():
+    try:
+        with open(_settings_path(), encoding="utf-8") as f:
+            v = json.load(f)
+        return v if isinstance(v, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def save_settings(libraries):
+    """보여 줄 보관함 키 목록 저장 (None이면 전부). 다음 화면 요청부터 반영"""
+    clean = None
+    if libraries is not None:
+        clean = sorted({str(k) for k in libraries if re.match(r"^[A-Za-z0-9_]+:\d+$", str(k))})
+    data_ = dict(load_settings(), libraries=clean)
+    os.makedirs(config.data_dir(), exist_ok=True)
+    tmp = _settings_path() + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data_, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, _settings_path())
+    with _LOCK:
+        _DATA.update(at=0.0, v=None)
+    return data_
+
+
+def all_libraries():
+    """설정 화면용: 세션별 보관함 전부 [{key, db_type, id, name, shown}] (작품은 세지 않음 - 빠르게)"""
+    chosen = load_settings().get("libraries")
+    out, errors = [], []
+    for db_type in config.db_types():
+        if not config.db_url(db_type):
+            continue
+        try:
+            for lib in bookoasis_db.gateway(db_type).fetch_all("SELECT id, name FROM libraries ORDER BY name"):
+                key = "%s:%s" % (db_type, lib["id"])
+                out.append({"key": key, "db_type": db_type, "id": int(lib["id"]),
+                            "name": lib.get("name") or "보관함 %s" % lib["id"], "shown": chosen is None or key in chosen})
+        except Exception as error:  # noqa: BLE001
+            errors.append("%s: %s" % (db_type, error))
+    return {"libraries": out, "all": chosen is None, "errors": errors}
+
+
 def data(force=False):
     """{"libraries": [{"key", "db_type", "id", "name", "series": [...]}], "book_url": bool, "at"} (5분 캐시)"""
     with _LOCK:
@@ -77,12 +124,15 @@ def data(force=False):
             return _DATA["v"]
     libs, errors = [], []
     limit = per_library()
+    chosen = load_settings().get("libraries")   # None이면 전부
     for db_type in config.db_types():
         if not config.db_url(db_type):
             continue
         try:
             gw = bookoasis_db.gateway(db_type)
             for lib in gw.fetch_all("SELECT id, name FROM libraries ORDER BY name"):
+                if chosen is not None and "%s:%s" % (db_type, lib["id"]) not in chosen:
+                    continue
                 series = _series(gw, int(lib["id"]), limit)
                 if series:
                     libs.append({"key": "%s:%s" % (db_type, lib["id"]), "db_type": db_type, "id": int(lib["id"]),
