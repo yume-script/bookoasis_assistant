@@ -722,8 +722,17 @@
     J.Neck = torsoAt(Math.min(h * 0.79, Math.max(armTop[0], armTop[1]) + h * 0.02));
     J.Neck.y = Math.max(J.Neck.y, J.Spine2.y + h * 0.04);
     var face = centroid(function (q) { return grp[q] === 2; });
-    J.Head = new T.Vector3(face.x, J.Neck.y + h * 0.04, face.z - h * 0.005);
+    var chin = 1e9; for (i = 0; i < n; i++) if (grp[i] === 2) chin = Math.min(chin, Y(i));
+    J.Neck.y = Math.max(J.Spine2.y + h * 0.04, chin - h * 0.075);   // 목 밑동
+    J.Head = new T.Vector3(face.x, Math.max(J.Neck.y + h * 0.03, chin - h * 0.01), face.z - h * 0.005);   // 머리뼈 밑(턱 높이)
     J.HeadTop_End = new T.Vector3(face.x, h, face.z);
+    // 척추는 골반 중심 → 머리 중심(얼굴+머리카락 중 목 위)으로 곧게: 높이별 단면 중심을 쓰면 가슴 때문에 앞으로 굽어
+    // 걷기 동작을 옮길 때 상체가 숙여진다(꾸부정)
+    var headC = centroid(function (q) { return (grp[q] === 2 || grp[q] === 3) && Y(q) > J.Neck.y + h * 0.02; }) || face;
+    ['Spine', 'Spine1', 'Spine2', 'Neck', 'Head', 'HeadTop_End'].forEach(function (nm) {
+      var tq = (J[nm].y - J.Hips.y) / (h - J.Hips.y);
+      J[nm].x = J.Hips.x + (headC.x - J.Hips.x) * tq; J[nm].z = J.Hips.z + (headC.z - J.Hips.z) * tq;
+    });
     [2, 3].forEach(function (s, j) {
       var tag = s === 2 ? 'Left' : 'Right', top = armTop[j];
       var bot = 1e9; for (var q = 0; q < n; q++) if (part[q] === s) bot = Math.min(bot, Y(q));
