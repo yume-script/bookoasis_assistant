@@ -144,11 +144,15 @@
         <label class="gdw-wide">rclone.conf 경로 <small>(비우면 rclone 기본 위치)</small><input type="text" data-env="rclone_config" placeholder="/config/rclone/rclone.conf"></label>
         <label class="gdw-wide">BookOasis 주소 <small>(이 프로그램에서 접속할 수 있는 주소)</small><input type="text" data-env="bookoasis_url" placeholder="http://127.0.0.1:5930"></label>
         <label class="gdw-wide">WEBHOOK_TOKEN <small>(BookOasis .env의 값과 같게 · 바꿀 때만 입력)</small><input type="password" data-env="webhook_token" autocomplete="new-password" readonly onfocus="this.removeAttribute('readonly')"></label>
+        <label class="gdw-wide">Plex 주소 <small>(Plex에도 스캔을 보낼 때 · 비우면 안 씀)</small><input type="text" data-env="plex_url" placeholder="http://127.0.0.1:32400"></label>
+        <label class="gdw-wide">PLEX_TOKEN <small>(X-Plex-Token · 바꿀 때만 입력)</small><input type="password" data-env="plex_token" autocomplete="new-password" readonly onfocus="this.removeAttribute('readonly')"></label>
+        <label class="gdw-wide">Plex 경로 매핑 <small>(Plex가 다른 경로로 볼 때: 이 프로그램 경로=Plex 경로, 여러 개는 ; 로)</small><input type="text" data-env="plex_path_map" placeholder="/mnt/gds2=/data"></label>
         <label class="gdw-check"><input type="checkbox" data-env="auto_start"> 이 프로그램이 시작될 때 감시도 자동으로 시작 (워커가 죽으면 다시 시작)</label>
       </div>
       <div class="gdw-actions-row">
         <button type="button" class="gdw-pill-btn" data-act="check_rclone">rclone 확인</button>
         <button type="button" class="gdw-pill-btn" data-act="check_token">토큰 확인</button>
+        <button type="button" class="gdw-pill-btn" data-act="check_plex">Plex 확인</button>
         <button type="button" class="gdw-btn" data-act="save_env">실행 환경 저장</button>
         <span class="gdw-save-msg" data-bind="env-msg"></span>
       </div>

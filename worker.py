@@ -33,6 +33,11 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
+_HERE = os.path.dirname(os.path.abspath(__file__))
+if _HERE not in sys.path:
+    sys.path.insert(0, _HERE)
+from gdw.plex import parse_map as plex_path_map, scan as plex_scan, to_plex as plex_to_server  # noqa: E402
+
 log = logging.getLogger("gdrive_watch")
 STOP = False
 SEEDERS = {}
@@ -2584,12 +2589,38 @@ class BookOasis:
                 if root:
                     self.libraries.append({"root": root, "db_type": lib["db_type"], "id": int(lib["id"]),
                                            "name": lib.get("name") or f"보관함 {lib['id']}"})
+        # Plex 라이브러리 (서비스가 runtime.json에 넣어 줌): BookOasis 보관함과 같이 '어느 라이브러리 폴더인지'로 찾는다.
+        # 같은 폴더가 BookOasis 보관함에도 있으면 BookOasis 스캔과 Plex 스캔을 둘 다 보낸다(scan).
+        self.plex_url = str(cfg.get("plex_url") or "").rstrip("/")
+        self.plex_token = cfg.get("plex_token") or ""
+        self.plex_map = plex_path_map(cfg.get("plex_path_map"))
+        self.plex_libraries = []
+        for lib in cfg.get("plex_libraries") or []:
+            for root in lib.get("roots") or []:
+                root = norm(root).rstrip("/") or "/"
+                self.plex_libraries.append({"root": root, "db_type": "plex", "id": int(lib["id"]),
+                                            "name": lib.get("name") or f"Plex {lib['id']}", "plex": True})
+        self.plex_libraries.sort(key=lambda l: len(l["root"]), reverse=True)
+        if not self.plex_url or not self.plex_token:
+            self.plex_libraries = []
+        self.libraries.extend(self.plex_libraries)
         self.libraries.sort(key=lambda l: len(l["root"]), reverse=True)
         auto = [(root, lib.get("rclone_rc_url")) for lib in libraries or [] for root in lib.get("roots") or []]
         self.vfs = Vfs(vfs_rules, int(cfg.get("rc_timeout", 60)), auto, store)
 
     def library_for(self, path):
         return next((lib for lib in self.libraries if under(path, lib["root"])), None)
+
+    def plex_for(self, path):
+        return next((lib for lib in self.plex_libraries if under(path, lib["root"])), None)
+
+    def _plex_scan(self, lib, directory, removed):
+        """Plex 부분 스캔: Plex가 보는 경로로 바꿔 그 폴더(삭제면 남아 있는 상위 폴더)를 스캔하라고 보낸다."""
+        d = directory
+        while removed and d != lib["root"] and not os.path.isdir(d) and under(posixpath.dirname(d), lib["root"]):
+            d = posixpath.dirname(d)
+        count_load("scan")
+        return plex_scan(self.plex_url, self.plex_token, lib["id"], plex_to_server(d, self.plex_map))
 
     def full_scan_until(self, lib):
         """그 보관함의 전체 스캔(cron)이 최근 guard분 안에 시작됐으면, 회피가 끝나는 시각."""
@@ -2626,10 +2657,23 @@ class BookOasis:
             return 0, {"error": f"BookOasis 연결 실패: {error.reason}"}
 
     def scan(self, directory, removed):
-        """반환 (ok, message, library) / 보관함 밖이면 (None, ...)"""
+        """반환 (ok, message, library) / 보관함 밖이면 (None, ...). Plex 라이브러리에도 속하면 Plex에도 보낸다."""
         lib = self.library_for(directory)
         if not lib:
             return None, "보관함 밖 경로", None
+        if lib.get("plex"):
+            ok, message = self._plex_scan(lib, directory, removed)
+            return ok, message, lib
+        plib = self.plex_for(directory)
+        ok, message, lib = self._scan_bookoasis(lib, directory, removed)
+        if plib:
+            pok, pmsg = self._plex_scan(plib, directory, removed)
+            message = "%s · %s" % (message, pmsg if pok else "Plex 실패: " + pmsg)
+            if ok is not False and pok is False:
+                ok = False
+        return ok, message, lib
+
+    def _scan_bookoasis(self, lib, directory, removed):
         if not self.token:
             return False, "WEBHOOK_TOKEN이 없습니다. .env의 WEBHOOK_TOKEN을 BookOasis .env 값과 같게 넣으세요.", lib
         rel = directory[len(lib["root"]):].strip("/")

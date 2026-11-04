@@ -148,6 +148,10 @@ def settings():
         "bookoasis_url": (env("BOOKOASIS_URL", "http://127.0.0.1:5930") or "http://127.0.0.1:5930").rstrip("/"),
         "webhook_token": env("WEBHOOK_TOKEN"),
         "auto_start": env_bool("AUTO_START", True),
+        # Plex: 비워 두면 Plex 스캔 안 함. 경로 매핑은 '이 프로그램 경로=Plex 서버 경로'를 ; 로 여러 개
+        "plex_url": (env("PLEX_URL") or "").strip().rstrip("/"),
+        "plex_token": env("PLEX_TOKEN"),
+        "plex_path_map": env("PLEX_PATH_MAP"),
     }
 
 

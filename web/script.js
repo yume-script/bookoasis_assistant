@@ -398,13 +398,17 @@
                 var k = i.getAttribute('data-env');
                 if (k === 'auto_start') i.checked = !!s.auto_start;
                 else if (k === 'webhook_token') { i.value = ''; i.placeholder = s.token_set ? '.env에 저장됨 (바꿀 때만 입력)' : '.env에 없음, 입력 필요'; }
+                else if (k === 'plex_token') { i.value = ''; i.placeholder = s.plex_token_set ? '.env에 저장됨 (바꿀 때만 입력)' : 'Plex를 쓸 때 입력'; }
                 else i.value = s[k] || '';
             });
             if (bind('env-file')) bind('env-file').textContent = s.env_file || '.env';
             if (bind('env-info')) {
                 var dbs = (s.db || []).map(function (x) { return x.db_type + ' → ' + x.url; });
+                var plexLibs = (s.plex_libraries || []).map(function (l) { return l.name + ' (' + (l.roots || []).join(', ') + ')'; });
                 bind('env-info').textContent = '보관함 목록: ' + (s.library_source || '') + (dbs.length ? ' · ' + dbs.join(', ') : '') +
-                    ' (BookOasis DB 연결은 .env의 BOOKOASIS_DB_URL에서 바꿉니다)';
+                    ' (BookOasis DB 연결은 .env의 BOOKOASIS_DB_URL에서 바꿉니다)' +
+                    (s.plex_url ? ' · Plex 라이브러리 ' + plexLibs.length + '개' + (plexLibs.length ? ': ' + plexLibs.join(' / ') : '') +
+                     (s.plex_error ? ' (읽기 실패: ' + s.plex_error + ')' : '') : '');
             }
             renderRoots(); renderVfs(); renderOpts(); loadVfsMap();
             bind('manual-box').open = st.watch.vfs.length > 0;
@@ -417,7 +421,7 @@
         $$('[data-env]').forEach(function (i) {
             var k = i.getAttribute('data-env');
             if (k === 'auto_start') env[k] = i.checked;
-            else if (k === 'webhook_token') { if (i.value.trim()) env[k] = i.value.trim(); }
+            else if (k === 'webhook_token' || k === 'plex_token') { if (i.value.trim()) env[k] = i.value.trim(); }
             else env[k] = i.value.trim();
         });
         return env;
@@ -697,6 +701,17 @@
             }
             else if (a === 'default_patterns') { st.watch.ignore_patterns = (st.defaultIgnore || []).slice(); renderOpts(); }
             else if (a === 'test_discord') { rpc('test_discord', { url: st.watch.discord_webhook || '' }).then(function (d) { toast(d.message); }).catch(function (err) { toast(err.message, true); }); }
+            else if (a === 'check_plex') {
+                bind('env-msg').textContent = 'Plex 확인 중...';
+                rpc('check_plex', { env: envValues() }).then(function (d) {
+                    var libs = (d.libraries || []).map(function (l) {
+                        return l.name + ': ' + (l.roots || []).map(function (r, i) {
+                            return r + (l.exists && l.exists[i] === false ? ' (이 프로그램에서 안 보임 - 경로 매핑 확인)' : '');
+                        }).join(', ');
+                    });
+                    bind('env-msg').textContent = (d.ok ? '✓ ' : '✗ ') + d.message + (libs.length ? ' · ' + libs.join(' / ') : '');
+                }).catch(function (e) { bind('env-msg').textContent = '✗ ' + e.message; });
+            }
             else if (a === 'check_token') {
                 rpc('check_token', { env: envValues() }).then(function (d) { bind('env-msg').textContent = (d.ok ? '✓ ' : '✗ ') + d.message; })
                     .catch(function (err) { toast(err.message, true); });

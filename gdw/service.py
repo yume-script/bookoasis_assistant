@@ -17,7 +17,7 @@ import sys
 import threading
 import time
 
-from . import bookoasis_db, config
+from . import bookoasis_db, config, plex
 
 ROOT = config.ROOT
 WORKER_PATH = os.path.join(ROOT, "worker.py")
@@ -254,7 +254,9 @@ DEFAULT_WATCH = {
 READ_ONLY = ("status", "events", "log", "breakdown", "schedules", "get_watch", "vfs_map", "remotes", "preview")
 # .env의 실행 환경 키 ↔ 화면 필드
 ENV_FIELDS = (("RCLONE_PATH", "rclone_path"), ("RCLONE_CONFIG", "rclone_config"),
-              ("BOOKOASIS_URL", "bookoasis_url"), ("WEBHOOK_TOKEN", "webhook_token"), ("AUTO_START", "auto_start"))
+              ("BOOKOASIS_URL", "bookoasis_url"), ("WEBHOOK_TOKEN", "webhook_token"), ("AUTO_START", "auto_start"),
+              ("PLEX_URL", "plex_url"), ("PLEX_TOKEN", "plex_token"), ("PLEX_PATH_MAP", "plex_path_map"))
+PLEX_REFRESH_SECONDS = 600   # Plex 라이브러리 폴더 목록은 10분마다 다시 읽는다
 
 
 class Service:
@@ -349,10 +351,28 @@ class Service:
                                            "error": "; ".join(failed)[:500]})
             return items
 
+    def _plex_libraries(self, settings, force=False):
+        """Plex 라이브러리 [{"id", "name", "roots", "plex_roots"}] (10분 캐시, 못 읽으면 이전 목록). Plex를 안 쓰면 []"""
+        if not settings.get("plex_url") or not settings.get("plex_token"):
+            return []
+        cached = _read_json("plex_libraries.json") or {}
+        key = [settings["plex_url"], settings.get("plex_path_map") or ""]
+        if (cached.get("key") == key and not force
+                and time.time() - float(cached.get("ts") or 0) < PLEX_REFRESH_SECONDS):
+            return cached.get("items") or []
+        try:
+            items = plex.libraries(settings["plex_url"], settings["plex_token"], settings.get("plex_path_map"))
+            _write_json("plex_libraries.json", {"ts": time.time(), "key": key, "items": items, "error": ""})
+            return items
+        except Exception as error:  # noqa: BLE001
+            _write_json("plex_libraries.json", dict(cached, ts=time.time(), key=key, error=str(error)[:300]))
+            return cached.get("items") or [] if cached.get("key") == key else []
+
     def _sync_runtime(self, force_libraries=False):
         """.env 실행 환경 + 감시 설정 + 보관함 목록 → runtime.json (내용이 바뀐 경우에만 기록)."""
         runtime = dict(self._watch())
         runtime.update(self._settings())
+        runtime["plex_libraries"] = self._plex_libraries(runtime, force=force_libraries)
         runtime["libraries"] = self._libraries(force=force_libraries)
         current = _read_json("runtime.json")
         if current != runtime:
@@ -440,12 +460,15 @@ class Service:
         if beat.get("bookoasis_down") and alive:
             warnings.append(f"BookOasis({runtime.get('bookoasis_url')})에 연결할 수 없어 {beat['bookoasis_down'].replace('T', ' ')}부터 "
                             "스캔을 미루고 있습니다. BookOasis가 켜지면 자동으로 이어서 보냅니다 (이 동안은 실패로 세지 않음).")
-        if not runtime.get("webhook_token"):
+        if not runtime.get("webhook_token") and runtime.get("libraries"):
             warnings.append("WEBHOOK_TOKEN이 없어 스캔 요청을 보낼 수 없습니다. .env 또는 [감시 설정 > 실행 환경]에서 BookOasis .env와 같은 값을 넣으세요.")
         libinfo = _read_json("libraries.json", {}) or {}
         if libinfo.get("error"):
             warnings.append(f"BookOasis DB에서 보관함 목록을 읽지 못했습니다 (이전 목록 사용): {libinfo['error']}")
-        if not runtime.get("libraries"):
+        plexinfo = _read_json("plex_libraries.json", {}) or {}
+        if runtime.get("plex_url") and plexinfo.get("error"):
+            warnings.append(f"Plex 라이브러리 목록을 읽지 못했습니다 (이전 목록 사용): {plexinfo['error']}")
+        if not runtime.get("libraries") and not runtime.get("plex_libraries"):
             warnings.append("보관함이 없어 변경을 감지해도 스캔하지 않습니다. .env의 BOOKOASIS_DB_URL을 설정하거나 "
                             f"보관함 파일({config.libraries_file()})을 만드세요.")
         if not runtime.get("vfs") and not any(l.get("rclone_rc_url") for l in runtime.get("libraries") or []):
@@ -967,6 +990,11 @@ class Service:
                 "settings": {"rclone_path": settings["rclone_path"], "rclone_config": settings["rclone_config"],
                              "bookoasis_url": settings["bookoasis_url"], "auto_start": settings["auto_start"],
                              "token_set": bool(settings["webhook_token"]), "env_file": config.ENV_PATH,
+                             "plex_url": settings.get("plex_url") or "", "plex_path_map": settings.get("plex_path_map") or "",
+                             "plex_token_set": bool(settings.get("plex_token")),
+                             "plex_libraries": [{"id": l["id"], "name": l["name"], "roots": l["roots"]}
+                                                for l in (_read_json("plex_libraries.json") or {}).get("items") or []],
+                             "plex_error": (_read_json("plex_libraries.json") or {}).get("error") or "",
                              "library_source": "BookOasis DB" if libinfo.get("source") == "db"
                              else f"보관함 파일 ({config.libraries_file()})",
                              "db": [{"db_type": t, "url": bookoasis_db.describe(config.db_url(t))}
@@ -986,12 +1014,17 @@ class Service:
             return {"success": False, "error": f"rclone.conf 파일을 찾을 수 없습니다: {clean['RCLONE_CONFIG']}"}
         if str(env.get("webhook_token") or "").strip():  # 비워 보내면 기존 값 유지
             clean["WEBHOOK_TOKEN"] = str(env["webhook_token"]).strip()
+        if "plex_url" in env:
+            clean["PLEX_URL"] = str(env.get("plex_url") or "").strip().rstrip("/")
+            clean["PLEX_PATH_MAP"] = str(env.get("plex_path_map") or "").strip()
+        if str(env.get("plex_token") or "").strip():
+            clean["PLEX_TOKEN"] = str(env["plex_token"]).strip()
         fixed = config.overridden(clean)  # save_env 전에 확인 (저장하면 .env 값으로 표시됨)
         try:
             config.save_env(clean)
         except OSError as error:
             return {"success": False, "error": f".env에 쓸 수 없습니다 ({config.ENV_PATH}): {error}"}
-        self._sync_runtime()
+        self._sync_runtime(force_libraries=True)
         note = (f" 단, {', '.join(fixed)}는 실제 환경변수(docker environment 등)로도 정해져 있어 다시 시작하면 그 값이 우선합니다."
                 if fixed else "")
         return {"success": True, "message": f"실행 환경을 {config.ENV_PATH}에 저장했습니다. 실행 중인 워커에 자동 반영됩니다.{note}"}
@@ -1484,6 +1517,24 @@ class Service:
         token, source = self._token_source(settings)
         ok, msg = _verify_token(settings["bookoasis_url"], token)
         return {"success": True, "ok": ok, "message": f"{msg} · 사용 중인 토큰: {source}"}
+
+    def _rpc_check_plex(self, ctx):
+        """Plex 접속·토큰 확인 (화면에서 입력한 값 우선) + 라이브러리 폴더 목록"""
+        settings = self._settings()
+        env = ctx.get("env") or {}
+        url = str(env.get("plex_url") or settings.get("plex_url") or "").strip().rstrip("/")
+        token = str(env.get("plex_token") or "").strip() or settings.get("plex_token") or ""
+        pmap = env.get("plex_path_map") if "plex_path_map" in env else settings.get("plex_path_map")
+        ok, msg = plex.check(url, token)
+        libs = []
+        if ok:
+            try:
+                libs = plex.libraries(url, token, pmap)
+            except Exception as error:  # noqa: BLE001
+                ok, msg = False, str(error)
+        return {"success": True, "ok": ok, "message": msg,
+                "libraries": [{"id": l["id"], "name": l["name"], "roots": l["roots"], "plex_roots": l["plex_roots"],
+                               "exists": [os.path.isdir(r) for r in l["roots"]]} for l in libs]}
 
     def _rpc_refresh_token(self, ctx):
         """rclone.conf의 리모트 토큰을 지금 갱신한다.
