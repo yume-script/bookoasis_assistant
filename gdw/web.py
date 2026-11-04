@@ -24,6 +24,7 @@ import mimetypes
 import os
 import re
 import time
+import zipfile
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -331,6 +332,25 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/lib3d/open":
                 url, file_path = lib3d.open_url(key)
                 return self._send(200, {"success": True, "url": url, "path": file_path})
+            # 서재 안에서 읽기 (자체 뷰어)
+            b = (q.get("b") or [""])[0]
+            if path == "/api/lib3d/volumes":
+                return self._send(200, {"success": True, "volumes": lib3d.volumes(key or b)})
+            if path == "/api/lib3d/book":
+                return self._send(200, dict(lib3d.book_info(b), success=True))
+            if path == "/api/lib3d/page":
+                data, ctype = lib3d.page(b, (q.get("i") or ["0"])[0])
+                return self._send(200, data, ctype, extra={"Cache-Control": "private, max-age=3600"})
+            if path == "/api/lib3d/chapter":
+                return self._send(200, {"success": True, "html": lib3d.chapter(b, (q.get("i") or ["0"])[0])})
+            if path == "/api/lib3d/res":
+                data, ctype = lib3d.resource(b, (q.get("p") or [""])[0])
+                return self._send(200, data, ctype, extra={"Cache-Control": "private, max-age=3600"})
+            if path == "/api/lib3d/pdf":
+                with open(lib3d.pdf_path(b), "rb") as handle:
+                    return self._send(200, handle.read(), "application/pdf")
+        except (ValueError, OSError, zipfile.BadZipFile) as e:
+            return self._send(404, {"success": False, "error": str(e)})
         except Exception as e:  # noqa: BLE001
             log.exception("3D 서재 요청 실패")
             return self._send(500, {"success": False, "error": str(e)})

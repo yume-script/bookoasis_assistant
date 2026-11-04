@@ -22,7 +22,7 @@ from urllib.request import Request, urlopen
 
 from . import bookoasis_db, config
 
-VERSION = "1.2.0"
+VERSION = "2.0.0"
 CACHE_SEC = 300
 COVER_WIDTH = 200
 _DATA = {"at": 0.0, "v": None}
@@ -109,7 +109,7 @@ def book_url(db_type, book_id, library_id="", series=""):
     if not series:
         return ""
     q = urlencode({"series": series, "libraryId": library_id or "all", "type": db_type, "repBookId": book_id}, quote_via=quote)
-    return "%s/#detail?%s" % (_bookoasis(), q)
+    return "%s/#detail?%s" % (public_url(), q)
 
 
 # ── 표지 ──
@@ -295,3 +295,235 @@ def open_url(key):
 def info_json(key):
     url, path = open_url(key) if key else ("", "")
     return json.dumps({"url": url, "path": path}, ensure_ascii=False)
+
+
+# ── 3D 서재 안에서 읽기 (자체 뷰어) ──
+# BookOasis 뷰어는 다른 주소 안에 넣을 수 없어서(X-Frame-Options: SAMEORIGIN) 간단한 뷰어를 따로 둔다.
+# 만화·웹툰 zip/cbz·이미지 폴더는 그림을, epub은 본문(문단·그림)을, pdf는 브라우저 PDF 보기로. 읽은 위치는 BookOasis와 따로.
+_LIST_CACHE = {}
+_NUM = re.compile(r"(\d+)")
+
+
+def _natural(s):
+    return [int(p) if p.isdigit() else p.lower() for p in _NUM.split(str(s))]
+
+
+def public_url():
+    """브라우저가 여는 BookOasis 주소 (열기·BookOasis 뷰어 링크). LIB3D_PUBLIC_URL, 없으면 BOOKOASIS_URL"""
+    return (config.env("LIB3D_PUBLIC_URL") or _bookoasis()).rstrip("/")
+
+
+def _book(bkey):
+    """'세션:도서번호' → (세션, 행 {id, library_id, series_name, title, file_path, file_format}) 또는 예외"""
+    m = re.match(r"^([A-Za-z0-9_]+):(\d+)$", str(bkey or ""))
+    if not m or m.group(1) not in config.db_types():
+        raise ValueError("잘못된 도서 키")
+    gw = bookoasis_db.gateway(m.group(1))
+    try:
+        row = gw.fetch_one("SELECT id, library_id, series_name, title, file_path, file_format FROM books WHERE id = %s",
+                           (int(m.group(2)),))
+    except Exception:  # noqa: BLE001
+        row = gw.fetch_one("SELECT id, library_id, file_path FROM books WHERE id = %s", (int(m.group(2)),))
+    if not row:
+        raise ValueError("없는 도서")
+    return m.group(1), row
+
+
+def volumes(bkey):
+    """그 책이 속한 시리즈의 권(회차) 목록 [{key, title, format}] (이름 자연 정렬)"""
+    db_type, row = _book(bkey)
+    gw = bookoasis_db.gateway(db_type)
+    rows = []
+    if row.get("series_name") is not None and row.get("library_id") is not None:
+        try:
+            rows = gw.fetch_all("SELECT id, title, file_path, file_format FROM books WHERE library_id = %s AND "
+                                "series_name = %s AND COALESCE(is_deleted, 0) = 0", (row["library_id"], row["series_name"]))
+        except Exception:  # noqa: BLE001
+            rows = []
+    rows = rows or [row]
+    rows.sort(key=lambda r: _natural(os.path.basename(str(r.get("file_path") or r.get("title") or ""))))
+    return [{"key": "%s:%s" % (db_type, r["id"]), "id": int(r["id"]),
+             "title": r.get("title") or os.path.splitext(os.path.basename(str(r.get("file_path") or "")))[0],
+             "format": _kind(str(r.get("file_path") or ""))} for r in rows]
+
+
+def _kind(path):
+    low = path.lower()
+    if low.endswith((".zip", ".cbz")):
+        return "images"
+    if low.endswith(".epub"):
+        return "epub"
+    if low.endswith(".pdf"):
+        return "pdf"
+    if os.path.isdir(path):
+        return "images"
+    return "unsupported"
+
+
+def _entries(path):
+    """zip/cbz 또는 그림 폴더의 그림 목록 (자연 정렬, 파일이 바뀌면 다시 읽음)"""
+    try:
+        st = os.stat(path)
+        sig = (st.st_mtime_ns, st.st_size)
+    except OSError:
+        raise ValueError("파일을 열 수 없습니다 (마운트 확인)")
+    hit = _LIST_CACHE.get(path)
+    if hit and hit[0] == sig:
+        return hit[1]
+    if os.path.isdir(path):
+        names = sorted((n for n in os.listdir(path) if n.lower().endswith(_IMG)), key=_natural)
+    else:
+        with zipfile.ZipFile(path) as z:
+            names = sorted((n for n in z.namelist() if n.lower().endswith(_IMG) and not n.endswith("/")), key=_natural)
+    if len(_LIST_CACHE) > 200:
+        _LIST_CACHE.clear()
+    _LIST_CACHE[path] = (sig, names)
+    return names
+
+
+def _epub_spine(path):
+    """epub의 읽는 순서 [본문 파일 경로] (OPF spine)"""
+    hit = _LIST_CACHE.get(("epub", path))
+    if hit:
+        return hit
+    with zipfile.ZipFile(path) as z:
+        container = z.read("META-INF/container.xml").decode("utf-8", "replace")
+        opf_path = re.search(r'full-path="([^"]+)"', container).group(1)
+        opf = z.read(opf_path).decode("utf-8", "replace")
+    base = posix_dir(opf_path)
+    items = dict(re.findall(r'<item\b[^>]*\bid="([^"]+)"[^>]*\bhref="([^"]+)"', opf))
+    items.update({i: h for h, i in re.findall(r'<item\b[^>]*\bhref="([^"]+)"[^>]*\bid="([^"]+)"', opf)})
+    spine = [join_path(base, items[i]) for i in re.findall(r'<itemref\b[^>]*\bidref="([^"]+)"', opf) if i in items]
+    _LIST_CACHE[("epub", path)] = spine
+    return spine
+
+
+def posix_dir(p):
+    return p.rsplit("/", 1)[0] if "/" in p else ""
+
+
+def join_path(base, href):
+    from urllib.parse import unquote
+    parts = (base.split("/") if base else []) + unquote(href.split("#", 1)[0]).split("/")
+    out = []
+    for p in parts:
+        if p == "..":
+            if out:
+                out.pop()
+        elif p and p != ".":
+            out.append(p)
+    return "/".join(out)
+
+
+def book_info(bkey):
+    """뷰어용 {key, title, kind, count, series, volumes, kiosk(BookOasis 뷰어 주소의 앞부분)}"""
+    db_type, row = _book(bkey)
+    path = str(row.get("file_path") or "")
+    kind = _kind(path)
+    count = 0
+    if kind == "images":
+        count = len(_entries(path))
+    elif kind == "epub":
+        count = len(_epub_spine(path))
+    elif kind == "pdf":
+        count = 1
+    return {"key": bkey, "id": int(row["id"]), "db_type": db_type, "kind": kind, "count": count,
+            "title": row.get("title") or os.path.splitext(os.path.basename(path))[0],
+            "series": row.get("series_name") or "",
+            "kiosk": "%s/?kiosk=1&book=%s&type=%s" % (public_url(), row["id"], quote(db_type))}
+
+
+def page(bkey, index):
+    """그림 한 장 (바이트, 형식)"""
+    import mimetypes
+    _db, row = _book(bkey)
+    path = str(row.get("file_path") or "")
+    names = _entries(path)
+    i = int(index)
+    if not 0 <= i < len(names):
+        raise ValueError("없는 쪽")
+    name = names[i]
+    if os.path.isdir(path):
+        with open(os.path.join(path, name), "rb") as f:
+            data = f.read()
+    else:
+        with zipfile.ZipFile(path) as z:
+            data = z.read(name)
+    return data, mimetypes.guess_type(name)[0] or "image/jpeg"
+
+
+def chapter(bkey, index):
+    """epub 한 장의 본문을 안전한 HTML로 (문단·제목·목록·그림만, 스크립트·스타일·링크는 뺌)"""
+    from html import escape
+    from html.parser import HTMLParser
+    _db, row = _book(bkey)
+    path = str(row.get("file_path") or "")
+    spine = _epub_spine(path)
+    i = int(index)
+    if not 0 <= i < len(spine):
+        raise ValueError("없는 장")
+    with zipfile.ZipFile(path) as z:
+        src = z.read(spine[i]).decode("utf-8", "replace")
+    base = posix_dir(spine[i])
+    keep = {"p": "p", "h1": "h2", "h2": "h2", "h3": "h3", "h4": "h4", "h5": "h4", "h6": "h4", "li": "li",
+            "blockquote": "blockquote", "br": "br", "hr": "hr"}
+    out, stack = [], []
+
+    class P(HTMLParser):
+        skip = 0
+
+        def handle_starttag(self, tag, attrs):
+            if tag in ("script", "style", "head"):
+                self.skip += 1
+                return
+            if tag in ("img", "image"):
+                a = dict(attrs)
+                src_ = a.get("src") or a.get("xlink:href") or a.get("href")
+                if src_:
+                    out.append('<img src="api/lib3d/res?b=%s&p=%s" alt="">' % (quote(bkey), quote(join_path(base, src_))))
+                return
+            t = keep.get(tag)
+            if t in ("br", "hr"):
+                out.append("<%s>" % t)
+            elif t:
+                out.append("<%s>" % t)
+                stack.append(t)
+
+        def handle_endtag(self, tag):
+            if tag in ("script", "style", "head"):
+                self.skip = max(0, self.skip - 1)
+                return
+            t = keep.get(tag)
+            if t and t not in ("br", "hr") and t in stack:
+                while stack:
+                    x = stack.pop()
+                    out.append("</%s>" % x)
+                    if x == t:
+                        break
+
+        def handle_data(self, data):
+            if not self.skip and data.strip():
+                out.append(escape(data))
+    P().feed(src)
+    while stack:
+        out.append("</%s>" % stack.pop())
+    return "".join(out)
+
+
+def resource(bkey, inner):
+    """epub 안의 그림"""
+    import mimetypes
+    _db, row = _book(bkey)
+    path = str(row.get("file_path") or "")
+    if not str(inner).lower().endswith(_IMG + (".svg",)):
+        raise ValueError("그림이 아닙니다")
+    with zipfile.ZipFile(path) as z:
+        return z.read(inner), mimetypes.guess_type(inner)[0] or "image/jpeg"
+
+
+def pdf_path(bkey):
+    _db, row = _book(bkey)
+    path = str(row.get("file_path") or "")
+    if _kind(path) != "pdf":
+        raise ValueError("pdf가 아닙니다")
+    return path

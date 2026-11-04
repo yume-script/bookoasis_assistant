@@ -17,14 +17,14 @@
 <link rel="stylesheet" href="theme.css">
 <style>
   .l3d-wrap { position: relative; height: calc(100vh - 96px); min-height: 420px; border-radius: 12px; overflow: hidden;
-    background: #2a241e; touch-action: none; user-select: none; -webkit-user-select: none; }
+    background: #f3efe8; touch-action: none; user-select: none; -webkit-user-select: none; }
   .l3d-wrap canvas { display: block; width: 100%; height: 100%; outline: none; }
   .l3d-hud { position: absolute; left: 12px; top: 12px; display: flex; flex-direction: column; gap: 6px; pointer-events: none; }
-  .l3d-chip { pointer-events: auto; background: rgba(20, 21, 23, 0.78); color: #f1f1f1; border-radius: 999px; padding: 6px 12px;
+  .l3d-chip { pointer-events: auto; background: rgba(255, 255, 255, 0.86); color: #1d1e20; box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08); border-radius: 999px; padding: 6px 12px;
     font-size: 0.8rem; line-height: 1.35; backdrop-filter: blur(4px); width: max-content; max-width: 70vw; }
   .l3d-chip b { color: var(--accent, #e5a00d); }
   .l3d-bar { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); display: flex; gap: 8px; }
-  .l3d-btn { border: 0; border-radius: 12px; background: rgba(20, 21, 23, 0.82); color: #f1f1f1; padding: 8px 14px;
+  .l3d-btn { border: 0; border-radius: 999px; background: rgba(29, 30, 32, 0.86); color: #f5f2ec; padding: 9px 16px;
     font: 600 0.82rem/1.2 inherit; cursor: pointer; min-width: 64px; }
   .l3d-btn:hover { background: rgba(40, 42, 46, 0.92); }
   .l3d-btn.primary { background: var(--accent, #e5a00d); color: var(--accent-ink, #141517); }
@@ -42,12 +42,31 @@
     padding: 8px 10px; border-radius: 8px; font: 500 0.84rem/1.3 inherit; cursor: pointer; text-align: left; }
   .l3d-map button:hover { background: rgba(255, 255, 255, 0.08); }
   .l3d-map small { opacity: 0.6; white-space: nowrap; }
-  .l3d-msg { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; padding: 24px; color: #eee;
+  .l3d-msg { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; padding: 24px; color: #333;
     font-size: 0.95rem; line-height: 1.6; pointer-events: none; }
   .l3d-stick { position: absolute; width: 96px; height: 96px; border-radius: 50%; border: 2px solid rgba(255, 255, 255, 0.55);
     background: rgba(20, 21, 23, 0.25); display: none; pointer-events: none; }
   .l3d-stick i { position: absolute; left: 50%; top: 50%; width: 40px; height: 40px; margin: -20px 0 0 -20px; border-radius: 50%;
     background: rgba(255, 255, 255, 0.7); }
+  /* 서재 안에서 읽기 (뷰어) */
+  .l3d-reader { position: absolute; inset: 0; z-index: 5; display: none; flex-direction: column; background: #121314; color: #eee; }
+  .l3d-reader.on { display: flex; }
+  .l3d-r-top { display: flex; align-items: center; gap: 8px; padding: 8px 10px; background: #1b1c1e; flex-wrap: wrap; }
+  .l3d-r-top b { flex: 1 1 160px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.92rem; }
+  .l3d-r-top select { max-width: 220px; background: #2a2b2e; color: #eee; border: 1px solid #3a3b3f; border-radius: 8px; padding: 6px 8px; font: inherit; font-size: 0.82rem; }
+  .l3d-r-top .pos { font-size: 0.8rem; opacity: 0.75; min-width: 64px; text-align: center; }
+  .l3d-r-body { flex: 1; overflow: auto; display: flex; align-items: center; justify-content: center; position: relative; }
+  .l3d-r-body.images:not(.scroll) img { max-width: 100%; max-height: 100%; object-fit: contain; cursor: pointer; user-select: none; }
+  .l3d-r-body.scroll { display: block; }
+  .l3d-r-body.scroll img { display: block; width: min(820px, 100%); margin: 0 auto; }
+  .l3d-r-body.epub { display: block; background: #f6f1e7; color: #2b2622; }
+  .l3d-r-body.epub article { max-width: 720px; margin: 0 auto; padding: 32px 24px 80px; font: 400 1.05rem/1.9 "Noto Serif KR", "Noto Sans KR", serif; }
+  .l3d-r-body.epub article img { max-width: 100%; height: auto; display: block; margin: 12px auto; }
+  .l3d-r-body.epub article p { margin: 0 0 0.9em; text-indent: 1em; }
+  .l3d-r-body.pdf iframe { width: 100%; height: 100%; border: 0; background: #fff; }
+  .l3d-r-msg { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); background: rgba(0, 0, 0, 0.7); padding: 10px 16px;
+    border-radius: 10px; font-size: 0.86rem; pointer-events: none; }
+  .l3d-r-msg[hidden] { display: none; }
   @media (max-width: 640px) { .l3d-wrap { height: calc(100vh - 120px); } .l3d-btn { padding: 8px 10px; min-width: 52px; } }
 </style>
 </head>
@@ -65,11 +84,29 @@
       <p id="l3d-card-sub"></p>
       <p id="l3d-card-path"></p>
       <div class="row">
-        <button type="button" class="l3d-btn primary" id="l3d-open" hidden>BookOasis에서 열기</button>
+        <button type="button" class="l3d-btn primary" id="l3d-read">여기서 읽기</button>
+        <button type="button" class="l3d-btn" id="l3d-read-bo">BookOasis 뷰어로 읽기</button>
+      </div>
+      <div class="row">
+        <button type="button" class="l3d-btn" id="l3d-open" hidden>작품 상세 (BookOasis)</button>
         <button type="button" class="l3d-btn" id="l3d-close">닫기</button>
       </div>
     </div>
     <div class="l3d-map" id="l3d-map"></div>
+    <div class="l3d-reader" id="l3d-reader" role="dialog" aria-label="읽기">
+      <div class="l3d-r-top">
+        <b id="l3d-r-title"></b>
+        <select id="l3d-r-vols" aria-label="권 선택"></select>
+        <button type="button" class="l3d-btn" id="l3d-r-prev" aria-label="이전">◀</button>
+        <span class="pos" id="l3d-r-pos"></span>
+        <button type="button" class="l3d-btn" id="l3d-r-next" aria-label="다음">▶</button>
+        <button type="button" class="l3d-btn" id="l3d-r-mode" hidden>세로 스크롤</button>
+        <button type="button" class="l3d-btn" id="l3d-r-bo">BookOasis 뷰어</button>
+        <button type="button" class="l3d-btn primary" id="l3d-r-close">서재로</button>
+      </div>
+      <div class="l3d-r-body" id="l3d-r-body"></div>
+      <div class="l3d-r-msg" id="l3d-r-msg" hidden></div>
+    </div>
     <div class="l3d-stick" id="l3d-stick"><i></i></div>
     <div class="l3d-bar">
       <button type="button" class="l3d-btn" id="l3d-floor-btn">층</button>
