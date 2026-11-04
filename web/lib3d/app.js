@@ -428,8 +428,14 @@
   }
   // ── 사람 모형: 옷 입은 사람(three.js 예제의 Michelle)에 Xbot의 걷기·서 있기 동작을 옮겨 입힌다 ──
   // Michelle을 못 받으면 Xbot 마네킹으로, 둘 다 못 받으면 위의 단순한 사람으로 그대로 둔다.
-  var MODEL_BASE = 'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r160/examples/models/gltf/';
-  var HUMAN = { gltf: null, dressed: null, clips: {}, dclips: {}, looks: [], beachMat: null };
+  var MODEL_BASE = 'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r175/examples/models/gltf/';
+  var HUMAN = { gltf: null, dressed: null, clips: {}, dclips: {}, looks: [], beachMat: null, man: null };
+  // 남자 손님(readyplayer.me 예제 모형): 윗옷·바지 색과 수염
+  var MAN_LOOKS = [
+    { top: null, bottom: null, beard: true }, { top: 0x34445e, bottom: 0x2a2d35, beard: false },
+    { top: 0x5a5f66, bottom: 0x1f2126, beard: true }, { top: 0x7b8a6a, bottom: 0x4a4038, beard: false },
+    { top: 0x23252b, bottom: 0x23252b, beard: false }, { top: 0x8a4a3a, bottom: 0x3a4352, beard: true },
+  ];
   var POSES = ['sad_pose', 'agree', 'headShake'];   // 덧입히는 동작(고개 숙이기·끄덕임·도리도리)
   // 손님 옷차림: 바지·윗옷·피부색
   var LOOKS = [
@@ -473,22 +479,63 @@
           HUMAN.dressed = dg;
           respawn();
         } catch (e) { HUMAN.dressed = null; }
+        loader.load(MODEL_BASE + 'readyplayer.me.glb', function (mg) {
+          try {
+            var mats = {};
+            mg.scene.traverse(function (o) { if (o.geometry) o.geometry.userData.shared = true; if (o.isMesh) mats[o.material.name] = o.material; });
+            var mclips = {};
+            ['idle', 'walk'].concat(POSES).forEach(function (n) {
+              if (!raw[n]) return;
+              var c = retargetClip(gltf.scene, mg.scene, raw[n]);
+              if (POSES.indexOf(n) >= 0) T.AnimationUtils.makeClipAdditive(c);
+              mclips[n] = c;
+            });
+            function suit(name, col) {
+              var b = mats[name]; if (!b || col == null) return b;
+              var m = b.clone(); if (b.map) m.map = recolorSuit(b.map.image, col); m.userData.keep = true; return m;
+            }
+            HUMAN.man = { scene: mg.scene, clips: mclips, looks: MAN_LOOKS.map(function (lk) {
+              return { top: suit('Wolf3D_Outfit_Top', lk.top), bottom: suit('Wolf3D_Outfit_Bottom', lk.bottom), beard: lk.beard };
+            }) };
+            respawn();
+          } catch (e) { HUMAN.man = null; }
+        }, undefined, function () { /* 못 받으면 여자 손님만 */ });
       }, undefined, function () { /* 못 받으면 마네킹 그대로 */ });
     }, undefined, function () { /* 못 받으면 단순한 사람 그대로 */ });
   }
   // ── 옷 입은 사람: Michelle(glTF)에 Xbot의 걷기·서 있기 동작을 옮겨 입힌다 ──
-  function boneMap(root) { var o = {}; root.updateMatrixWorld(true); root.traverse(function (b) { if (b.isBone) o[b.name] = b; }); return o; }
+  function boneKey(n) { return n.replace(/^mixamorig:?/, ''); }   // Mixamo 접두사를 빼면 readyplayer.me 뼈 이름과 같다
+  function boneMap(root) { var o = {}; root.updateMatrixWorld(true); root.traverse(function (b) { if (b.isBone) o[boneKey(b.name)] = b; }); return o; }
   function worldQ(o) { var q = new T.Quaternion(); o.getWorldQuaternion(q); return q; }
-  // 두 모형의 기본 자세(T자) 차이를 뼈마다 앞뒤로 보정해 회전 동작만 옮긴다 (위치 이동 트랙은 버림: 제자리 걷기)
-  function retargetClip(srcRoot, dstRoot, clip) {
+  function worldP(o) { var v = new T.Vector3(); o.getWorldPosition(v); return v; }
+  // 대상 모형의 기본 자세를 원본(T자)에 맞춘다: 뼈마다 자식 뼈를 향하는 방향을 원본과 같게 돌린다 (A자 → T자)
+  function alignRest(S, root) {
+    var order = []; root.traverse(function (b) { if (b.isBone) order.push(b); });
+    order.forEach(function (db) {
+      var sb = S[boneKey(db.name)]; if (!sb) return;
+      var dc = null, sc2 = null;
+      db.children.forEach(function (c) { if (!dc && c.isBone && S[boneKey(c.name)]) { dc = c; sc2 = S[boneKey(c.name)]; } });
+      if (!dc) return;
+      root.updateMatrixWorld(true);
+      var sd = worldP(sc2).sub(worldP(sb)), dd = worldP(dc).sub(worldP(db));
+      if (sd.lengthSq() < 1e-10 || dd.lengthSq() < 1e-10) return;
+      var w = new T.Quaternion().setFromUnitVectors(dd.normalize(), sd.normalize()).multiply(worldQ(db));
+      db.quaternion.copy(worldQ(db.parent).invert().multiply(w));
+    });
+    root.updateMatrixWorld(true);
+  }
+  // 두 모형의 기본 자세 차이를 뼈마다 앞뒤로 보정해 회전 동작만 옮긴다 (위치 이동 트랙은 버림: 제자리 걷기)
+  function retargetClip(srcRoot, dstRoot0, clip) {
+    var dstRoot = T.SkeletonUtils.clone(dstRoot0);
     var S = boneMap(srcRoot), D = boneMap(dstRoot), tracks = [];
+    alignRest(S, dstRoot);
     clip.tracks.forEach(function (tr) {
       var mm = /^(.*)\.quaternion$/.exec(tr.name); if (!mm) return;
-      var sb = S[mm[1]], db = D[mm[1]]; if (!sb || !db) return;
+      var key = boneKey(mm[1]), sb = S[key], db = D[key]; if (!sb || !db) return;
       var P = worldQ(db.parent).invert().multiply(worldQ(sb.parent)), Q = worldQ(sb).invert().multiply(worldQ(db));
       var v = tr.values.slice(), q = new T.Quaternion();
       for (var i = 0; i < v.length; i += 4) { q.fromArray(v, i); q.premultiply(P).multiply(Q); q.toArray(v, i); }
-      tracks.push(new T.QuaternionKeyframeTrack(tr.name, tr.times, v));
+      tracks.push(new T.QuaternionKeyframeTrack(db.name + '.quaternion', tr.times, v));
     });
     return new T.AnimationClip(clip.name, clip.duration, tracks);
   }
@@ -517,8 +564,24 @@
     return tex;
   }
 
+  // 갈색 계열(정장·바지)만 골라 다른 색으로 다시 칠한다. 작게 줄여 칠해 빠르게
+  function recolorSuit(img, hex) {
+    var w = Math.min(512, img.width), h = Math.min(512, img.height), cv = document.createElement('canvas'); cv.width = w; cv.height = h;
+    var cx = cv.getContext('2d'); cx.drawImage(img, 0, 0, w, h);
+    var d = cx.getImageData(0, 0, w, h), a = d.data, hsl = {}, col = new T.Color(), to = new T.Color(hex).getHSL({});
+    for (var i = 0; i < a.length; i += 4) {
+      col.setRGB(a[i] / 255, a[i + 1] / 255, a[i + 2] / 255); col.getHSL(hsl);
+      if ((hsl.h < 0.11 || hsl.h > 0.97) && hsl.s > 0.08 && hsl.s < 0.65) {
+        var out = hsl2rgb(to.h, to.s, Math.min(0.92, to.l * hsl.l / 0.38));
+        a[i] = out[0]; a[i + 1] = out[1]; a[i + 2] = out[2];
+      }
+    }
+    cx.putImageData(d, 0, 0);
+    var tex = new T.CanvasTexture(cv); tex.flipY = false; tex.encoding = T.sRGBEncoding;
+    return tex;
+  }
   function findBone(root, name) {
-    var re = new RegExp('mixamorig:?' + name + '$'), hit = null;
+    var re = new RegExp('(^|mixamorig:?)' + name + '$'), hit = null;
     root.traverse(function (o) { if (!hit && o.isBone && re.test(o.name)) hit = o; });
     return hit;
   }
@@ -531,8 +594,29 @@
     bone.add(mesh); return mesh;
   }
   var SHIRT = [0x2f3b4c, 0x7a3b3b, 0xd9d3c7, 0x3f5a4a, 0x9b8f7a, 0x2b2e35, 0x5e6f86, 0xb07a4f, 0x6d5a7e, 0xc4b9a6, 0x8a9a6b, 0x34506b];
+  function manHuman(r) {
+    var model = T.SkeletonUtils.clone(HUMAN.man.scene), lk = HUMAN.man.looks[Math.floor(r() * HUMAN.man.looks.length)];
+    model.traverse(function (o) {
+      if (!o.isMesh) return;
+      o.castShadow = true; o.frustumCulled = false;
+      var n = o.material.name;
+      if (n === 'Wolf3D_Outfit_Top' && lk.top) o.material = lk.top;
+      else if (n === 'Wolf3D_Outfit_Bottom' && lk.bottom) o.material = lk.bottom;
+      else if (n === 'Wolf3D_Beard') o.visible = lk.beard;
+    });
+    var g = new T.Group(); g.add(model);
+    var mixer = new T.AnimationMixer(model), acts = {};
+    ['idle', 'walk'].forEach(function (n) { if (HUMAN.man.clips[n]) acts[n] = mixer.clipAction(HUMAN.man.clips[n]); });
+    if (acts.idle) acts.idle.play();
+    if (acts.walk) { acts.walk.play(); acts.walk.setEffectiveWeight(0); }
+    mixer.update(r() * 3);
+    var sc = 0.96 + r() * 0.08;
+    g.scale.setScalar(sc);
+    return { g: g, mixer: mixer, acts: acts, clips: HUMAN.man.clips, model: model, handL: findBone(model, 'LeftHand'), r: r, phase: r() * 6, sc: sc, walkW: 0 };
+  }
   function dressedHuman(seed, beach) {
     var r = rnd(seed * 7919 + 13);
+    if (!beach && HUMAN.man && r() < 0.5) return manHuman(r);
     var model = T.SkeletonUtils.clone(HUMAN.dressed.scene);
     var mat = beach ? HUMAN.beachMat : HUMAN.looks[Math.floor(r() * HUMAN.looks.length)];
     model.traverse(function (o) { if (o.isMesh) { o.material = mat; o.castShadow = true; o.frustumCulled = false; } });
