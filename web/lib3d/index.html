@@ -61,7 +61,7 @@
   /* AI: 설정 패널·질문 창·손님 말풍선 */
   .l3d-ai label.f { display: grid; gap: 4px; font-size: 0.82rem; margin: 6px 0; }
   .l3d-ai label.c { display: flex; gap: 6px; align-items: center; font-size: 0.86rem; margin: 6px 0; cursor: pointer; }
-  .l3d-ai input[type=text], .l3d-ai input[type=password], .l3d-ai input[type=number] { font: inherit; padding: 7px 9px; border: 1px solid #d9d3c8;
+  .l3d-ai input[type=text], .l3d-ai input[type=password], .l3d-ai input[type=number], .l3d-ai select { font: inherit; padding: 7px 9px; border: 1px solid #d9d3c8;
     border-radius: 8px; background: #fff; color: #1d1e20; min-width: 0; }
   .l3d-ai .warn { color: #b3261e; }
   .l3d-ai .body { flex: 1; overflow: auto; }
@@ -188,13 +188,20 @@
     </div>
     <div class="l3d-set l3d-ai" id="l3d-ai" role="dialog" aria-label="3D 서재 AI 설정">
       <h3>AI 손님·질문하기</h3>
-      <p class="sub">Claude가 손님들의 책 대화를 쓰고, BookOasis MCP로 서재에 대한 질문에 답합니다. 호출할 때마다 Claude API 요금이 듭니다.</p>
+      <p class="sub">LLM이 손님들의 책 대화를 쓰고, BookOasis MCP로 서재에 대한 질문에 답합니다. 유료 API면 호출할 때마다 요금이 듭니다.</p>
       <div class="body">
+        <label class="f">연결 방식
+          <select id="l3d-ai-provider">
+            <option value="openai">OpenAI 호환 /chat/completions (LiteLLM·Ollama·LM Studio·OpenAI 등)</option>
+            <option value="anthropic">Claude API (Anthropic)</option>
+          </select></label>
+        <label class="f" id="l3d-ai-base-f">API 주소 (Base URL)
+          <input type="text" id="l3d-ai-base" placeholder="http://192.168.0.26:4000/v1"></label>
         <p class="sub warn" id="l3d-ai-sdk" hidden>서버에 anthropic 패키지가 없습니다. <code>pip install anthropic</code> 후 다시 시작하세요.</p>
-        <label class="f">Claude API 키 <input type="password" id="l3d-ai-key" autocomplete="off" placeholder="sk-ant-..."></label>
+        <label class="f">API 키 <input type="password" id="l3d-ai-key" autocomplete="off" placeholder="sk-..."></label>
         <label class="c"><input type="checkbox" id="l3d-ai-clear"> 저장된 키 지우기</label>
-        <label class="f">모델 <input type="text" id="l3d-ai-model" list="l3d-ai-models" placeholder="claude-opus-5-5"></label>
-        <datalist id="l3d-ai-models"><option value="claude-opus-5-5"><option value="claude-sonnet-5-5"><option value="claude-haiku-5-5"></datalist>
+        <label class="f">모델 이름 <input type="text" id="l3d-ai-model" list="l3d-ai-models" placeholder="예: gemini-free3_1"></label>
+        <datalist id="l3d-ai-models"></datalist>
         <label class="c"><input type="checkbox" id="l3d-ai-chat"> 손님 대화 (층마다 두 손님이 책 한 권을 두고 이야기)</label>
         <label class="f">대화 사이 최소 간격(초) <input type="number" id="l3d-ai-sec" min="15" max="3600" step="5"></label>
         <label class="c"><input type="checkbox" id="l3d-ai-ask"> 질문하기 (BookOasis MCP로 서재 데이터를 찾아 답)</label>

@@ -1,16 +1,21 @@
 """BookOasis 3D 서재 AI
 
-- 손님 대화: 지금 층의 보관함에서 책 한 권을 무작위로 골라, 두 손님이 그 책 이야기를 나누는 짧은 대화를 Claude가 쓴다.
-- 질문하기: BookOasis MCP 서버(tools/mcp_server.py, stdio)의 읽기 전용 도구를 Claude에 붙여 서재에 대한 질문에 답한다.
+- 손님 대화: 지금 층의 보관함에서 책 한 권을 무작위로 골라, 두 손님이 그 책 이야기를 나누는 짧은 대화를 LLM이 쓴다.
+- 질문하기: BookOasis MCP 서버(tools/mcp_server.py, stdio)의 읽기 전용 도구를 LLM에 붙여 서재에 대한 질문에 답한다.
+
+LLM은 두 가지로 부른다:
+  openai     OpenAI 호환 /chat/completions (LiteLLM·Ollama·LM Studio·OpenAI 등) - 표준 라이브러리만 씀
+  anthropic  Claude API (anthropic 패키지 필요: pip install anthropic)
 
 설정은 .env에 저장한다 (save_env는 파일 권한 0600):
-  LIB3D_AI_API_KEY      Claude API 키 (비우면 ANTHROPIC_API_KEY 등 SDK 기본 인증)
-  LIB3D_AI_MODEL        모델 (기본 claude-opus-5-5)
+  LIB3D_AI_PROVIDER     openai(기본) | anthropic
+  LIB3D_AI_BASE_URL     OpenAI 호환 API 주소 (예: http://192.168.0.26:4000/v1)
+  LIB3D_AI_API_KEY      API 키 (anthropic에서 비우면 ANTHROPIC_API_KEY 등 SDK 기본 인증)
+  LIB3D_AI_MODEL        모델 (openai는 필수, anthropic 기본 claude-opus-5-5)
   LIB3D_AI_CHAT         손님 대화 켜기 (기본 false)
   LIB3D_AI_CHAT_SEC     대화 사이 최소 간격(초, 기본 60) - 호출 비용을 묶는다
   LIB3D_AI_ASK          질문하기 켜기 (기본 false)
   LIB3D_MCP_COMMAND     BookOasis MCP 실행 명령 (예: docker exec -i bookoasis python3 tools/mcp_server.py)
-Claude 호출에는 anthropic 패키지가 필요하다 (pip install anthropic).
 """
 import json
 import logging
@@ -20,6 +25,8 @@ import shlex
 import subprocess
 import threading
 import time
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 
 from . import bookoasis_db, config, lib3d
 
@@ -36,12 +43,17 @@ READ_ONLY_TOOLS = ("search_books", "get_random_book", "get_library_stats", "find
 TOOL_RESULT_MAX = 40000   # 도구 결과가 이보다 길면 잘랐다고 표시하고 자른다
 ASK_MAX_STEPS = 10
 
-KEYS = ("LIB3D_AI_API_KEY", "LIB3D_AI_MODEL", "LIB3D_AI_CHAT", "LIB3D_AI_CHAT_SEC", "LIB3D_AI_ASK", "LIB3D_MCP_COMMAND")
+KEYS = ("LIB3D_AI_PROVIDER", "LIB3D_AI_BASE_URL", "LIB3D_AI_API_KEY", "LIB3D_AI_MODEL", "LIB3D_AI_CHAT", "LIB3D_AI_CHAT_SEC", "LIB3D_AI_ASK", "LIB3D_MCP_COMMAND")
 
 
 # ── 설정 ──
+def provider():
+    return "anthropic" if config.env("LIB3D_AI_PROVIDER", "openai").lower() == "anthropic" else "openai"
+
+
 def model():
-    return config.env("LIB3D_AI_MODEL", DEFAULT_MODEL) or DEFAULT_MODEL
+    m = config.env("LIB3D_AI_MODEL")
+    return m or (DEFAULT_MODEL if provider() == "anthropic" else "")
 
 
 def chat_sec():
@@ -63,7 +75,8 @@ def flags():
 
 
 def settings():
-    return dict(flags(), model=model(), api_key_set=bool(config.env("LIB3D_AI_API_KEY") or config.env("ANTHROPIC_API_KEY")),
+    return dict(flags(), provider=provider(), base_url=config.env("LIB3D_AI_BASE_URL"), model=model(),
+                api_key_set=bool(config.env("LIB3D_AI_API_KEY") or (provider() == "anthropic" and config.env("ANTHROPIC_API_KEY"))),
                 mcp_command=config.env("LIB3D_MCP_COMMAND"), sdk=sdk_ok(), fixed=config.overridden(list(KEYS)))
 
 
@@ -76,8 +89,15 @@ def save(values):
         out["LIB3D_AI_ASK"] = "true" if values["ask"] else "false"
     if "chat_sec" in values:
         out["LIB3D_AI_CHAT_SEC"] = str(max(15, min(3600, int(values["chat_sec"] or 60))))
+    if "provider" in values:
+        out["LIB3D_AI_PROVIDER"] = "anthropic" if values["provider"] == "anthropic" else "openai"
+    if "base_url" in values:
+        url = str(values["base_url"] or "").strip().rstrip("/")
+        if url and not url.startswith(("http://", "https://")):
+            raise ValueError("API 주소는 http:// 또는 https://로 시작해야 합니다.")
+        out["LIB3D_AI_BASE_URL"] = url
     if "model" in values:
-        out["LIB3D_AI_MODEL"] = str(values["model"] or "").strip() or DEFAULT_MODEL
+        out["LIB3D_AI_MODEL"] = str(values["model"] or "").strip()
     if "mcp_command" in values:
         out["LIB3D_MCP_COMMAND"] = str(values["mcp_command"] or "").strip()
     if values.get("api_key"):
@@ -127,6 +147,87 @@ def _create(**kw):
         raise RuntimeError("Claude API 오류 (%s): %s" % (error.status_code, error.message)) from error
 
 
+# ── OpenAI 호환 (/chat/completions) 호출 ──
+def _oa_post(payload, timeout=180):
+    base = config.env("LIB3D_AI_BASE_URL").rstrip("/")
+    if not base:
+        raise ValueError("OpenAI 호환 API 주소가 없습니다 (3D 서재 설정 > AI).")
+    if not payload.get("model"):
+        raise ValueError("모델 이름이 없습니다 (3D 서재 설정 > AI).")
+    headers = {"Content-Type": "application/json"}
+    key = config.env("LIB3D_AI_API_KEY")
+    if key:
+        headers["Authorization"] = "Bearer " + key
+    req = Request(base + "/chat/completions", data=json.dumps(payload, ensure_ascii=False).encode("utf-8"), headers=headers)
+    try:
+        with urlopen(req, timeout=timeout) as r:
+            return json.loads(r.read().decode("utf-8"))
+    except HTTPError as error:
+        body = error.read().decode("utf-8", "replace")
+        try:
+            msg = json.loads(body).get("error", body)
+            msg = msg.get("message", msg) if isinstance(msg, dict) else msg
+        except ValueError:
+            msg = body
+        if error.code in (401, 403):
+            raise RuntimeError("API 키가 맞지 않습니다 (%s): %s" % (error.code, str(msg)[:300])) from error
+        raise _OaError(error.code, "LLM API 오류 (%s): %s" % (error.code, str(msg)[:300])) from error
+    except (URLError, OSError) as error:
+        raise RuntimeError("LLM API(%s)에 연결하지 못했습니다: %s" % (base, getattr(error, "reason", error))) from error
+    except ValueError as error:
+        raise RuntimeError("LLM API 응답이 JSON이 아닙니다.") from error
+
+
+class _OaError(RuntimeError):
+    def __init__(self, code, msg):
+        super().__init__(msg)
+        self.code = code
+
+
+def _oa_message(resp):
+    try:
+        return resp["choices"][0]["message"] or {}, resp["choices"][0].get("finish_reason")
+    except (KeyError, IndexError, TypeError) as error:
+        raise RuntimeError("LLM API 응답에 choices가 없습니다.") from error
+
+
+def _json_from(text):
+    """```json 울타리나 앞뒤 말이 붙어 와도 첫 JSON 객체를 꺼낸다"""
+    text = (text or "").strip()
+    try:
+        return json.loads(text)
+    except ValueError:
+        a, b = text.find("{"), text.rfind("}")
+        if a >= 0 and b > a:
+            return json.loads(text[a:b + 1])
+        raise
+
+
+def _oa_schema(node):
+    """MCP 입력 스키마를 OpenAI 호환 함수 스키마로 다듬는다 (Gemini 등이 싫어하는 title·default 제거, null 허용은 본래 타입으로)"""
+    if isinstance(node, list):
+        return [_oa_schema(x) for x in node]
+    if not isinstance(node, dict):
+        return node
+    for key in ("anyOf", "oneOf"):
+        if key in node:
+            opts = [o for o in node[key] if not (isinstance(o, dict) and o.get("type") == "null")]
+            if len(opts) == 1:
+                merged = dict(opts[0])
+                for k in ("description",):
+                    if k in node and k not in merged:
+                        merged[k] = node[k]
+                return _oa_schema(merged)
+    out = {}
+    for k, v in node.items():
+        if k in ("title", "default", "$schema", "additionalProperties"):
+            continue
+        out[k] = {pk: _oa_schema(pv) for pk, pv in v.items()} if k == "properties" and isinstance(v, dict) else _oa_schema(v)
+    if out.get("type") == "object" and "properties" not in out:
+        out["properties"] = {}
+    return out
+
+
 def _text(resp):
     return "".join(b.text for b in resp.content if b.type == "text").strip()
 
@@ -147,6 +248,8 @@ _CHAT_SYSTEM = (
     "- 주어진 책 정보(제목·작가·장르·태그·줄거리)에 있는 내용만 근거로 말한다. 정보에 없는 줄거리·결말·등장인물을 지어내지 않는다. "
     "정보가 제목뿐이면 제목에서 받은 인상, 읽어 볼지 말지 같은 이야기를 한다.\n"
     "- 큰 스포일러는 피한다. 성인 서재의 책이라도 대화는 노골적이지 않게 쓴다.")
+_CHAT_JSON_RULE = '답은 JSON 객체 하나만: {"lines": [{"who": 0, "text": "..."}, {"who": 1, "text": "..."}]} (who는 0 또는 1)'
+
 
 
 def _book_detail(db_type, book_id):
@@ -168,6 +271,27 @@ def _pick_book(lib_keys):
     lib = random.choice(libs)
     s = random.choice(lib["series"])
     return lib, s
+
+
+def _chat_text(user):
+    if provider() == "anthropic":
+        resp = _create(max_tokens=4000, system=_CHAT_SYSTEM,
+                       output_config={"effort": "low", "format": {"type": "json_schema", "schema": _CHAT_SCHEMA}},
+                       messages=[{"role": "user", "content": user}])
+        if resp.stop_reason == "refusal":
+            raise RuntimeError("이 책으로는 대화를 만들지 않았습니다.")
+        return _text(resp)
+    payload = {"model": model(), "max_tokens": 2000, "response_format": {"type": "json_object"},
+               "messages": [{"role": "system", "content": _CHAT_SYSTEM + "\n" + _CHAT_JSON_RULE},
+                            {"role": "user", "content": user}]}
+    try:
+        resp = _oa_post(payload)
+    except _OaError as error:   # json_object를 모르는 모델·게이트웨이면 지시문만으로 다시
+        if error.code != 400:
+            raise
+        payload.pop("response_format")
+        resp = _oa_post(payload)
+    return _oa_message(resp)[0].get("content") or ""
 
 
 def chat(lib_keys):
@@ -192,15 +316,17 @@ def chat(lib_keys):
         v = (d.get(k) or "").strip() if isinstance(d.get(k), str) else d.get(k)
         if v:
             info[name] = v
-    resp = _create(max_tokens=4000, system=_CHAT_SYSTEM,
-                   output_config={"effort": "low", "format": {"type": "json_schema", "schema": _CHAT_SCHEMA}},
-                   messages=[{"role": "user", "content": "책 정보:\n" + json.dumps(info, ensure_ascii=False, indent=1)}])
-    if resp.stop_reason == "refusal":
-        raise RuntimeError("이 책으로는 대화를 만들지 않았습니다.")
+    user = "책 정보:\n" + json.dumps(info, ensure_ascii=False, indent=1)
     try:
-        lines = json.loads(_text(resp))["lines"]
+        text = _chat_text(user)
+    except Exception:
+        with _CHAT["lock"]:
+            _CHAT["last"] = 0.0   # 실패하면 다음 호출을 막지 않는다
+        raise
+    try:
+        lines = _json_from(text)["lines"]
     except (ValueError, KeyError, TypeError) as error:
-        raise RuntimeError("대화를 읽지 못했습니다.") from error
+        raise RuntimeError("대화를 읽지 못했습니다 (모델이 JSON으로 답하지 않음).") from error
     out = {"book": {"title": info["제목"], "lib": lib["key"], "lib_name": lib["name"]},
            "lines": [{"who": int(x.get("who", i % 2)) % 2, "text": str(x.get("text", ""))[:120]} for i, x in enumerate(lines) if x.get("text")][:8]}
     with _CHAT["lock"]:
@@ -334,8 +460,11 @@ def ask(question, history=None):
     question = str(question or "").strip()[:2000]
     if not question:
         raise ValueError("질문을 적어 주세요.")
+    mcp_tools = MCP.list_tools()
+    if provider() != "anthropic":
+        return _ask_openai(question, history, mcp_tools)
     tools = [{"name": t["name"], "description": (t.get("description") or "")[:1024],
-              "input_schema": t.get("inputSchema") or {"type": "object", "properties": {}}} for t in MCP.list_tools()]
+              "input_schema": t.get("inputSchema") or {"type": "object", "properties": {}}} for t in mcp_tools]
     messages = []
     for h in (history or [])[-6:]:
         if isinstance(h, dict) and h.get("q") and h.get("a"):
@@ -361,4 +490,34 @@ def ask(question, history=None):
                 text, is_err = "도구 실행 실패: %s" % error, True
             results.append({"type": "tool_result", "tool_use_id": b.id, "content": text, "is_error": is_err})
         messages.append({"role": "user", "content": results})
+    return {"answer": "도구를 너무 여러 번 써서 멈췄습니다. 질문을 좁혀 다시 물어 주세요.", "tools": used}
+
+
+def _ask_openai(question, history, mcp_tools):
+    """OpenAI 호환 도구 호출(tools/tool_calls)로 같은 일을 한다"""
+    tools = [{"type": "function", "function": {
+        "name": t["name"], "description": (t.get("description") or "")[:1024],
+        "parameters": _oa_schema(t.get("inputSchema") or {"type": "object", "properties": {}})}} for t in mcp_tools]
+    messages = [{"role": "system", "content": _ASK_SYSTEM}]
+    for h in (history or [])[-6:]:
+        if isinstance(h, dict) and h.get("q") and h.get("a"):
+            messages += [{"role": "user", "content": str(h["q"])[:2000]}, {"role": "assistant", "content": str(h["a"])[:4000]}]
+    messages.append({"role": "user", "content": question})
+    used = []
+    for _ in range(ASK_MAX_STEPS):
+        msg, finish = _oa_message(_oa_post({"model": model(), "messages": messages, "tools": tools, "max_tokens": 4000}))
+        calls = msg.get("tool_calls") or []
+        if not calls:
+            return {"answer": (msg.get("content") or "").strip() or "(답이 비어 있습니다)", "tools": used}
+        messages.append({"role": "assistant", "content": msg.get("content") or "", "tool_calls": calls})
+        for c in calls:
+            fn = c.get("function") or {}
+            name = fn.get("name") or ""
+            used.append(name)
+            try:
+                args = json.loads(fn.get("arguments") or "{}") if isinstance(fn.get("arguments"), str) else (fn.get("arguments") or {})
+                text, is_err = MCP.call(name, args if isinstance(args, dict) else {})
+            except Exception as error:  # noqa: BLE001 - 도구 실패는 모델에게 알려 다른 길을 찾게 한다
+                text, is_err = "도구 실행 실패: %s" % error, True
+            messages.append({"role": "tool", "tool_call_id": c.get("id") or name, "content": ("[오류] " if is_err else "") + text})
     return {"answer": "도구를 너무 여러 번 써서 멈췄습니다. 질문을 좁혀 다시 물어 주세요.", "tools": used}

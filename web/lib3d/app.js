@@ -1356,16 +1356,29 @@
       .then(function (d) { if (!d.success) throw new Error(d.error || '실패'); return d; });
   }
   var aiBox = el('l3d-ai');
+  function aiProvider() {   // 연결 방식에 따라 주소 칸·모델 예시·패키지 안내를 바꾼다
+    var claude = el('l3d-ai-provider').value === 'anthropic';
+    el('l3d-ai-base-f').hidden = claude;
+    el('l3d-ai-sdk').hidden = !claude || aiSdk;
+    el('l3d-ai-model').placeholder = claude ? 'claude-opus-5-5' : '예: gemini-free3_1';
+    var dl = el('l3d-ai-models'); dl.textContent = '';
+    (claude ? ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'] : []).forEach(function (m) {
+      var o = document.createElement('option'); o.value = m; dl.appendChild(o);
+    });
+  }
+  var aiSdk = true;
+  el('l3d-ai-provider').addEventListener('change', aiProvider);
   function openAI() {
     setBox.classList.remove('on'); aiBox.classList.add('on');
     el('l3d-ai-msg').textContent = '불러오는 중...';
     api('api/lib3d/ai/settings').then(function (d) {
-      el('l3d-ai-sdk').hidden = d.sdk;
+      aiSdk = d.sdk; el('l3d-ai-provider').value = d.provider; el('l3d-ai-base').value = d.base_url || '';
       el('l3d-ai-key').value = ''; el('l3d-ai-clear').checked = false;
-      el('l3d-ai-key').placeholder = d.api_key_set ? '저장됨 - 바꿀 때만 입력' : 'sk-ant-...';
+      el('l3d-ai-key').placeholder = d.api_key_set ? '저장됨 - 바꿀 때만 입력' : 'sk-...';
       el('l3d-ai-model').value = d.model; el('l3d-ai-chat').checked = d.chat; el('l3d-ai-sec').value = d.chat_sec;
       el('l3d-ai-ask').checked = d.ask; el('l3d-ai-mcp').value = d.mcp_command || '';
-      var ids = { LIB3D_AI_API_KEY: 'l3d-ai-key', LIB3D_AI_MODEL: 'l3d-ai-model', LIB3D_AI_CHAT: 'l3d-ai-chat', LIB3D_AI_CHAT_SEC: 'l3d-ai-sec',
+      aiProvider();
+      var ids = { LIB3D_AI_PROVIDER: 'l3d-ai-provider', LIB3D_AI_BASE_URL: 'l3d-ai-base', LIB3D_AI_API_KEY: 'l3d-ai-key', LIB3D_AI_MODEL: 'l3d-ai-model', LIB3D_AI_CHAT: 'l3d-ai-chat', LIB3D_AI_CHAT_SEC: 'l3d-ai-sec',
                   LIB3D_AI_ASK: 'l3d-ai-ask', LIB3D_MCP_COMMAND: 'l3d-ai-mcp' };
       Object.keys(ids).forEach(function (k) { el(ids[k]).disabled = (d.fixed || []).indexOf(k) >= 0; });
       el('l3d-ai-msg').textContent = (d.fixed || []).length ? '환경변수로 정해진 항목은 바꿀 수 없습니다: ' + d.fixed.join(', ') : '';
@@ -1374,7 +1387,7 @@
   el('l3d-set-ai').addEventListener('click', openAI);
   el('l3d-ai-close').addEventListener('click', function () { aiBox.classList.remove('on'); });
   el('l3d-ai-save').addEventListener('click', function () {
-    var body = { model: el('l3d-ai-model').value, chat: el('l3d-ai-chat').checked, chat_sec: +el('l3d-ai-sec').value || 60,
+    var body = { provider: el('l3d-ai-provider').value, base_url: el('l3d-ai-base').value, model: el('l3d-ai-model').value, chat: el('l3d-ai-chat').checked, chat_sec: +el('l3d-ai-sec').value || 60,
                  ask: el('l3d-ai-ask').checked, mcp_command: el('l3d-ai-mcp').value };
     if (el('l3d-ai-key').value) body.api_key = el('l3d-ai-key').value;
     if (el('l3d-ai-clear').checked) body.clear_key = true;
@@ -1382,7 +1395,7 @@
     postJSON('api/lib3d/ai/settings', body).then(function (d) {
       var had = AI.chat;
       setAI(d); el('l3d-ai-key').value = '';
-      el('l3d-ai-key').placeholder = d.api_key_set ? '저장됨 - 바꿀 때만 입력' : 'sk-ant-...';
+      el('l3d-ai-key').placeholder = d.api_key_set ? '저장됨 - 바꿀 때만 입력' : 'sk-...';
       el('l3d-ai-msg').textContent = '저장했습니다.';
       if (had !== AI.chat) { stopChat(); respawn(); }
     }).catch(function (e) { el('l3d-ai-msg').textContent = e.message; });
@@ -1394,7 +1407,7 @@
     }).catch(function (e) { el('l3d-ai-msg').textContent = e.message; });
   });
 
-  // 질문하기: 안내 데스크 직원(Claude)이 BookOasis MCP로 찾아보고 답한다
+  // 질문하기: 안내 데스크 직원(LLM)이 BookOasis MCP로 찾아보고 답한다
   var askBox = el('l3d-ask'), askLog = el('l3d-ask-log'), askHist = [], asking = false;
   function askLine(cls, text, tools) {
     var d = document.createElement('div'); d.className = cls; d.textContent = text;

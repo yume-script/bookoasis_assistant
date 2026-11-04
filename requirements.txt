@@ -5,5 +5,5 @@ PyMySQL>=1.1
 requests>=2.28
 # kavita.yaml 표지 축소 (없으면 원본 크기로 넣음):
 Pillow>=9.0
-# 3D 서재 AI(손님 대화·질문하기)를 쓸 때만:
+# 3D 서재 AI를 Claude API(LIB3D_AI_PROVIDER=anthropic)로 쓸 때만 (OpenAI 호환·LiteLLM은 필요 없음):
 anthropic>=2.4
