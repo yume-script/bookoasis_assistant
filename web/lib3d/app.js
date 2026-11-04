@@ -597,7 +597,7 @@
       keepShared(c.scene); HUMAN.trooper = c.scene; HUMAN.trooperClip = clip; respawn();
     }, undefined, function (e) { console.warn('3D 서재 스톰트루퍼:', e); });
     cl.load(COLLADA_BASE + 'elf/elf.dae', function (c) {
-      keepShared(c.scene); HUMAN.elf = c.scene;
+      keepShared(c.scene); HUMAN.elf = c.scene; makeBunnyHair();
       try { HUMAN.elfRig = rigElf(c.scene); if (HUMAN.elfRig) HUMAN.elfRig.geo.userData.shared = true; }
       catch (e) { console.warn('3D 서재 엘프 뼈대:', e); HUMAN.elfRig = null; }   // 못 심으면 받침대째 피규어로
       respawn();
@@ -880,6 +880,11 @@
           try {   // 숨은 인물: 옷 그림을 다시 칠하고 선글라스·헤드폰을 뗀 형상
             HUMAN.beachMat = paintBunny(dg, { pants: 0xf0c8a8, top: 0x8e0a1f, skin: 0xf0c8a8, beach: true });
             HUMAN.beachGeo = bunnyGeometry(dmesh);
+            var hinfo = michelleHeadInfo(dmesh), hk = [], bi = HUMAN.beachGeo.index;   // 묶은 머리 떼기
+            for (var ti = 0; ti < bi.count; ti += 3) if (!hinfo.hair[hinfo.find(bi.getX(ti))]) hk.push(bi.getX(ti), bi.getX(ti + 1), bi.getX(ti + 2));
+            HUMAN.beachNoHair = HUMAN.beachGeo.clone(); HUMAN.beachNoHair.setIndex(hk); HUMAN.beachNoHair.userData.shared = true;
+            HUMAN.beachHead = { mesh: dmesh, info: hinfo };
+            makeBunnyHair();
           } catch (e) {
             console.warn('3D 서재 숨은 인물 옷:', e);
             HUMAN.beachMat = mat({ pants: 0xf0c8a8, top: 0x8e0a1f, skin: 0xf0c8a8, beach: true }); HUMAN.beachGeo = null;
@@ -1162,6 +1167,69 @@
 
     return m;
   }
+  // ── 숨은 인물 머리: Michelle의 묶은 머리를 떼고, 엘프의 긴 머리카락을 크기·위치를 맞춰 머리뼈에 붙인다 ──
+  function michelleHeadInfo(mesh) {   // 얼굴 덩어리(머리 높이에서 가장 큰, 앞으로 나온) 중심·높이, 떼어 낼 머리카락 덩어리
+    var geo = mesh.geometry, P = geo.attributes.position, UV = geo.attributes.uv, idx = geo.index, n = P.count, i, t;
+    var img = mesh.material.map.image, W = img.width, H = img.height, cv = document.createElement('canvas'); cv.width = W; cv.height = H;
+    var g = cv.getContext('2d'); g.drawImage(img, 0, 0); var pd = g.getImageData(0, 0, W, H).data;
+    var par = new Int32Array(n); for (i = 0; i < n; i++) par[i] = i;
+    function f(a) { while (par[a] !== a) { par[a] = par[par[a]]; a = par[a]; } return a; }
+    for (t = 0; t < idx.count; t += 3) { var a = f(idx.getX(t)), b = f(idx.getX(t + 1)), c = f(idx.getX(t + 2)); par[a] = b; par[f(b)] = f(c); }
+    var C = {}, col = new T.Color(), hsl = {};
+    for (i = 0; i < n; i++) {
+      var r = f(i), q = C[r] || (C[r] = { id: r, n: 0, dark: 0, s: new T.Vector3(), mn: [9, 9, 9], mx: [-9, -9, -9] });
+      q.n++; q.s.x += P.getX(i); q.s.y += P.getY(i); q.s.z += P.getZ(i);
+      [P.getX(i), P.getY(i), P.getZ(i)].forEach(function (v, k) { q.mn[k] = Math.min(q.mn[k], v); q.mx[k] = Math.max(q.mx[k], v); });
+      var x = Math.min(W - 1, Math.floor(UV.getX(i) * W)), y = Math.min(H - 1, Math.floor(UV.getY(i) * H)), o = (y * W + x) * 4;
+      col.setRGB(pd[o] / 255, pd[o + 1] / 255, pd[o + 2] / 255); col.getHSL(hsl);
+      if (hsl.l < 0.2 && hsl.s < 0.5) q.dark++;
+    }
+    var face = null;
+    Object.keys(C).forEach(function (k) { var q = C[k]; if (q.mn[1] > 1.3 && q.mx[1] < 1.6 && q.mx[2] > 0.08 && (!face || q.n > face.n)) face = q; });
+    var hair = {};
+    Object.keys(C).forEach(function (k) {   // 머리 높이의 어두운 덩어리 = 머리카락 (눈썹·속눈썹처럼 얼굴 앞에 붙은 것은 남김)
+      var q = C[k];
+      if (q !== face && q.mx[1] > 1.4 && q.mn[1] > 1.25 && q.dark / q.n > 0.5 && q.mn[2] < 0.03) hair[q.id] = 1;
+    });
+    return { find: f, hair: hair, center: face.s.clone().multiplyScalar(1 / face.n), h: face.mx[1] - face.mn[1], top: face.mx[1] };
+  }
+  function elfHairGeometry(src) {   // 엘프 모형에서 머리카락(재질 3)만, 얼굴(재질 2) 기준 중심·높이와 함께
+    src.updateMatrixWorld(true);
+    var mesh = null; src.traverse(function (o) { if (o.isMesh && !mesh) mesh = o; });
+    var g0 = mesh.geometry.index ? mesh.geometry.toNonIndexed() : mesh.geometry.clone();
+    g0.applyMatrix4(mesh.matrixWorld);
+    var grp = {}; g0.groups.forEach(function (gr) { grp[gr.materialIndex] = gr; });
+    if (!grp[2] || !grp[3]) return null;
+    var P = g0.attributes.position, fc = new T.Vector3(), fy0 = 1e9, fy1 = -1e9;
+    for (var i = grp[2].start; i < grp[2].start + grp[2].count; i++) { fc.x += P.getX(i); fc.y += P.getY(i); fc.z += P.getZ(i); fy0 = Math.min(fy0, P.getY(i)); fy1 = Math.max(fy1, P.getY(i)); }
+    fc.multiplyScalar(1 / grp[2].count);
+    var hair = new T.BufferGeometry();
+    ['position', 'normal', 'uv'].forEach(function (nm) {
+      var at = g0.attributes[nm]; if (!at) return;
+      hair.setAttribute(nm, new T.BufferAttribute(at.array.slice(grp[3].start * at.itemSize, (grp[3].start + grp[3].count) * at.itemSize), at.itemSize));
+    });
+    var mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+    return { geo: hair, mat: mats[3], center: fc, h: fy1 - fy0 };
+  }
+  // 엘프 머리카락을 Michelle 머리뼈에 붙일 형상(머리뼈 좌표계)으로
+  function bunnyHair(mesh, info, elf) {
+    var s = info.h / elf.h, geo = elf.geo.clone();
+    geo.translate(-elf.center.x, -elf.center.y, -elf.center.z);
+    geo.scale(s, s, s);
+    geo.translate(info.center.x, info.center.y + info.h * 0.03, info.center.z - info.h * 0.04);
+    var sk = mesh.skeleton, hi = sk.bones.findIndex(function (b) { return /Head$/.test(b.name); });
+    geo.applyMatrix4(sk.boneInverses[hi]);   // 기본 자세(형상 공간) → 머리뼈 공간
+    geo.computeBoundingSphere(); geo.userData.shared = true;
+    var mat = elf.mat.clone(); mat.skinning = false; mat.color = new T.Color(0x3a2216); mat.userData.keep = true;   // 금발을 짙은 갈색으로
+    return { geo: geo, mat: mat, bone: sk.bones[hi].name };
+  }
+  function makeBunnyHair() {   // 엘프와 Michelle이 모두 준비되면 한 번 만든다
+    if (HUMAN.bunnyHair || !HUMAN.elf || !HUMAN.beachHead) return;
+    try {
+      var elf = elfHairGeometry(HUMAN.elf);
+      if (elf) HUMAN.bunnyHair = bunnyHair(HUMAN.beachHead.mesh, HUMAN.beachHead.info, elf);
+    } catch (e) { console.warn('3D 서재 숨은 인물 머리:', e); }
+  }
   function santaBunny(model, hips, head) {
     hips.updateWorldMatrix(true, false);
     var ws = new T.Vector3(); hips.getWorldScale(ws);
@@ -1210,11 +1278,17 @@
     model.traverse(function (o) {
       if (!o.isMesh) return;
       o.material = mat; o.castShadow = true; o.frustumCulled = false;
-      if (beach && HUMAN.beachGeo && o.isSkinnedMesh) o.geometry = HUMAN.beachGeo;
+      if (beach && HUMAN.beachGeo && o.isSkinnedMesh) o.geometry = HUMAN.bunnyHair ? HUMAN.beachNoHair : HUMAN.beachGeo;
     });
     var g = new T.Group(); g.add(model);
     var head = findBone(model, 'Head'), hips = findBone(model, 'Hips'), handL = findBone(model, 'LeftHand');
-    if (beach && hips && head) santaBunny(model, hips, head);
+    if (beach && hips && head) {
+      santaBunny(model, hips, head);
+      if (HUMAN.bunnyHair) {   // 엘프 머리 모양의 긴 갈색 머리
+        var hb = null; model.traverse(function (o) { if (o.isBone && o.name === HUMAN.bunnyHair.bone) hb = o; });
+        if (hb) { var hm = new T.Mesh(HUMAN.bunnyHair.geo, HUMAN.bunnyHair.mat); hm.castShadow = true; hm.frustumCulled = false; hb.add(hm); }
+      }
+    }
     var mixer = new T.AnimationMixer(model), acts = {};
     ['idle', 'walk'].forEach(function (n) { if (HUMAN.dclips[n]) acts[n] = mixer.clipAction(HUMAN.dclips[n]); });
     if (acts.idle) acts.idle.play();
