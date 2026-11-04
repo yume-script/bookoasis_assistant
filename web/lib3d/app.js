@@ -876,7 +876,14 @@
             var m = base.clone(); m.map = recolorSkin(base.map.image, look); m.userData.keep = true; return m;
           }
           HUMAN.looks = LOOKS.map(mat);
-          HUMAN.beachMat = mat({ pants: 0xf0c8a8, top: 0x8e0a1f, skin: 0xf0c8a8, beach: true });   // 숨은 인물: 빨간 상의, 밝은 피부
+          var dmesh = null; dg.scene.traverse(function (o) { if (o.isSkinnedMesh && !dmesh) dmesh = o; });
+          try {   // 숨은 인물: 옷 그림을 다시 칠하고 선글라스·헤드폰을 뗀 형상
+            HUMAN.beachMat = paintBunny(dg, { pants: 0xf0c8a8, top: 0x8e0a1f, skin: 0xf0c8a8, beach: true });
+            HUMAN.beachGeo = bunnyGeometry(dmesh);
+          } catch (e) {
+            console.warn('3D 서재 숨은 인물 옷:', e);
+            HUMAN.beachMat = mat({ pants: 0xf0c8a8, top: 0x8e0a1f, skin: 0xf0c8a8, beach: true }); HUMAN.beachGeo = null;
+          }
           HUMAN.dressed = dg;
           respawn();
         } catch (e) { console.warn('3D 서재 사람 모형:', e); HUMAN.dressed = null; }
@@ -1016,16 +1023,145 @@
     return { g: g, mixer: mixer, acts: acts, clips: HUMAN.man.clips, model: model, handL: findBone(model, 'LeftHand'), r: r, phase: r() * 6, sc: sc, walkW: 0 };
   }
   // ── 숨은 인물 의상: 크리스마스 토끼 (빨간 벨벳 + 흰 털 테두리, 토끼 귀 머리띠, 털 목장식·리본, 손목 커프스, 빨간 망사 스타킹) ──
-  var netTex = canvasTex(64, 64, function (g, w, h) {   // 망사: 투명 바탕에 빨간 사선 격자
-    g.clearRect(0, 0, w, h); g.strokeStyle = '#c4122e'; g.lineWidth = 5;
-    g.beginPath(); g.moveTo(0, 0); g.lineTo(w, h); g.moveTo(w, 0); g.lineTo(0, h); g.stroke();
-  }, [7, 9]);
   var COSTUME = {
     red: new T.MeshStandardMaterial({ color: 0x8e0a1f, roughness: 0.8 }),   // 벨벳 느낌의 짙은 빨강
-    fur: new T.MeshStandardMaterial({ color: 0xfbf8f3, roughness: 1 }),
-    net: new T.MeshStandardMaterial({ map: netTex, transparent: true, alphaTest: 0.35, side: T.DoubleSide, roughness: 0.6 })
+    fur: new T.MeshStandardMaterial({ color: 0xfbf8f3, roughness: 1 })
   };
   Object.keys(COSTUME).forEach(function (k) { COSTUME[k].userData.keep = true; });
+  // ── 숨은 인물 옷 그림: Michelle 옷 그림을 픽셀마다 다시 칠한다 ──
+  // 삼각형마다 옷 그림(UV) 안의 픽셀을 훑으며, 그 픽셀이 몸의 어디(기본 자세 높이, 미터)인지 무게중심 좌표로 구해 칠한다.
+  // 바지 → 빨간 하의(옆이 높게 파인 모양)+허리 흰 털 / 맨 허벅지 / 빨간 스타킹 윗단 / 망사 스타킹,
+  // 윗옷 → 가슴만 가리는 빨간 상의 + 윗단 흰 털, 나머지는 맨살. 원래 그림의 밝기로 주름 음영을 살린다.
+  // 선글라스·헤드폰 조각을 뺀 형상 (이어진 덩어리 단위: 얼굴 앞 렌즈·코받침, 머리 둘레의 빨간 헤드폰)
+  function bunnyGeometry(mesh) {
+    var geo = mesh.geometry, P = geo.attributes.position, UV = geo.attributes.uv, idx = geo.index, n = P.count, i;
+    var img = mesh.material.map.image, W = img.width, H = img.height, cv = document.createElement('canvas'); cv.width = W; cv.height = H;
+    var g = cv.getContext('2d'); g.drawImage(img, 0, 0); var pd = g.getImageData(0, 0, W, H).data;
+    var par = new Int32Array(n); for (i = 0; i < n; i++) par[i] = i;
+    function f(a) { while (par[a] !== a) { par[a] = par[par[a]]; a = par[a]; } return a; }
+    for (var t = 0; t < idx.count; t += 3) { var a = f(idx.getX(t)), b = f(idx.getX(t + 1)), c = f(idx.getX(t + 2)); par[a] = b; par[f(b)] = f(c); }
+    var C = {}, col = new T.Color(), hsl = {};
+    for (i = 0; i < n; i++) {
+      var r = f(i), q = C[r] || (C[r] = { n: 0, red: 0, mn: [9, 9, 9], mx: [-9, -9, -9] });
+      q.n++; [P.getX(i), P.getY(i), P.getZ(i)].forEach(function (v, k) { q.mn[k] = Math.min(q.mn[k], v); q.mx[k] = Math.max(q.mx[k], v); });
+      var x = Math.min(W - 1, Math.floor(UV.getX(i) * W)), y = Math.min(H - 1, Math.floor(UV.getY(i) * H)), o = (y * W + x) * 4;
+      col.setRGB(pd[o] / 255, pd[o + 1] / 255, pd[o + 2] / 255); col.getHSL(hsl);
+      if (hsl.s > 0.45 && (hsl.h < 0.14 || hsl.h > 0.93) && hsl.l > 0.25) q.red++;
+    }
+    function drop(q) {
+      if (q.mn[1] > 1.38 && q.mx[1] < 1.53 && q.mn[2] > 0.075) return true;                                        // 렌즈
+      if (q.mn[1] > 1.415 && q.mx[1] < 1.46 && q.mn[0] > -0.035 && q.mx[0] < 0.035 && q.mn[2] > 0.065) return true;  // 코받침
+      return q.mn[1] > 1.36 && q.red / q.n > 0.3;                                                                   // 헤드폰
+    }
+    var keep = [];
+    for (t = 0; t < idx.count; t += 3) if (!drop(C[f(idx.getX(t))])) keep.push(idx.getX(t), idx.getX(t + 1), idx.getX(t + 2));
+    var out = geo.clone(); out.setIndex(keep); out.userData.shared = true;
+    return out;
+  }
+  function paintBunny(dg, look) {
+    var mesh = null; dg.scene.traverse(function (o) { if (o.isSkinnedMesh && !mesh) mesh = o; });
+    var base = mesh.material, img = base.map.image, W = img.width, H = img.height;
+    var src = document.createElement('canvas'); src.width = W; src.height = H;
+    var sx = src.getContext('2d'); sx.drawImage(img, 0, 0);
+    var px = sx.getImageData(0, 0, W, H).data;
+    var tex = recolorSkin(img, look), cx = tex.image.getContext('2d');
+    var outD = cx.getImageData(0, 0, W, H), out = outD.data;
+    var col = new T.Color(), hsl = {};
+    var CL = new Int8Array(W * H), LUM = new Float32Array(W * H);   // 원래 그림의 부위(1 바지·줄무늬·어두운 단, 2 윗옷)와 밝기
+    for (var i = 0; i < W * H; i++) {
+      col.setRGB(px[i * 4] / 255, px[i * 4 + 1] / 255, px[i * 4 + 2] / 255); col.getHSL(hsl);
+      LUM[i] = hsl.l;
+      if (hsl.h > 0.0 && hsl.h < 0.11 && hsl.s > 0.2 && hsl.l > 0.04 && hsl.l < 0.6) CL[i] = 4;   // 피부 (짙은 갈색 포함)
+      else if ((hsl.h > 0.11 && hsl.h < 0.19 && hsl.s > 0.45 && hsl.l > 0.3) || (hsl.h > 0.45 && hsl.h < 0.56 && hsl.s > 0.3) || hsl.l < 0.3) CL[i] = 1;
+      else if (hsl.s < 0.1 && hsl.l > 0.3 && hsl.l < 0.62) CL[i] = 2;
+      else if ((hsl.h < 0.05 || hsl.h > 0.93) && hsl.s > 0.55 && hsl.l > 0.25) CL[i] = 3;   // 빨강 (선글라스·헤드폰)
+      else if (hsl.h > 0.02 && hsl.h < 0.1 && hsl.s > 0.25 && hsl.s < 0.75 && hsl.l > 0.12 && hsl.l < 0.6) CL[i] = 4;   // 피부
+    }
+    // 칠할 맨살 색: 다시 칠한 그림에서 원래 피부였던 픽셀의 평균 (팔·얼굴 피부와 같은 톤)
+    var fr = [], fl = [];   // 얼굴 피부(코 아래 볼) 색과 밝기
+    var rs = [], gs = [], bs = [];   // 맨살 색: 아래팔 꼭짓점 그림 색의 가운데값 (팔과 같은 톤)
+    var PP = mesh.geometry.attributes.position, UU = mesh.geometry.attributes.uv;
+    for (i = 0; i < PP.count; i++) {
+      var ax0 = Math.abs(PP.getX(i)); if (ax0 < 0.32 || ax0 > 0.5 || PP.getY(i) < 1.2 || PP.getY(i) > 1.36) continue;
+      var ux = Math.min(W - 1, Math.floor(UU.getX(i) * W)), uy = Math.min(H - 1, Math.floor(UU.getY(i) * H)), up = (uy * W + ux) * 4;
+      rs.push(out[up]); gs.push(out[up + 1]); bs.push(out[up + 2]);
+    }
+    function med(a) { a.sort(function (x, y) { return x - y; }); return a[Math.floor(a.length / 2)] / 255; }
+    var skin = rs.length ? new T.Color(med(rs), med(gs), med(bs)) : new T.Color(look.skin), red = new T.Color(0x8e0a1f), fur = new T.Color(0xf7f3ec), netRed = new T.Color(0xa3102a);
+    function put(o, c, shade) {
+      out[o] = Math.min(255, c.r * 255 * shade); out[o + 1] = Math.min(255, c.g * 255 * shade); out[o + 2] = Math.min(255, c.b * 255 * shade);
+    }
+    var P = mesh.geometry.attributes.position, UV = mesh.geometry.attributes.uv, idx = mesh.geometry.index;
+    // 얼굴 덩어리(머리 높이에서 가장 큰, 앞으로 나온 덩어리) - 눈·눈썹은 따로라 건드리지 않는다
+    var par = new Int32Array(P.count); for (var vi = 0; vi < P.count; vi++) par[vi] = vi;
+    function fnd(q) { while (par[q] !== q) { par[q] = par[par[q]]; q = par[q]; } return q; }
+    for (var ti = 0; ti < idx.count; ti += 3) { var r1 = fnd(idx.getX(ti)), r2 = fnd(idx.getX(ti + 1)), r3 = fnd(idx.getX(ti + 2)); par[r1] = r2; par[fnd(r2)] = fnd(r3); }
+    var cs = {};
+    for (vi = 0; vi < P.count; vi++) { var rc = fnd(vi), cq = cs[rc] || (cs[rc] = { n: 0, y0: 9, y1: -9, z1: -9 }); cq.n++; cq.y0 = Math.min(cq.y0, P.getY(vi)); cq.y1 = Math.max(cq.y1, P.getY(vi)); cq.z1 = Math.max(cq.z1, P.getZ(vi)); }
+    var faceComp = -1, best = 0;
+    Object.keys(cs).forEach(function (kk) { var cq = cs[kk]; if (cq.y0 > 1.3 && cq.y1 < 1.6 && cq.z1 > 0.08 && cq.n > best) { best = cq.n; faceComp = +kk; } });
+    for (vi = 0; vi < P.count; vi++) {   // 볼·턱(그늘 아래) 그림 색
+      if (fnd(vi) !== faceComp || P.getY(vi) < 1.33 || P.getY(vi) > 1.385 || P.getZ(vi) < 0.03) continue;
+      var vx = Math.min(W - 1, Math.floor(UV.getX(vi) * W)), vy = Math.min(H - 1, Math.floor(UV.getY(vi) * H)), vp = vy * W + vx;
+      fr.push([out[vp * 4], out[vp * 4 + 1], out[vp * 4 + 2]]); fl.push(LUM[vp]);
+    }
+    fr.sort(function (p1, p2) { return (p1[0] + p1[1] + p1[2]) - (p2[0] + p2[1] + p2[2]); }); fl.sort();
+    var faceC = fr.length ? new T.Color(fr[fr.length >> 1][0] / 255, fr[fr.length >> 1][1] / 255, fr[fr.length >> 1][2] / 255) : skin;
+    var faceL = fl.length ? fl[fl.length >> 1] : 0.3;
+    var tri = idx ? idx.count / 3 : P.count / 3;
+    for (var t = 0; t < tri; t++) {
+      var a = idx ? idx.getX(t * 3) : t * 3, b = idx ? idx.getX(t * 3 + 1) : t * 3 + 1, c = idx ? idx.getX(t * 3 + 2) : t * 3 + 2;
+      var ya = P.getY(a), yb = P.getY(b), yc = P.getY(c);
+      if (Math.max(ya, yb, yc) < 0.12) continue;
+      var isFace = fnd(a) === faceComp;
+      var xa = Math.abs(P.getX(a)), xb = Math.abs(P.getX(b)), xc = Math.abs(P.getX(c));
+      var ax = UV.getX(a) * W, ay = UV.getY(a) * H, bx = UV.getX(b) * W, by = UV.getY(b) * H, cxp = UV.getX(c) * W, cyp = UV.getY(c) * H;
+      var den = (by - cyp) * (ax - cxp) + (cxp - bx) * (ay - cyp);
+      if (Math.abs(den) < 1e-9) continue;
+      var x0 = Math.max(0, Math.floor(Math.min(ax, bx, cxp) - 1)), x1 = Math.min(W - 1, Math.ceil(Math.max(ax, bx, cxp) + 1));
+      var y0 = Math.max(0, Math.floor(Math.min(ay, by, cyp) - 1)), y1 = Math.min(H - 1, Math.ceil(Math.max(ay, by, cyp) + 1));
+      for (var py = y0; py <= y1; py++) for (var pxx = x0; pxx <= x1; pxx++) {
+        var qx = pxx + 0.5, qy = py + 0.5;
+        var w1 = ((by - cyp) * (qx - cxp) + (cxp - bx) * (qy - cyp)) / den, w2 = ((cyp - ay) * (qx - cxp) + (ax - cxp) * (qy - cyp)) / den, w3 = 1 - w1 - w2;
+        if (w1 < -0.02 || w2 < -0.02 || w3 < -0.02) continue;   // 이음매가 비지 않게 살짝 넓게
+        var pi = py * W + pxx, k = CL[pi];
+        if (!k && !isFace) continue;
+        var y = w1 * ya + w2 * yb + w3 * yc, x = w1 * xa + w2 * xb + w3 * xc, o = pi * 4;
+        if (isFace) {   // 얼굴: 몸과 같은 맨살 색에 원래 밝기 음영만 (선글라스 그늘은 걷어 낸다), 속눈썹·입술은 그대로
+          col.setRGB(px[pi * 4] / 255, px[pi * 4 + 1] / 255, px[pi * 4 + 2] / 255); col.getHSL(hsl);
+          if ((LUM[pi] < 0.1 && y > 1.435) || ((hsl.h < 0.03 || hsl.h > 0.9) && hsl.s > 0.35)) continue;
+          var shade = LUM[pi] / faceL;
+          if (y > 1.385 && y < 1.47) shade = Math.max(0.95, shade);
+          put(o, skin, Math.max(0.6, Math.min(1.12, shade))); continue;
+        }
+        if (k === 4 && y > 1.2) { put(o, skin, Math.max(0.6, Math.min(1.12, LUM[pi] / faceL))); continue; }   // 목·귀 등도 같은 맨살 색
+        if (k === 3 || k === 4) continue;
+        if (k === 1 && y > 0.12 && y < 1.06 && x < 0.3) {
+          var sh = Math.max(0.65, Math.min(1.25, LUM[pi] / 0.5));   // 원래 바지 주름 음영
+          var cut = 0.865 + Math.min(1, x / 0.16) * 0.1;            // 하의 아랫선: 가운데 낮고 옆으로 갈수록 높게
+          if (y > 1.0) put(o, skin, 1);
+          else if (y > 0.975) put(o, fur, Math.min(1, sh));
+          else if (y > cut) put(o, red, sh);
+          else if (y > 0.70) put(o, skin, 1);
+          else if (y > 0.67) put(o, red, sh);
+          else {   // 망사: 옷 그림 좌표로 사선 격자
+            var g1 = (pxx + py) % 9, g2 = (pxx - py + 900) % 9;
+            put(o, g1 < 1.4 || g2 < 1.4 ? netRed : skin, g1 < 1.4 || g2 < 1.4 ? sh : 1);
+          }
+        } else if (k === 2 && y > 1.0 && y < 1.45) {
+          var sh2 = Math.max(0.7, Math.min(1.25, LUM[pi] / 0.45));
+          if (y > 1.155 && y < 1.255) put(o, red, sh2);          // 가슴만 가리는 상의
+          else if (y >= 1.255 && y < 1.28) put(o, fur, Math.min(1, sh2));
+          else put(o, skin, 1);
+        }
+      }
+    }
+    cx.putImageData(outD, 0, 0);
+    tex.needsUpdate = true;
+    var m = base.clone(); m.map = tex; m.userData.keep = true;
+
+    return m;
+  }
   function santaBunny(model, hips, head) {
     hips.updateWorldMatrix(true, false);
     var ws = new T.Vector3(); hips.getWorldScale(ws);
@@ -1039,10 +1175,14 @@
       bone.add(m); return m;
     }
     function len(bone) { var c = bone && bone.children.filter(function (x) { return x.isBone; })[0]; return c ? c.position.length() / k : 0.3; }
-    ['Left', 'Right'].forEach(function (sd) {   // 헐렁한 바지 다리를 맨다리 굵기로
-      var up = findBone(model, sd + 'UpLeg'), ft = findBone(model, sd + 'Foot');
-      if (up) up.scale.set(0.6, 1, 0.6);
-      if (ft) ft.scale.set(1 / 0.6, 1, 1 / 0.6);
+    // 헐렁한 바지 몸매를 맨다리·좁은 골반으로 (자식 뼈에서 축척을 되돌려 몸통·발은 그대로)
+    var spine = findBone(model, 'Spine');
+    hips.scale.set(0.82, 1, 0.85); if (spine) spine.scale.set(1 / 0.82, 1, 1 / 0.85);
+    ['Left', 'Right'].forEach(function (sd) {
+      var up = findBone(model, sd + 'UpLeg'), lg = findBone(model, sd + 'Leg'), ft = findBone(model, sd + 'Foot');
+      if (up) up.scale.set(0.62 / 0.82, 1, 0.62 / 0.85);
+      if (lg) lg.scale.set(0.72, 1, 0.72);
+      if (ft) ft.scale.set(1 / (0.62 * 0.72), 1, 1 / (0.62 * 0.72));
     });
     var spine2 = findBone(model, 'Spine2'), neck = findBone(model, 'Neck');
     // 토끼 귀 머리띠
@@ -1054,20 +1194,12 @@
     // 털 목장식 + 빨간 리본
     put(neck, new T.TorusGeometry(0.047, 0.013, 8, 24), COSTUME.fur, [0, 0.055, 0.008], [Math.PI / 2, 0, 0]);
     [-1, 1].forEach(function (sd) { put(neck, new T.SphereGeometry(1, 10, 8), COSTUME.red, [sd * 0.013, 0.04, 0.058], [0, 0, sd * 0.6], [0.015, 0.009, 0.007]); });
-    // 상의 윗단 털 테두리, 하의 + 털 테두리
-    put(spine2, new T.TorusGeometry(0.128, 0.018, 8, 28), COSTUME.fur, [0, 0.05, 0.015], [Math.PI / 2, 0, 0], [1, 0.78, 1]);
-    put(hips, new T.CylinderGeometry(0.118, 0.1, 0.08, 24), COSTUME.red, [0, -0.095, 0], null, [1, 1, 0.8]);
-    put(hips, new T.TorusGeometry(0.118, 0.013, 8, 28), COSTUME.fur, [0, -0.057, 0], [Math.PI / 2, 0, 0], [1, 0.8, 1]);
+    // 상의·하의·스타킹은 옷 그림을 다시 칠해 표현한다 (paintBunny)
     // 손목 커프스 (아래팔 끝)
     ['Left', 'Right'].forEach(function (sd) {
       var fa = findBone(model, sd + 'ForeArm'), L = len(fa);
       put(fa, new T.CylinderGeometry(0.036, 0.033, 0.07, 16), COSTUME.red, [0, L * 0.86, 0]);
       put(fa, new T.TorusGeometry(0.037, 0.012, 8, 20), COSTUME.fur, [0, L * 0.8, 0], [Math.PI / 2, 0, 0]);
-      // 망사 스타킹 (허벅지 아래쪽 ~ 발목) + 윗단 빨간 띠
-      var up = findBone(model, sd + 'UpLeg'), lg = findBone(model, sd + 'Leg'), Lu = len(up), Ll = len(lg);
-      put(up, new T.CylinderGeometry(0.105, 0.09, Lu * 0.5, 18, 1, true), COSTUME.net, [0, Lu * 0.75, 0]);
-      put(up, new T.CylinderGeometry(0.108, 0.106, 0.05, 18), COSTUME.red, [0, Lu * 0.5, 0]);
-      put(lg, new T.CylinderGeometry(0.088, 0.062, Ll, 18, 1, true), COSTUME.net, [0, Ll * 0.5, 0]);
     });
   }
   function dressedHuman(seed, beach) {
@@ -1075,7 +1207,11 @@
     if (!beach && HUMAN.man && r() < 0.5) return manHuman(r);
     var model = T.SkeletonUtils.clone(HUMAN.dressed.scene);
     var mat = beach ? HUMAN.beachMat : HUMAN.looks[Math.floor(r() * HUMAN.looks.length)];
-    model.traverse(function (o) { if (o.isMesh) { o.material = mat; o.castShadow = true; o.frustumCulled = false; } });
+    model.traverse(function (o) {
+      if (!o.isMesh) return;
+      o.material = mat; o.castShadow = true; o.frustumCulled = false;
+      if (beach && HUMAN.beachGeo && o.isSkinnedMesh) o.geometry = HUMAN.beachGeo;
+    });
     var g = new T.Group(); g.add(model);
     var head = findBone(model, 'Head'), hips = findBone(model, 'Hips'), handL = findBone(model, 'LeftHand');
     if (beach && hips && head) santaBunny(model, hips, head);
