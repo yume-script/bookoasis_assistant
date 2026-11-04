@@ -449,7 +449,7 @@ Drive Changes/Activity 확인 (기본 60초)
 ### Plex에도 스캔 보내기 (드라이브 변경 감시 FOR PLEX)
 감시는 그대로(구글 드라이브 변경 감지 → rclone VFS 새로고침) 두고, 바뀐 폴더가 **Plex 라이브러리 폴더 안**이면 Plex에 그 폴더만
 부분 스캔하라고 보냅니다 (`/library/sections/{id}/refresh?path=폴더`). BookOasis 보관함과 같은 폴더면 둘 다 보냅니다.
-- [감시 설정 > 실행 환경]의 **Plex 주소 · PLEX_TOKEN · Plex 경로 매핑**을 넣고 저장 → **Plex 확인**으로 라이브러리와 경로가 보이는지 확인
+- [드라이브 변경 감시 > **Plex 설정**]에서 **Plex 주소 · PLEX_TOKEN · 경로 매핑**을 넣고 저장 → **Plex 확인**으로 라이브러리와 폴더가 보이는지 확인
   (`.env`의 `PLEX_URL`, `PLEX_TOKEN`, `PLEX_PATH_MAP`). 라이브러리 목록은 Plex에서 10분마다 자동으로 읽습니다.
 - Plex가 도커 등에서 다른 경로로 보면 경로 매핑: `이 프로그램 경로=Plex 경로` (예: `/mnt/gds2=/data`), 여러 개는 `;`.
 - Plex 미디어 폴더도 감시 폴더에 넣어야 하고, rclone VFS 새로고침은 VFS 규칙(수동 규칙 또는 보관함 RC)에 걸리는 경로만 합니다.

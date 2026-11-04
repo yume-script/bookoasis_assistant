@@ -398,7 +398,6 @@
                 var k = i.getAttribute('data-env');
                 if (k === 'auto_start') i.checked = !!s.auto_start;
                 else if (k === 'webhook_token') { i.value = ''; i.placeholder = s.token_set ? '.env에 저장됨 (바꿀 때만 입력)' : '.env에 없음, 입력 필요'; }
-                else if (k === 'plex_token') { i.value = ''; i.placeholder = s.plex_token_set ? '.env에 저장됨 (바꿀 때만 입력)' : 'Plex를 쓸 때 입력'; }
                 else i.value = s[k] || '';
             });
             if (bind('env-file')) bind('env-file').textContent = s.env_file || '.env';
@@ -421,7 +420,7 @@
         $$('[data-env]').forEach(function (i) {
             var k = i.getAttribute('data-env');
             if (k === 'auto_start') env[k] = i.checked;
-            else if (k === 'webhook_token' || k === 'plex_token') { if (i.value.trim()) env[k] = i.value.trim(); }
+            else if (k === 'webhook_token') { if (i.value.trim()) env[k] = i.value.trim(); }
             else env[k] = i.value.trim();
         });
         return env;
@@ -702,15 +701,15 @@
             else if (a === 'default_patterns') { st.watch.ignore_patterns = (st.defaultIgnore || []).slice(); renderOpts(); }
             else if (a === 'test_discord') { rpc('test_discord', { url: st.watch.discord_webhook || '' }).then(function (d) { toast(d.message); }).catch(function (err) { toast(err.message, true); }); }
             else if (a === 'check_plex') {
-                bind('env-msg').textContent = 'Plex 확인 중...';
-                rpc('check_plex', { env: envValues() }).then(function (d) {
-                    var libs = (d.libraries || []).map(function (l) {
-                        return l.name + ': ' + (l.roots || []).map(function (r, i) {
-                            return r + (l.exists && l.exists[i] === false ? ' (이 프로그램에서 안 보임 - 경로 매핑 확인)' : '');
-                        }).join(', ');
-                    });
-                    bind('env-msg').textContent = (d.ok ? '✓ ' : '✗ ') + d.message + (libs.length ? ' · ' + libs.join(' / ') : '');
-                }).catch(function (e) { bind('env-msg').textContent = '✗ ' + e.message; });
+                bind('plex-msg').textContent = 'Plex 확인 중...';
+                rpc('check_plex', { env: plexValues() }).then(function (d) {
+                    bind('plex-msg').textContent = (d.ok ? '✓ ' : '✗ ') + d.message;
+                    renderPlexLibs(d.libraries || [], true);
+                }).catch(function (e) { bind('plex-msg').textContent = '✗ ' + e.message; });
+            }
+            else if (a === 'save_plex') {
+                rpc('save_plex', { env: plexValues() }).then(function (d) { loadPlex(); bind('plex-msg').textContent = '✓ ' + (d.message || '저장했습니다'); })
+                    .catch(function (e) { bind('plex-msg').textContent = '✗ ' + e.message; });
             }
             else if (a === 'check_token') {
                 rpc('check_token', { env: envValues() }).then(function (d) { bind('env-msg').textContent = (d.ok ? '✓ ' : '✗ ') + d.message; })
@@ -749,12 +748,59 @@
     app.querySelector('.gdw-collapse-head').addEventListener('keydown', function (e) {
         if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setRootsCollapsed(!bind('roots-panel').classList.contains('is-collapsed'), true); }
     });
+    function esc(v) {
+        return String(v == null ? '' : v).replace(/[&<>"']/g, function (c) {
+            return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+        });
+    }
+    function plexValues() {
+        var env = {};
+        $$('[data-plex]').forEach(function (i) {
+            var k = i.getAttribute('data-plex');
+            if (k === 'plex_token') { if (i.value.trim()) env[k] = i.value.trim(); }
+            else env[k] = i.value.trim();
+        });
+        return env;
+    }
+    function renderPlexLibs(libs, checked) {
+        var box = bind('plex-libs');
+        if (!box) return;
+        if (!libs.length) {
+            box.innerHTML = '<p class="gdw-tip">' + (checked ? 'Plex 라이브러리가 없습니다.' :
+                'Plex 라이브러리가 아직 없습니다. 주소와 토큰을 넣고 [Plex 확인]을 누르세요.') + '</p>';
+            return;
+        }
+        var rows = [];
+        libs.forEach(function (l) {
+            (l.roots || []).forEach(function (r, i) {
+                var miss = l.exists && l.exists[i] === false;
+                rows.push('<tr><td>' + (i ? '' : esc(String(l.id))) + '</td><td>' + (i ? '' : esc(l.name)) + '</td><td>' + esc(r) +
+                    (miss ? ' <b style="color:#d9822b">✗ 이 프로그램에서 안 보임 (경로 매핑 확인)</b>' : '') + '</td><td>' +
+                    esc((l.plex_roots || [])[i] || '') + '</td></tr>');
+            });
+        });
+        box.innerHTML = '<table class="gdw-plex-table"><thead><tr><th>번호</th><th>라이브러리</th><th>이 프로그램에서 보는 폴더</th>' +
+            '<th>Plex 폴더</th></tr></thead><tbody>' + rows.join('') + '</tbody></table>';
+    }
+    function loadPlex() {
+        rpc('get_watch').then(function (d) {
+            var s = d.settings || {};
+            $$('[data-plex]').forEach(function (i) {
+                var k = i.getAttribute('data-plex');
+                if (k === 'plex_token') { i.value = ''; i.placeholder = s.plex_token_set ? '.env에 저장됨 (바꿀 때만 입력)' : 'Plex를 쓸 때 입력'; }
+                else i.value = s[k] || '';
+            });
+            bind('plex-msg').textContent = s.plex_error ? '✗ 라이브러리 목록을 읽지 못함: ' + s.plex_error : '';
+            renderPlexLibs(s.plex_libraries || [], false);
+        }).catch(function (e) { toast(e.message, true); });
+    }
     function switchTab(name) {
         st.tab = name;
         $$('[data-tab]').forEach(function (b) { b.classList.toggle('is-on', b.getAttribute('data-tab') === name); b.setAttribute('aria-selected', b.getAttribute('data-tab') === name); });
         $$('[data-pane]').forEach(function (p) { p.hidden = p.getAttribute('data-pane') !== name; });
         if (name === 'events') loadEvents();
         else if (name === 'setup') loadSetup();
+        else if (name === 'plex') loadPlex();
         else if (name === 'log') loadLog();
         else if (name === 'schedule' && window.__gdwScheduleLoad) window.__gdwScheduleLoad();
     }

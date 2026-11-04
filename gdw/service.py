@@ -1518,6 +1518,22 @@ class Service:
         ok, msg = _verify_token(settings["bookoasis_url"], token)
         return {"success": True, "ok": ok, "message": f"{msg} · 사용 중인 토큰: {source}"}
 
+    def _rpc_save_plex(self, ctx):
+        """Plex 설정만 .env에 저장 (PLEX_URL · PLEX_PATH_MAP, PLEX_TOKEN은 입력했을 때만)"""
+        env = ctx.get("env") or {}
+        clean = {"PLEX_URL": str(env.get("plex_url") or "").strip().rstrip("/"),
+                 "PLEX_PATH_MAP": str(env.get("plex_path_map") or "").strip()}
+        if str(env.get("plex_token") or "").strip():
+            clean["PLEX_TOKEN"] = str(env["plex_token"]).strip()
+        fixed = config.overridden(clean)
+        try:
+            config.save_env(clean)
+        except OSError as error:
+            return {"success": False, "error": f".env에 쓸 수 없습니다 ({config.ENV_PATH}): {error}"}
+        self._sync_runtime(force_libraries=True)
+        note = f" 단, {', '.join(fixed)}는 실제 환경변수로도 정해져 있어 그 값이 우선합니다." if fixed else ""
+        return {"success": True, "message": "Plex 설정을 저장했습니다. 실행 중인 감시에 자동 반영됩니다." + note}
+
     def _rpc_check_plex(self, ctx):
         """Plex 접속·토큰 확인 (화면에서 입력한 값 우선) + 라이브러리 폴더 목록"""
         settings = self._settings()

@@ -1214,3 +1214,9 @@
 
 /* 부하 점검 줄 (v1.18.6) */
 .gdw-load { margin: 2px 0 0; font-size: 11.5px; color: var(--app-text-muted); }
+
+/* Plex 설정: 라이브러리 폴더 표 */
+.gdw-plex-table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 0.82rem; }
+.gdw-plex-table th, .gdw-plex-table td { padding: 5px 8px; border-bottom: 1px solid var(--gdw-border, rgba(127,127,127,0.25));
+  text-align: left; vertical-align: top; word-break: break-all; }
+.gdw-plex-table th { font-weight: 600; opacity: 0.75; white-space: nowrap; }
