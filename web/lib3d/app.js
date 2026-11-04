@@ -370,7 +370,8 @@
 
   // ── 사람들: 통로를 걷는 손님, 서가 앞에서 책을 고르는 손님, 서서 읽는 손님, 벤치에 앉은 손님, 안내 직원 ──
   // 옷 입은 사람 모형(Michelle)·관절 모형(Xbot)을 받으면 그것으로, 못 받으면 둥근 몸통·원통 팔다리로 만든 단순한 사람. 누를 수 없고 걸어 다니는 사람과 부딪히지 않는다.
-  var people = [], layout = null;
+  var people = [], layout = null, chatPair = null;
+  var AI = { chat: false, ask: false, chat_sec: 60 };
   var SKIN = [0xf1c9a5, 0xe5b48e, 0xc99067, 0x9c6845, 0xf6d9c4];
   var CLOTH = [0x2f3b4c, 0x7a3b3b, 0xe4e0d8, 0x3f5a4a, 0x9b8f7a, 0x26292f, 0x5e6f86, 0xb07a4f, 0x6d5a7e, 0xcfc7b8, 0x8a9a6b];
   var PANTS = [0x23262b, 0x3a4352, 0x5b5248, 0x2e3a2f, 0xb9b0a0, 0x1f2633];
@@ -806,6 +807,16 @@
       bk.kind = 'walk'; bk.node = [li2, 0]; bk.speed = 1.25; bk.hidden = true;
       place(bk, lanes[li2], rowsZ[0], 0);
       nextNode(bk);
+    }
+    // 책 이야기를 나누는 두 손님 (AI 손님 대화가 켜졌을 때): 서가 앞 통로에서 마주 본다
+    chatPair = null;
+    if (AI.chat && (L.sections || []).length) {
+      var cs = L.sections[Math.floor(r() * L.sections.length)];
+      var ca = makePerson(seed * 151 + 11), cb = makePerson(seed * 157 + 13);
+      ca.kind = 'chat'; cb.kind = 'chat';
+      place(ca, cs.x + 2.3, cs.z + 3.3, Math.PI / 2 + 0.3);   // 평대 오른쪽, 서가 입구 쪽 (지도로 오면 정면 오른쪽에 보인다)
+      place(cb, cs.x + 3.3, cs.z + 3.3, -Math.PI / 2 - 0.3);
+      chatPair = [ca, cb];
     }
     // 스톰트루퍼: 층마다 한 명이 통로를 순찰한다
     if (HUMAN.trooper) {
@@ -1333,7 +1344,124 @@
   el('l3d-set-save').addEventListener('click', function () { saveSettings(false); });
   el('l3d-set-all').addEventListener('click', function () { saveSettings(true); });
   el('l3d-set-close').addEventListener('click', function () { setBox.classList.remove('on'); });
-  function hashNav() { if (location.hash === '#settings') openSettings(); }
+  // ── AI: 설정 / 질문하기 / 손님 대화 ──
+  function setAI(a) {
+    AI = { chat: !!a.chat, ask: !!a.ask, chat_sec: a.chat_sec || 60 };
+    el('l3d-ask-btn').hidden = !AI.ask;
+    if (!AI.ask) el('l3d-ask').classList.remove('on');
+  }
+  function postJSON(url, body) {
+    return fetch(url, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+      .then(function (r) { return r.json(); })
+      .then(function (d) { if (!d.success) throw new Error(d.error || '실패'); return d; });
+  }
+  var aiBox = el('l3d-ai');
+  function openAI() {
+    setBox.classList.remove('on'); aiBox.classList.add('on');
+    el('l3d-ai-msg').textContent = '불러오는 중...';
+    api('api/lib3d/ai/settings').then(function (d) {
+      el('l3d-ai-sdk').hidden = d.sdk;
+      el('l3d-ai-key').value = ''; el('l3d-ai-clear').checked = false;
+      el('l3d-ai-key').placeholder = d.api_key_set ? '저장됨 - 바꿀 때만 입력' : 'sk-ant-...';
+      el('l3d-ai-model').value = d.model; el('l3d-ai-chat').checked = d.chat; el('l3d-ai-sec').value = d.chat_sec;
+      el('l3d-ai-ask').checked = d.ask; el('l3d-ai-mcp').value = d.mcp_command || '';
+      var ids = { LIB3D_AI_API_KEY: 'l3d-ai-key', LIB3D_AI_MODEL: 'l3d-ai-model', LIB3D_AI_CHAT: 'l3d-ai-chat', LIB3D_AI_CHAT_SEC: 'l3d-ai-sec',
+                  LIB3D_AI_ASK: 'l3d-ai-ask', LIB3D_MCP_COMMAND: 'l3d-ai-mcp' };
+      Object.keys(ids).forEach(function (k) { el(ids[k]).disabled = (d.fixed || []).indexOf(k) >= 0; });
+      el('l3d-ai-msg').textContent = (d.fixed || []).length ? '환경변수로 정해진 항목은 바꿀 수 없습니다: ' + d.fixed.join(', ') : '';
+    }).catch(function (e) { el('l3d-ai-msg').textContent = e.message; });
+  }
+  el('l3d-set-ai').addEventListener('click', openAI);
+  el('l3d-ai-close').addEventListener('click', function () { aiBox.classList.remove('on'); });
+  el('l3d-ai-save').addEventListener('click', function () {
+    var body = { model: el('l3d-ai-model').value, chat: el('l3d-ai-chat').checked, chat_sec: +el('l3d-ai-sec').value || 60,
+                 ask: el('l3d-ai-ask').checked, mcp_command: el('l3d-ai-mcp').value };
+    if (el('l3d-ai-key').value) body.api_key = el('l3d-ai-key').value;
+    if (el('l3d-ai-clear').checked) body.clear_key = true;
+    el('l3d-ai-msg').textContent = '저장 중...';
+    postJSON('api/lib3d/ai/settings', body).then(function (d) {
+      var had = AI.chat;
+      setAI(d); el('l3d-ai-key').value = '';
+      el('l3d-ai-key').placeholder = d.api_key_set ? '저장됨 - 바꿀 때만 입력' : 'sk-ant-...';
+      el('l3d-ai-msg').textContent = '저장했습니다.';
+      if (had !== AI.chat) { stopChat(); respawn(); }
+    }).catch(function (e) { el('l3d-ai-msg').textContent = e.message; });
+  });
+  el('l3d-ai-test').addEventListener('click', function () {
+    el('l3d-ai-msg').textContent = 'BookOasis MCP에 연결하는 중... (저장한 명령으로 시험)';
+    api('api/lib3d/ai/test').then(function (d) {
+      el('l3d-ai-msg').textContent = '연결됨 - 쓸 수 있는 도구 ' + d.tools.length + '개: ' + d.tools.join(', ');
+    }).catch(function (e) { el('l3d-ai-msg').textContent = e.message; });
+  });
+
+  // 질문하기: 안내 데스크 직원(Claude)이 BookOasis MCP로 찾아보고 답한다
+  var askBox = el('l3d-ask'), askLog = el('l3d-ask-log'), askHist = [], asking = false;
+  function askLine(cls, text, tools) {
+    var d = document.createElement('div'); d.className = cls; d.textContent = text;
+    if (tools && tools.length) { var t = document.createElement('div'); t.className = 't'; t.textContent = '찾아본 도구: ' + tools.join(', '); d.appendChild(t); }
+    askLog.appendChild(d); askLog.scrollTop = askLog.scrollHeight; return d;
+  }
+  el('l3d-ask-btn').addEventListener('click', function () { askBox.classList.toggle('on'); if (askBox.classList.contains('on')) el('l3d-ask-q').focus(); });
+  el('l3d-ask-close').addEventListener('click', function () { askBox.classList.remove('on'); });
+  el('l3d-ask-q').addEventListener('keydown', function (e) {
+    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); el('l3d-ask-form').requestSubmit(); }
+  });
+  el('l3d-ask-form').addEventListener('submit', function (e) {
+    e.preventDefault();
+    var q = el('l3d-ask-q').value.trim();
+    if (!q || asking) return;
+    asking = true; el('l3d-ask-send').disabled = true; el('l3d-ask-q').value = '';
+    askLine('q', q);
+    var wait = askLine('a', '찾아보는 중...');
+    postJSON('api/lib3d/ai/ask', { question: q, history: askHist.slice(-6) }).then(function (d) {
+      wait.remove(); askLine('a', d.answer, d.tools);
+      askHist.push({ q: q, a: d.answer });
+    }).catch(function (er) { wait.textContent = '답하지 못했습니다: ' + er.message; })
+      .then(function () { asking = false; el('l3d-ask-send').disabled = false; });
+  });
+
+  // 손님 대화: 층의 두 손님이 책 한 권을 두고 나누는 말을 말풍선으로 번갈아 띄운다
+  var bubble = el('l3d-bubble'), talk = null, chatNext = 0, chatBusy = false, tmpV = new T.Vector3();
+  function stopChat() { talk = null; bubble.style.display = 'none'; }
+  function chatTick() {
+    var now = performance.now();
+    if (!AI.chat || !chatPair || reading || chatBusy || talk || now < chatNext || document.visibilityState !== 'visible') return;
+    var a = chatPair[0].g.position;
+    if (Math.hypot(camera.position.x - a.x, camera.position.z - a.z) > 26) return;   // 멀리 있으면 부르지 않는다(요금)
+    chatBusy = true;
+    var keys = (floors[cur] ? floors[cur].libs : []).map(function (l) { return l.key; }).join(',');
+    api('api/lib3d/ai/chat?libs=' + encodeURIComponent(keys)).then(function (d) {
+      if (!d.lines || !d.lines.length) { chatNext = performance.now() + (d.wait || AI.chat_sec) * 1000; return; }
+      talk = { lines: d.lines, i: 0, title: d.book && d.book.title, until: 0, pair: chatPair };
+      chatNext = performance.now() + AI.chat_sec * 1000;
+    }).catch(function (e) {
+      console.warn('3D 서재 손님 대화:', e.message);
+      chatNext = performance.now() + AI.chat_sec * 2000;
+    }).then(function () { chatBusy = false; });
+  }
+  setInterval(chatTick, 2000);
+  function placeBubble() {
+    if (!talk) return;
+    if (talk.pair !== chatPair || reading) { stopChat(); return; }
+    var now = performance.now();
+    if (now > talk.until) {
+      if (talk.until && ++talk.i >= talk.lines.length) { stopChat(); return; }
+      var ln = talk.lines[talk.i];
+      bubble.textContent = '';
+      if (talk.i === 0 && talk.title) { var b = document.createElement('b'); b.textContent = '「' + talk.title + '」'; bubble.appendChild(b); }
+      bubble.appendChild(document.createTextNode(ln.text));
+      talk.until = now + 2600 + ln.text.length * 70;
+    }
+    var p = talk.pair[talk.lines[talk.i].who % 2];
+    tmpV.set(p.g.position.x, p.g.position.y + 1.85 * (p.sc || 1), p.g.position.z);
+    var dist = camera.position.distanceTo(tmpV);
+    tmpV.project(camera);
+    if (tmpV.z > 1 || dist > 30 || Math.abs(tmpV.x) > 1.1 || Math.abs(tmpV.y) > 1.1) { bubble.style.display = 'none'; return; }
+    bubble.style.display = 'block';
+    bubble.style.left = ((tmpV.x + 1) / 2 * wrap.clientWidth) + 'px';
+    bubble.style.top = ((1 - tmpV.y) / 2 * wrap.clientHeight - 6) + 'px';
+  }
+  function hashNav() { if (location.hash === '#settings') openSettings(); if (location.hash === '#ai') openAI(); }
   window.addEventListener('hashchange', hashNav);
   setTimeout(hashNav, 0);
 
@@ -1442,6 +1570,7 @@
             ((d.errors || []).length ? ' (' + d.errors.join(' / ') + ')' : '');
           return;
         }
+        if (d.ai) setAI(d.ai);
         floors = makeFloors(libs);
         floors.forEach(function (f, i) {
           var cols = Math.max(2, Math.min(4, f.libs.length));
@@ -1467,6 +1596,7 @@
     acc += dt;
     if (acc > 0.3) { acc = 0; loadNear(); where(); }
     if (!reading) renderer.render(scene, camera);
+    placeBubble();
     requestAnimationFrame(frame);
   }
   resize();

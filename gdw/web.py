@@ -28,7 +28,7 @@ import zipfile
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import lib3d, auth, config, mcp, service
+from . import lib3d, lib3d_ai, auth, config, mcp, service
 
 log = logging.getLogger("gdw.web")
 WEB_DIR = os.path.join(config.ROOT, "web")
@@ -325,7 +325,15 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/lib3d/libraries":   # 설정 화면: 보관함 전부 + 보이는지
                 return self._send(200, dict(lib3d.all_libraries(), success=True))
             if path == "/api/lib3d/data":
-                return self._send(200, dict(lib3d.data(force=bool(q.get("refresh"))), success=True))
+                return self._send(200, dict(lib3d.data(force=bool(q.get("refresh"))), ai=lib3d_ai.flags(), success=True))
+            # AI: 손님 대화 / 설정 / BookOasis MCP 연결 시험
+            if path == "/api/lib3d/ai/settings":
+                return self._send(200, dict(lib3d_ai.settings(), success=True))
+            if path == "/api/lib3d/ai/chat":
+                libs = [x for x in (q.get("libs") or [""])[0].split(",") if x]
+                return self._send(200, dict(lib3d_ai.chat(libs), success=True))
+            if path == "/api/lib3d/ai/test":
+                return self._send(200, dict(lib3d_ai.test_mcp(), success=True))
             if path == "/api/lib3d/cover":
                 raw, ctype = lib3d.cover(key)
                 if raw is None:
@@ -353,6 +361,9 @@ class Handler(BaseHTTPRequestHandler):
                     return self._send(200, handle.read(), "application/pdf")
         except (ValueError, OSError, zipfile.BadZipFile) as e:
             return self._send(404, {"success": False, "error": str(e)})
+        except RuntimeError as e:   # AI 호출·MCP 실패 (안내 문구)
+            log.warning("3D 서재 AI: %s", e)
+            return self._send(502, {"success": False, "error": str(e)})
         except Exception as e:  # noqa: BLE001
             log.exception("3D 서재 요청 실패")
             return self._send(500, {"success": False, "error": str(e)})
@@ -409,7 +420,7 @@ class Handler(BaseHTTPRequestHandler):
         if not user and path not in PUBLIC:
             return self._deny(path)
         if not path.startswith(("/api/rpc/", "/api/auth/", "/api/users")) and path not in ("/api/wtm/action", "/api/ui-prefs", "/api/mcp",
-                                                                                          "/api/lib3d/settings"):
+                                                                                          "/api/lib3d/settings", "/api/lib3d/ai/settings", "/api/lib3d/ai/ask"):
             return self._send(404, {"success": False, "error": "없는 주소입니다."})
         if (self.headers.get("Content-Type") or "").split(";")[0].strip().lower() != "application/json":
             return self._send(415, {"success": False, "error": "Content-Type은 application/json이어야 합니다."})
@@ -434,6 +445,22 @@ class Handler(BaseHTTPRequestHandler):
             if libs is not None and not isinstance(libs, list):
                 return self._send(400, {"success": False, "error": "libraries는 목록이나 null이어야 합니다."})
             return self._send(200, dict(lib3d.save_settings(libs), success=True))
+        if path in ("/api/lib3d/ai/settings", "/api/lib3d/ai/ask"):  # 3D 서재 AI: 설정 저장 / 질문하기
+            if not modules()["lib3d"]:
+                return self._send(404, {"success": False, "error": "BookOasis 3D 서재가 꺼져 있습니다 (LIB3D_ENABLED)."})
+            try:
+                if path == "/api/lib3d/ai/settings":
+                    return self._send(200, dict(lib3d_ai.save(context), success=True))
+                hist = context.get("history")
+                return self._send(200, dict(lib3d_ai.ask(context.get("question"), hist if isinstance(hist, list) else []), success=True))
+            except ValueError as e:
+                return self._send(400, {"success": False, "error": str(e)})
+            except RuntimeError as e:
+                log.warning("3D 서재 AI: %s", e)
+                return self._send(502, {"success": False, "error": str(e)})
+            except Exception as e:  # noqa: BLE001
+                log.exception("3D 서재 AI 요청 실패")
+                return self._send(500, {"success": False, "error": str(e)})
         if path == "/api/mcp":  # 설정 > MCP: 토큰 만들기 / 끄기
             if config.overridden(["MCP_TOKEN"]):
                 return self._send(400, {"success": False, "error": "MCP_TOKEN이 실제 환경변수로 지정돼 있어 화면에서 바꿀 수 없습니다."})

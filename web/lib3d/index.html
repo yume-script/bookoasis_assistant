@@ -58,6 +58,33 @@
   .l3d-set-h { font-weight: 700; font-size: 0.85rem; padding: 10px 4px 4px; }
   .l3d-set-row { display: block; padding: 5px 4px 5px 22px; font-size: 0.86rem; cursor: pointer; }
   .l3d-set .row { display: flex; gap: 8px; flex-wrap: wrap; }
+  /* AI: 설정 패널·질문 창·손님 말풍선 */
+  .l3d-ai label.f { display: grid; gap: 4px; font-size: 0.82rem; margin: 6px 0; }
+  .l3d-ai label.c { display: flex; gap: 6px; align-items: center; font-size: 0.86rem; margin: 6px 0; cursor: pointer; }
+  .l3d-ai input[type=text], .l3d-ai input[type=password], .l3d-ai input[type=number] { font: inherit; padding: 7px 9px; border: 1px solid #d9d3c8;
+    border-radius: 8px; background: #fff; color: #1d1e20; min-width: 0; }
+  .l3d-ai .warn { color: #b3261e; }
+  .l3d-ai .body { flex: 1; overflow: auto; }
+  .l3d-ask { position: absolute; right: 12px; top: 12px; bottom: 70px; width: min(400px, calc(100% - 24px)); z-index: 6; display: none;
+    flex-direction: column; gap: 8px; background: rgba(255, 255, 255, 0.97); color: #1d1e20; border-radius: 16px; padding: 14px;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.18); }
+  .l3d-ask.on { display: flex; }
+  .l3d-ask h3 { margin: 0; font-size: 1rem; }
+  .l3d-ask-log { flex: 1; overflow: auto; display: flex; flex-direction: column; gap: 8px; font-size: 0.86rem; line-height: 1.5; }
+  .l3d-ask-log .q { align-self: flex-end; background: var(--accent, #e5a00d); color: var(--accent-ink, #141517); border-radius: 12px 12px 2px 12px;
+    padding: 7px 10px; max-width: 85%; white-space: pre-wrap; word-break: break-word; }
+  .l3d-ask-log .a { align-self: flex-start; background: #f1ede6; border-radius: 12px 12px 12px 2px; padding: 8px 10px; max-width: 92%;
+    white-space: pre-wrap; word-break: break-word; }
+  .l3d-ask-log .t { font-size: 0.72rem; opacity: 0.6; margin-top: 4px; }
+  .l3d-ask form { display: flex; gap: 6px; }
+  .l3d-ask textarea { flex: 1; font: inherit; resize: none; height: 54px; padding: 7px 9px; border: 1px solid #d9d3c8; border-radius: 10px;
+    background: #fff; color: #1d1e20; }
+  .l3d-bubble { position: absolute; left: 0; top: 0; z-index: 3; max-width: 230px; padding: 7px 11px; border-radius: 14px; background: #fff;
+    color: #1d1e20; font-size: 0.8rem; line-height: 1.4; box-shadow: 0 4px 16px rgba(0, 0, 0, 0.16); pointer-events: none; display: none;
+    transform: translate(-50%, -100%); word-break: keep-all; }
+  .l3d-bubble::after { content: ""; position: absolute; left: 50%; bottom: -6px; margin-left: -6px; border: 6px solid transparent; border-bottom: 0;
+    border-top-color: #fff; }
+  .l3d-bubble b { display: block; font-size: 0.72rem; color: #8a6a1f; margin-bottom: 2px; }
   /* 서재 안에서 읽기 (뷰어) */
   .l3d-reader { position: absolute; inset: 0; z-index: 5; display: none; flex-direction: column; background: rgba(24, 22, 20, 0.62);
     backdrop-filter: blur(7px); -webkit-backdrop-filter: blur(7px); color: #eee; }
@@ -156,8 +183,42 @@
         <button type="button" class="l3d-btn primary" id="l3d-set-save">저장</button>
         <button type="button" class="l3d-btn" id="l3d-set-all">전부 보기</button>
         <button type="button" class="l3d-btn" id="l3d-set-close">닫기</button>
+        <button type="button" class="l3d-btn" id="l3d-set-ai">AI 설정</button>
       </div>
     </div>
+    <div class="l3d-set l3d-ai" id="l3d-ai" role="dialog" aria-label="3D 서재 AI 설정">
+      <h3>AI 손님·질문하기</h3>
+      <p class="sub">Claude가 손님들의 책 대화를 쓰고, BookOasis MCP로 서재에 대한 질문에 답합니다. 호출할 때마다 Claude API 요금이 듭니다.</p>
+      <div class="body">
+        <p class="sub warn" id="l3d-ai-sdk" hidden>서버에 anthropic 패키지가 없습니다. <code>pip install anthropic</code> 후 다시 시작하세요.</p>
+        <label class="f">Claude API 키 <input type="password" id="l3d-ai-key" autocomplete="off" placeholder="sk-ant-..."></label>
+        <label class="c"><input type="checkbox" id="l3d-ai-clear"> 저장된 키 지우기</label>
+        <label class="f">모델 <input type="text" id="l3d-ai-model" list="l3d-ai-models" placeholder="claude-opus-5-5"></label>
+        <datalist id="l3d-ai-models"><option value="claude-opus-5-5"><option value="claude-sonnet-5-5"><option value="claude-haiku-5-5"></datalist>
+        <label class="c"><input type="checkbox" id="l3d-ai-chat"> 손님 대화 (층마다 두 손님이 책 한 권을 두고 이야기)</label>
+        <label class="f">대화 사이 최소 간격(초) <input type="number" id="l3d-ai-sec" min="15" max="3600" step="5"></label>
+        <label class="c"><input type="checkbox" id="l3d-ai-ask"> 질문하기 (BookOasis MCP로 서재 데이터를 찾아 답)</label>
+        <label class="f">BookOasis MCP 실행 명령
+          <input type="text" id="l3d-ai-mcp" placeholder="docker exec -i bookoasis python3 tools/mcp_server.py"></label>
+        <p class="sub">BookOasis가 같은 서버에 직접 설치돼 있으면 <code>python3 /BookOasis경로/tools/mcp_server.py</code>. 읽기 전용 도구만 씁니다.</p>
+      </div>
+      <p class="sub" id="l3d-ai-msg"></p>
+      <div class="row">
+        <button type="button" class="l3d-btn primary" id="l3d-ai-save">저장</button>
+        <button type="button" class="l3d-btn" id="l3d-ai-test">MCP 연결 시험</button>
+        <button type="button" class="l3d-btn" id="l3d-ai-close">닫기</button>
+      </div>
+    </div>
+    <div class="l3d-ask" id="l3d-ask" role="dialog" aria-label="안내 데스크에 질문">
+      <h3>안내 데스크에 질문</h3>
+      <div class="l3d-ask-log" id="l3d-ask-log"><div class="a">BookOasis 서재에 대해 물어보세요. 예: "최근에 들어온 판타지 소설 알려줘", "표지 없는 책이 몇 권이야?"</div></div>
+      <form id="l3d-ask-form">
+        <textarea id="l3d-ask-q" placeholder="질문 (Enter 보내기, Shift+Enter 줄바꿈)"></textarea>
+        <button type="submit" class="l3d-btn primary" id="l3d-ask-send">보내기</button>
+      </form>
+      <button type="button" class="l3d-btn" id="l3d-ask-close">닫기</button>
+    </div>
+    <div class="l3d-bubble" id="l3d-bubble"></div>
     <div class="l3d-reader" id="l3d-reader" role="dialog" aria-label="읽기">
       <div class="l3d-r-top">
         <b id="l3d-r-title"></b>
@@ -188,6 +249,7 @@
       <button type="button" class="l3d-btn" id="l3d-home">입구로</button>
       <button type="button" class="l3d-btn" id="l3d-reload">새로고침</button>
       <button type="button" class="l3d-btn" id="l3d-set-btn">설정</button>
+      <button type="button" class="l3d-btn" id="l3d-ask-btn" hidden>질문</button>
     </div>
   </div>
 </main>
