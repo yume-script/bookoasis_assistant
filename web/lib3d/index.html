@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="ko" data-theme="dark" data-accent="amber">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#141517">
+<title>BookOasis 3D 서재</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700&display=swap">
+<script>
+  // 테마를 그리기 전에 정해 둔다 (깜빡임 방지, shell.js [테마]에서 고른 값)
+  (function () { try { var t = JSON.parse(localStorage.getItem('bo_theme') || '{}') || {};
+    var d = JSON.parse(localStorage.getItem('bo_theme_default') || '{}') || {};
+    document.documentElement.setAttribute('data-theme', t.theme || d.theme || 'dark');
+    document.documentElement.setAttribute('data-accent', t.accent || d.accent || 'amber'); } catch (e) { /* 저장소를 못 쓰는 브라우저 */ } })();
+</script>
+<link rel="stylesheet" href="theme.css">
+<style>
+  .l3d-wrap { position: relative; height: calc(100vh - 96px); min-height: 420px; border-radius: 12px; overflow: hidden;
+    background: #d9cdb4; touch-action: none; user-select: none; -webkit-user-select: none; }
+  .l3d-wrap canvas { display: block; width: 100%; height: 100%; outline: none; }
+  .l3d-hud { position: absolute; left: 12px; top: 12px; display: flex; flex-direction: column; gap: 6px; pointer-events: none; }
+  .l3d-chip { pointer-events: auto; background: rgba(20, 21, 23, 0.78); color: #f1f1f1; border-radius: 999px; padding: 6px 12px;
+    font-size: 0.8rem; line-height: 1.35; backdrop-filter: blur(4px); width: max-content; max-width: 70vw; }
+  .l3d-chip b { color: var(--accent, #e5a00d); }
+  .l3d-bar { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); display: flex; gap: 8px; }
+  .l3d-btn { border: 0; border-radius: 12px; background: rgba(20, 21, 23, 0.82); color: #f1f1f1; padding: 8px 14px;
+    font: 600 0.82rem/1.2 inherit; cursor: pointer; min-width: 64px; }
+  .l3d-btn:hover { background: rgba(40, 42, 46, 0.92); }
+  .l3d-btn.primary { background: var(--accent, #e5a00d); color: var(--accent-ink, #141517); }
+  .l3d-card { position: absolute; right: 12px; top: 12px; width: min(320px, calc(100% - 24px)); background: rgba(20, 21, 23, 0.92);
+    color: #f1f1f1; border-radius: 14px; padding: 14px; display: none; gap: 10px; box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35); }
+  .l3d-card.on { display: grid; }
+  .l3d-card img { width: 100%; max-height: 220px; object-fit: contain; border-radius: 8px; background: #000; }
+  .l3d-card h3 { margin: 0; font-size: 1rem; line-height: 1.35; word-break: keep-all; }
+  .l3d-card p { margin: 0; font-size: 0.8rem; opacity: 0.8; word-break: break-all; }
+  .l3d-card .row { display: flex; gap: 8px; flex-wrap: wrap; }
+  .l3d-map { position: absolute; left: 12px; bottom: 64px; width: min(300px, calc(100% - 24px)); max-height: 55%; overflow: auto;
+    background: rgba(20, 21, 23, 0.92); color: #f1f1f1; border-radius: 14px; padding: 8px; display: none; }
+  .l3d-map.on { display: block; }
+  .l3d-map button { display: flex; justify-content: space-between; gap: 8px; width: 100%; border: 0; background: transparent; color: inherit;
+    padding: 8px 10px; border-radius: 8px; font: 500 0.84rem/1.3 inherit; cursor: pointer; text-align: left; }
+  .l3d-map button:hover { background: rgba(255, 255, 255, 0.08); }
+  .l3d-map small { opacity: 0.6; white-space: nowrap; }
+  .l3d-msg { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; padding: 24px; color: #222;
+    font-size: 0.95rem; line-height: 1.6; pointer-events: none; }
+  .l3d-stick { position: absolute; width: 96px; height: 96px; border-radius: 50%; border: 2px solid rgba(255, 255, 255, 0.55);
+    background: rgba(20, 21, 23, 0.25); display: none; pointer-events: none; }
+  .l3d-stick i { position: absolute; left: 50%; top: 50%; width: 40px; height: 40px; margin: -20px 0 0 -20px; border-radius: 50%;
+    background: rgba(255, 255, 255, 0.7); }
+  @media (max-width: 640px) { .l3d-wrap { height: calc(100vh - 120px); } .l3d-btn { padding: 8px 10px; min-width: 52px; } }
+</style>
+</head>
+<body data-module="lib3d">
+<main class="gdw-page">
+  <div class="l3d-wrap" id="l3d">
+    <div class="l3d-msg" id="l3d-msg">서재를 짓는 중...</div>
+    <div class="l3d-hud">
+      <div class="l3d-chip" id="l3d-where">BookOasis 3D 서재</div>
+      <div class="l3d-chip" id="l3d-help">이동 W A S D · 방향키 / 둘러보기 마우스 끌기 / 책 누르기</div>
+    </div>
+    <div class="l3d-card" id="l3d-card" role="dialog" aria-label="작품 정보">
+      <img id="l3d-card-img" alt="">
+      <h3 id="l3d-card-title"></h3>
+      <p id="l3d-card-sub"></p>
+      <p id="l3d-card-path"></p>
+      <div class="row">
+        <button type="button" class="l3d-btn primary" id="l3d-open" hidden>BookOasis에서 열기</button>
+        <button type="button" class="l3d-btn" id="l3d-close">닫기</button>
+      </div>
+    </div>
+    <div class="l3d-map" id="l3d-map"></div>
+    <div class="l3d-stick" id="l3d-stick"><i></i></div>
+    <div class="l3d-bar">
+      <button type="button" class="l3d-btn" id="l3d-map-btn">지도</button>
+      <button type="button" class="l3d-btn" id="l3d-home">입구로</button>
+      <button type="button" class="l3d-btn" id="l3d-reload">새로고침</button>
+    </div>
+  </div>
+</main>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<script src="library3d/app.js"></script>
+<script src="shell.js"></script>
+</body>
+</html>

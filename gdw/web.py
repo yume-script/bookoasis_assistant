@@ -27,16 +27,17 @@ import time
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import auth, config, mcp, service
+from . import lib3d, auth, config, mcp, service
 
 log = logging.getLogger("gdw.web")
 WEB_DIR = os.path.join(config.ROOT, "web")
 STATIC = {"/watch": "index.html", "/style.css": "style.css", "/script.js": "script.js",
           "/theme.css": "theme.css", "/shell.js": "shell.js", "/webtoon": "webtoon/index.html", "/webtoon/": "webtoon/index.html",
           "/webtoon/style.css": "webtoon/style.css", "/webtoon/script.js": "webtoon/script.js",
-          "/login": "login.html", "/login.js": "login.js"}
+          "/login": "login.html", "/login.js": "login.js",
+          "/library3d": "lib3d/index.html", "/library3d/app.js": "lib3d/app.js"}
 PUBLIC = {"/login", "/login.js", "/theme.css", "/shell.js", "/healthz", "/api/auth/state", "/api/auth/login", "/api/auth/setup"}
-PAGES = {"/", "/index.html", "/watch", "/webtoon", "/webtoon/", "/games", "/games/"}  # 로그인 안 했으면 로그인 화면으로 보낼 주소
+PAGES = {"/", "/index.html", "/watch", "/webtoon", "/webtoon/", "/games", "/games/", "/library3d"}  # 로그인 안 했으면 로그인 화면으로 보낼 주소
 OFF_PAGE = """<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{title}</title><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
 <link rel="stylesheet" href="theme.css"></head><body data-module=""><main class="gdw-page"><div class="app-off"><h2>{title}: 꺼져 있음</h2>
@@ -83,7 +84,7 @@ def _clean_nav(raw):
 
 def module_versions():
     """모듈별 버전 (왼쪽 위 아이콘 배지: 지금 보는 화면의 모듈 버전)."""
-    out = {"gdw": service._plugin_version()}
+    out = {"gdw": service._plugin_version(), "lib3d": lib3d.VERSION}
     for key, path, field in (("wtm", ("wtm", "VERSION"), "plugin version"), ("mini", ("mini", "VERSION"), "plugin version")):
         try:
             with open(os.path.join(config.ROOT, *path), encoding="utf-8") as f:
@@ -174,7 +175,8 @@ def modules():
     gdw = config.env_bool("GDW_ENABLED", os.name != "nt")
     # gdwplx: 드라이브 변경 감시의 Plex 설정 메뉴와 Plex 스캔 (드라이브 변경 감시가 켜져 있을 때만, 기본 끔)
     return {"wtm": config.env_bool("WTM_ENABLED", True), "gdw": gdw,
-            "gdwplx": gdw and config.plex_enabled(), "mini": config.env_bool("MINI_ENABLED", True)}
+            "gdwplx": gdw and config.plex_enabled(), "mini": config.env_bool("MINI_ENABLED", True),
+            "lib3d": lib3d.enabled()}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -278,8 +280,15 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:  # noqa: BLE001
                 log.exception("시간대별 다운로드 계산 실패")
                 return self._send(500, {"success": False, "error": str(e)})
+        if path == "/library3d/":
+            return self._send(302, b"", extra={"Location": "/library3d"})
+        if path in ("/library3d", "/library3d/app.js") and not mods["lib3d"]:
+            return self._send(200, OFF_PAGE.format(title="BookOasis 3D 서재", note=".env에 <code>LIB3D_ENABLED=true</code>를 넣고 다시 시작하세요.").encode(), "text/html; charset=utf-8")
+        if path.startswith("/api/lib3d/"):
+            return self._lib3d(path, mods)
         if path in ("/", "/index.html"):  # 첫 화면: 웹툰 다운로더 → 드라이브 변경 감시 → 미니게임 순으로 켜진 것
-            first = next((p for k, p in (("wtm", "webtoon"), ("gdw", "watch"), ("mini", "games")) if mods[k]), None)
+            first = next((p for k, p in (("wtm", "webtoon"), ("gdw", "watch"), ("mini", "games"),
+                                                ("lib3d", "library3d")) if mods[k]), None)
             if first:
                 return self._send(302, b"", extra={"Location": first})
             return self._send(200, OFF_PAGE.format(title="웹툰 다운로더", note=".env에 <code>WTM_ENABLED=true</code>를 넣고 다시 시작하세요.").encode(), "text/html; charset=utf-8")
@@ -303,6 +312,29 @@ class Handler(BaseHTTPRequestHandler):
         if ctype.startswith("text/") or ctype.endswith("javascript"):
             ctype += "; charset=utf-8"
         self._send(200, data, ctype)
+
+    def _lib3d(self, path, mods):
+        """BookOasis 3D 서재: 보관함·작품 목록, 표지, 책 열기 주소"""
+        if not mods["lib3d"]:
+            return self._send(404, {"success": False, "error": "BookOasis 3D 서재가 꺼져 있습니다 (LIB3D_ENABLED)."})
+        from urllib.parse import parse_qs
+        q = parse_qs(self.path.partition("?")[2])
+        key = (q.get("k") or [""])[0]
+        try:
+            if path == "/api/lib3d/data":
+                return self._send(200, dict(lib3d.data(force=bool(q.get("refresh"))), success=True))
+            if path == "/api/lib3d/cover":
+                raw, ctype = lib3d.cover(key)
+                if raw is None:
+                    return self._send(404, {"success": False, "error": ctype}, extra={"Cache-Control": "max-age=600"})
+                return self._send(200, raw, ctype, extra={"Cache-Control": "max-age=86400"})
+            if path == "/api/lib3d/open":
+                url, file_path = lib3d.open_url(key)
+                return self._send(200, {"success": True, "url": url, "path": file_path})
+        except Exception as e:  # noqa: BLE001
+            log.exception("3D 서재 요청 실패")
+            return self._send(500, {"success": False, "error": str(e)})
+        return self._send(404, {"success": False, "error": "없는 주소입니다."})
 
     def _games(self, path, mods):
         if not mods["mini"]:

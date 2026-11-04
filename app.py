@@ -76,7 +76,7 @@ def check(svc):
     problems = 0
     mods = modules()
     print(f"모듈            : 웹툰 다운로더 {'켬' if mods['wtm'] else '끔'} · 드라이브 변경 감시 {'켬' if mods['gdw'] else '끔'}"
-          f" · 미니게임 {'켬' if mods['mini'] else '끔'}")
+          f" · 미니게임 {'켬' if mods['mini'] else '끔'} · 3D 서재 {'켬' if mods.get('lib3d') else '끔'}")
     settings = config.settings()
     print(f".env            : {config.ENV_PATH}" + ("" if os.path.exists(config.ENV_PATH) else "  (없음 - env.example을 복사하세요)"))
     print(f"DATA_DIR        : {service.DATA_DIR}")
@@ -163,7 +163,7 @@ def main():
     log.info("관리 화면: http://%s:%d/  (데이터: %s, 보관함: %s, 모듈: %s)", host, port, service.DATA_DIR,
              "BookOasis DB" if bookoasis_db.configured() else config.libraries_file(),
              ", ".join(name for name, on in (("웹툰 다운로더", mods["wtm"]), ("드라이브 변경 감시", mods["gdw"]),
-                                             ("미니게임", mods["mini"])) if on))
+                                             ("미니게임", mods["mini"]), ("3D 서재", mods.get("lib3d"))) if on))
     if mods["wtm"]:  # 재시작 뒤 어떤 카카오 계정 쿠키가 살아 있는지 로그로 바로 확인할 수 있게
         try:
             from wtm import host as wtm_host
