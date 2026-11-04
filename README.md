@@ -180,7 +180,7 @@ venv\Scripts\python app.py
 | `LIBRARIES_FILE` | `DATA_DIR/libraries.manual.json` | DB 없이 쓸 때 보관함 정의 파일 |
 | `GDW_ENABLED` / `WTM_ENABLED` / `MINI_ENABLED` | `true` / `false` / `true` | 모듈 켜기/끄기. 드라이브 변경 감시를 끄면 `/`는 웹툰(또는 미니게임) 화면으로 넘어감 |
 | `GDWPLX_ENABLED` | `false` | 드라이브 변경 감시 FOR PLEX - [드라이브 변경 감시 > Plex 설정] 메뉴와 Plex 부분 스캔 (`GDW_ENABLED`도 켜져 있을 때) |
-| `LIB3D_ENABLED` | `false` | BookOasis 3D 서재 - 보관함을 부스로, 작품을 책장의 책(표지)으로 걸어 다니며 둘러보기 (`BOOKOASIS_DB_URL` 필요). `LIB3D_PER_LIBRARY`(보관함마다 최근 작품 수, 120), `LIB3D_BOOK_URL`(책 열기 주소 형식, 예: `{bookoasis}/book/{id}`), `LIB3D_COVER_URL`(BookOasis 표지 주소 형식) |
+| `LIB3D_ENABLED` | `false` | BookOasis 3D 서재 - 도서관 건물 안을 걸어 다니며 둘러보기. 세션별로 층(1층 일반·2층 성인·3층 오디오북·4층 비디오, 엘리베이터·[층] 버튼으로 이동), 보관함은 서가 구역, 작품은 책장의 책(표지) (`BOOKOASIS_DB_URL` 필요). `LIB3D_PER_LIBRARY`(보관함마다 최근 작품 수, 120), `LIB3D_BOOK_URL`(책 열기 주소 형식, 예: `{bookoasis}/book/{id}`), `LIB3D_COVER_URL`(BookOasis 표지 주소 형식) |
 | `MINI_COVERS_DIR` | `mini/games/picture-territory/covers` | 그림 땅따먹기 표지 그림 폴더 |
 | `WTM_DATA_DIR` | `DATA_DIR/webtoon` | 웹툰 데이터(titles.json, 이력, 로그, settings.json) |
 | `WTM_HANDOFF_GDW` | `true` | 받은 회차를 드라이브 변경 감시에 바로 넘김 |
