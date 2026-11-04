@@ -161,8 +161,22 @@ def kind_label(t, platform="naver"):
 NAVER_RECHECK_HOURS = 20   # 네이버 작품은 자동 실행에서 하루 1번만 (실행 주기가 12시간이면 하루 2번 돌기 때문)
 
 
+# 신규 회차 확인 계획 (설정 CHECK_PLAN_ENABLE): 오전 05~12시는 1일 이상 기다무 대여권, 오후 12~20시는 새 회차 확인
+# (네이버·카카오 연재일, 대여권으로 열 회차가 없는 기다무 포함). 20~05시는 rclone(FF) 업로드가 밀리는 시간이라 비운다.
+# 1·2·3·6·12시간 기다무 대여권은 24시간 그대로 주기마다.
+PLAN_AM = (5, 12)
+PLAN_PM = (12, 20)
+PLAN_RETRY = 12 * 3600   # 오후 확인에서 새 회차를 못 찾으면 12시간 뒤(다음 날 오전으로 옮김) 한 번 더
+
+
+def plan_enabled(cfg):
+    return _truthy(cfg.get("CHECK_PLAN_ENABLE"))
+
+
 def naver_spread_window(cfg):
-    """네이버 작품별 확인 시각을 펼칠 시간대 (시작 시, 끝 시) 또는 None(끔)"""
+    """새 회차 작품별 확인 시각을 펼칠 시간대 (시작 시, 끝 시) 또는 None(끔). 확인 계획을 켰으면 오후(12~20시)"""
+    if plan_enabled(cfg):
+        return PLAN_PM
     if not cfg.get("NAVER_SPREAD_ENABLE"):
         return None
     try:
@@ -204,6 +218,43 @@ def naver_slot_at(cfg, t, now=None):
     return at if at <= now else at - 86400
 
 
+def _serial_on(t, ts, platform):
+    """ts 날짜가 이 작품의 연재일인지 (매일+는 매일, 카카오는 목록 스캔에서 새 회차가 보인 작품도)"""
+    wds = set(t.get("weekdays") or [])
+    if "dailyPlus" in wds:
+        return True
+    if platform == "kakao" and t.get("last_slide_added_dt") and t.get("checked_slide_dt") != t.get("last_slide_added_dt"):
+        return True
+    return _WD_KEYS[time.localtime(ts).tm_wday] in wds
+
+
+def _retry_time(slot):
+    """오후 확인(slot)에서 못 찾았을 때 다시 볼 시각: 12시간 뒤. 그게 05시 전이면 오전(05~12시) 안으로 옮긴다
+    (20~05시는 비워 두므로, 00~05시 → 05~12시로 비율대로)"""
+    r = slot + PLAN_RETRY
+    lt = time.localtime(r)
+    tod = lt.tm_hour * 3600 + lt.tm_min * 60
+    if tod < PLAN_AM[0] * 3600:
+        d05 = time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday, PLAN_AM[0], 0, 0, 0, 0, -1))
+        r = d05 + tod * (PLAN_AM[1] - PLAN_AM[0]) / float(PLAN_AM[0])
+    return r
+
+
+def _plan_due(cfg, t, platform, now):
+    """확인 계획: 연재일 오후 확인 시각(작품마다 12~20시에 고르게)이 지났고 그 뒤로 아직 안 봤으면 확인.
+    그때 새 회차를 찾았으면 끝, 못 찾았으면 12시간 뒤(오전으로 옮김) 한 번 더 - 그래도 없으면 다음 연재일."""
+    slot = naver_slot_at(cfg, t, now)        # 지금 기준 가장 최근의 오후 확인 시각 (오늘 또는 어제)
+    if slot is None or not _serial_on(t, slot, platform):
+        return False
+    last = float(t.get("last_auto_check_at") or t.get("last_checked_at") or 0)
+    if last < slot:
+        return True
+    if float(t.get("last_new_at") or 0) >= slot:
+        return False                          # 오후 확인에서 새 회차를 받음
+    r = _retry_time(slot)
+    return r <= now and last < r
+
+
 NAVER_SLOT_TICK = 300
 _naver_tick = {"at": 0.0}
 
@@ -217,15 +268,28 @@ def naver_slot_tick(cfg, log=print):
     due = [tid for tid, t in ss.load_titles().items()
            if t.get("subscribed") and not t.get("excluded") and not t.get("unsubscribed")
            and in_new_episode_scope(cfg, t, "naver")]
-    if not due:
+    kdue = []
+    if plan_enabled(cfg) and _cfg_bool(cfg, "KAKAO_ENABLE", False) and _cfg_bool(cfg, "KAKAO_AUTO", True):
+        from . import kakao_pipeline as kp
+        now = time.time()
+        kdue = [sid for sid, t in ss.load_kakao_titles().items()
+                if (t.get("subscribed") or t.get("purchased")) and not t.get("excluded") and not t.get("unsubscribed")
+                and in_new_episode_scope(cfg, t, "kakao", now) and kp._needs_check(cfg, t, now)]
+    if not due and not kdue:
         return None
-    if not ss.try_acquire_job({"stage": "starting", "message": "네이버: 확인 시각이 된 작품 %d개" % len(due),
-                               "started_at": time.time(), "cancel_requested": False, "last_error": None}):
+    if not ss.try_acquire_job({"stage": "starting", "message": "확인 시각이 된 작품: 네이버 %d개 · 카카오 %d개" % (
+                               len(due), len(kdue)), "started_at": time.time(), "cancel_requested": False,
+                               "last_error": None}):
         return None
     try:
-        r = run_download_cycle(cfg, log=log)
+        r = run_download_cycle(cfg, log=log) if due else {"downloaded": 0}
+        kr = {"downloaded": 0}
+        if kdue and not ss.load_job_state().get("cancel_requested"):
+            from . import kakao_pipeline as kp
+            kr = kp.run_kakao_cycle(cfg, log=log) or kr
         ss.save_job_state({"running": False, "stage": "done", "finished_at": time.time(),
-                            "message": "네이버(확인 시각): 신규 %d화" % r.get("downloaded", 0)})
+                            "message": "확인 시각: 네이버 신규 %d화 · 카카오 신규 %d화" % (
+                                r.get("downloaded", 0), kr.get("downloaded", 0))})
         return r
     except Exception as e:  # noqa: BLE001
         ss.save_job_state({"running": False, "stage": "error", "finished_at": time.time(), "last_error": str(e)})
@@ -242,11 +306,13 @@ def in_new_episode_scope(cfg, t, platform="naver", now=None):
     카카오 기다무 대여권은 여기서 다루지 않는다 - 5분마다 도는 기다무 확인이 작품별 충전 주기
     (1시간·3시간·12시간·1일·2일·3일·7일 등)에 맞춰 충전된 작품만 따로 받는다.
     'all'이면 구독작 전부."""
-    if str(cfg.get("NEW_EP_SCOPE") or "today") == "all":
-        return True
     if t.get("last_downloaded_no") is None:
         return True        # 새로 구독한 작품은 요일과 상관없이 바로 첫 다운로드
     now = now or time.time()
+    if plan_enabled(cfg):
+        return _plan_due(cfg, t, platform, now)   # 신규 회차 확인 계획이 '확인 범위' 설정보다 우선
+    if str(cfg.get("NEW_EP_SCOPE") or "today") == "all":
+        return True
     if platform == "naver":
         slot = naver_slot_at(cfg, t, now)
         if slot is not None:   # 작품마다 정해 둔 시각(05~20시 등)에 하루 1번
@@ -1051,6 +1117,7 @@ def run_download_cycle(cfg, log=print):
             patch["paid_probe_at"] = time.time()
         if last_ok_no != t.get("last_downloaded_no"):
             patch["last_downloaded_no"] = last_ok_no
+            patch["last_new_at"] = time.time()   # 확인 계획: 새 회차를 찾았으면 그날 다시 확인하지 않음
         ss.upsert_title({tid: patch})
         if notice_eps and discord_notify.wants_new_episode_notice(cfg, ss.get_title(tid) or t):
             try:

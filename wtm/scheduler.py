@@ -217,7 +217,7 @@ def _loop(get_cfg_func, run_full_cycle_func, run_finished_scan_func):
         if enabled:
             try:
                 from . import pipeline as _pl
-                if _pl.naver_spread_window(cfg) and not _ss.load_job_state().get("running"):
+                if (_pl.naver_spread_window(cfg) or _pl.plan_enabled(cfg)) and not _ss.load_job_state().get("running"):
                     _pl.naver_slot_tick(cfg, log=_ss.append_log)
             except Exception as e:  # noqa: BLE001
                 _ss.append_log("네이버 확인 시각 실행 오류(무시): %s" % e)

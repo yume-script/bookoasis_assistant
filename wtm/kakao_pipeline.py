@@ -591,8 +591,9 @@ NIGHT_LATE_START = 6 * 3600  # 시작 시각에서 이만큼 지나도록 기록
 
 
 def _night_hour(cfg):
-    """1일 이상 기다무를 쓰기 시작하는 시(0~23) 또는 None(끔)"""
-    if not cfg.get("WAITFREE_NIGHT_ENABLE"):
+    """1일 이상 기다무를 쓰기 시작하는 시(0~23) 또는 None(끔). 확인 계획을 켰으면 끔(오전 규칙이 대신함)"""
+    from . import pipeline as _pl
+    if not cfg.get("WAITFREE_NIGHT_ENABLE") or _pl.plan_enabled(cfg):
         return None
     try:
         return int(float(cfg.get("WAITFREE_NIGHT_START", 1))) % 24
@@ -661,6 +662,28 @@ WAITFREE_IDLE_SEC = 24 * 3600
 WAITFREE_READY_GRACE = 60
 
 
+def _plan_am(cfg, t):
+    from . import pipeline as _pl
+    return _pl.plan_enabled(cfg) and waitfree_period(t) >= NIGHT_MIN_PERIOD
+
+
+def _am_ready(c):
+    """충전 시각 c → 쓸 시각: 오전(05~12시) 안이면 그대로, 05시 전이면 그날 05시, 12시 이후면 다음 날 05시"""
+    from .pipeline import PLAN_AM
+    lt = time.localtime(c)
+    if PLAN_AM[0] <= lt.tm_hour < PLAN_AM[1]:
+        return c
+    day = 0 if lt.tm_hour < PLAN_AM[0] else 1
+    return time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday + day, PLAN_AM[0], 0, 0, 0, 0, -1))
+
+
+def plan_open_left(t):
+    """기다무 대여권으로 열 수 있는 남은 회차 (전체 - 받은 마지막 - 최신 10화), 전체 회차를 모르면 None"""
+    if not t.get("episode_count"):
+        return None
+    return int(t["episode_count"]) - int(t.get("last_downloaded_no") or 0) - WAITFREE_LATEST_EXCLUDED
+
+
 def ready_at(cfg, t, account, now=None, night=None, nums=None):
     """이 계정이 이 작품에서 기다무 대여권을 쓸 수 있는 시각: 충전 시각, 단 '1일 이상 기다무는 새벽부터'를 켰으면
     night_info 규칙으로 미룬다. 이 작품에서 쓴 적이 없으면 지금(또는 미룬 시각). night: 미리 구한 night_info(반복 호출용).
@@ -670,6 +693,8 @@ def ready_at(cfg, t, account, now=None, night=None, nums=None):
         used = _ticket_at(t, n)
         return used + waitfree_period(t) + WAITFREE_READY_GRACE if used else (now or time.time())
     if not _night_applies(cfg, t):
+        if _plan_am(cfg, t):   # 확인 계획: 1일 이상 기다무는 오전(05~12시)에만 - 그 밖에 충전되면 다음 오전으로
+            return _am_ready(charge(account))
         return charge(account)
     info = night if night is not None else night_info(cfg, now)
     at = max(charge(n) for n in (nums or [account]))
@@ -746,6 +771,10 @@ def _waitfree_candidates(cfg):
             continue
         if adult_block_reason_any(cfg, t) or _pl.bl_blocked(cfg, t):
             continue
+        if _pl.plan_enabled(cfg):
+            left = plan_open_left(t)
+            if left is not None and left <= 0:
+                continue   # 확인 계획: 남은 회차가 10개 이하(최신 10화) - 대여권 대신 연재일 오후에 새 회차만
         out[sid] = t
     return nums, out
 
@@ -871,13 +900,18 @@ def spread_short_plan(cfg, titles, now=None):
 def spread_waitfree(cfg, log=print, now=None):
     """[설정] '1·2·3일 기다무 시간대에 고르게'가 켜져 있으면 매일 목록 수집(완결 스캔) 때 부른다.
     반환: 옮긴 작품 수 (꺼져 있으면 None)"""
-    if not cfg.get("WAITFREE_SPREAD_ENABLE") or not (cfg.get("KAKAO_ENABLE") and cfg.get("KAKAO_USE_WAITFREE")):
+    from . import pipeline as _pl0
+    if (not (cfg.get("WAITFREE_SPREAD_ENABLE") or _pl0.plan_enabled(cfg))
+            or not (cfg.get("KAKAO_ENABLE") and cfg.get("KAKAO_USE_WAITFREE"))):
         return None
     try:
         start_h = int(float(cfg.get("WAITFREE_SPREAD_START", 1))) % 24
         end_h = int(float(cfg.get("WAITFREE_SPREAD_END", 11))) % 24
     except (TypeError, ValueError):
         return None
+    from . import pipeline as _pl
+    if _pl.plan_enabled(cfg):
+        start_h, end_h = _pl.PLAN_AM   # 확인 계획: 1일 이상 기다무는 오전에
     now = now or time.time()
     titles = ss.load_kakao_titles()
     plan = spread_plan(cfg, titles, start_h, end_h, now)
@@ -1687,6 +1721,8 @@ def download_series(cfg, session, sid, log=print, full=False, cancel_check=None,
     done_patch.update(_locked_patch(t, [None] * max(0, res["locked"]), only, incremental))
     if only is None:
         done_patch["checked_no"] = max_checked
+    if res["downloaded"]:
+        done_patch["last_new_at"] = time.time()   # 확인 계획: 받았으면 그날 오후 확인을 다시 하지 않음
     if res["waitfree_used"]:
         done_patch.update(_ticket_patch(sid, t, account, time.time()))
         done_patch["waitfree_idle_until"] = 0

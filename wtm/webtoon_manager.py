@@ -111,6 +111,7 @@ DEFAULTS = {
     "KAKAO_NOVEL_ENABLE": False,
     "KAKAO_SYNC_PURCHASED": True,
     "KAKAO_TODAY_GIFT": True,
+    "CHECK_PLAN_ENABLE": False,
     "NAVER_SPREAD_ENABLE": False,
     "NAVER_SPREAD_START": 5,
     "NAVER_SPREAD_END": 20,
@@ -282,6 +283,12 @@ class WebtoonManagerMetadataProvider(BaseMetadataProvider):
                  "구독 전으로 되돌립니다(직접 구독한 작품은 그대로 받음)."},
         {"key": "KAKAO_SYNC_PURCHASED", "label": "구매 작품 자동 동기화", "type": "checkbox", "default": True,
          "hint": "하루 1번 보관함 > 구매 목록의 작품을 등록하고 구매·대여 회차를 받습니다(로그인 쿠키 필요)."},
+        {"key": "CHECK_PLAN_ENABLE", "label": "신규 회차 확인 계획 (오전 기다무 / 오후 새 회차)", "type": "checkbox", "default": False,
+         "hint": "오전 05~12시: 1일 이상 기다무 대여권 (그 밖 시각에 충전되면 다음 오전으로). 오후 12~20시: 네이버·카카오 연재일 새 "
+                 "회차를 작품마다 정한 시각에 확인하고, 못 찾으면 12시간 뒤(다음 날 오전) 한 번 더. 1·2·3·6·12시간 기다무는 24시간 주기마다. "
+                 "남은 회차가 10개 이하(최신 10화는 대여권으로 못 엶)인 기다무 작품은 대여권 대신 오후에 새 회차만. 20~05시는 비웁니다. "
+                 "켜면 '새벽 사용'·'네이버 확인 시각' 설정 대신 이 규칙을 씁니다. 처음 켤 때는 python3 -m wtm.rebalance --apply 로 "
+                 "기존 충전 시각도 맞추세요."},
         {"key": "NAVER_SPREAD_ENABLE", "label": "네이버 작품별 확인 시각을 시간대에 고르게", "type": "checkbox", "default": False,
          "hint": "구독 작품마다 아래 시간대 안의 확인 시각을 정해(고르게 퍼지게) 연재일 그 시각에 받습니다. 전체 실행(실행 주기)에 "
                  "한꺼번에 몰리지 않습니다. 정확히 같은 간격으로 다시 놓으려면 python3 -m wtm.rebalance --apply"},
@@ -1653,7 +1660,8 @@ class WebtoonManagerMetadataProvider(BaseMetadataProvider):
     # (섹션, 그룹 제목, 키들) - 섹션은 설정 화면의 [공통][네이버][카카오페이지] 탭
     # (섹션, 그룹 제목, 키들[, 그룹 설명]) - 섹션은 설정 화면의 탭
     _SETTINGS_GROUPS = [
-        ("common", "자동 실행", ("ENABLE_SCHEDULER", "INTERVAL_MINUTES", "FINISHED_SCAN_HOUR", "NEW_EP_SCOPE")),
+        ("common", "자동 실행", ("ENABLE_SCHEDULER", "INTERVAL_MINUTES", "FINISHED_SCAN_HOUR", "NEW_EP_SCOPE",
+                                "CHECK_PLAN_ENABLE")),
         ("common", "구독 / 다운로드 대상", ("AUTO_SUBSCRIBE_NEW_TITLES", "INITIAL_EPISODES_LIMIT",
                                          "ALLOW_BL", "ALLOW_GL", "HIDE_BL_GL"),
          "매일+·기다무 작품과 이미 갖고 있는 작품을 받을지는 각 플랫폼 탭에서 정합니다."),

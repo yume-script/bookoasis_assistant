@@ -1,23 +1,23 @@
 # -*- coding: utf-8 -*-
-"""다운로드 시각을 하루에 고르게 다시 놓는 간이 스크립트 (기다무 대여권 일부를 포기하더라도)
+"""신규 회차 확인 계획대로 다운로드 시각을 다시 놓는 간이 스크립트 (기다무 대여권 일부를 포기하더라도)
 
     venv/bin/python -m wtm.rebalance                 # 미리 보기 (아무것도 안 바꿈)
     systemctl stop bookoasis_assistant
-    venv/bin/python -m wtm.rebalance --window 5 20 --apply         # 적용 (작품 기록 2개를 .bak-날짜시각으로 백업한 뒤)
+    venv/bin/python -m wtm.rebalance --apply         # 적용 (작품 기록 2개를 .bak-날짜시각으로 백업한 뒤)
     systemctl start bookoasis_assistant
 
-    --window 시작시 끝시: 일 단위 기다무·네이버를 펼칠 시간대 (기본 5 20 = 05:00~19:59)
+    --window 시작시 끝시: 1일 이상 기다무를 펼칠 오전 시간대 (기본 5 12 = 05:00~11:59)
 
-- 카카오 시간 단위 기다무(1·2·3·6·12시간 등): 주기별로 묶어 한 주기(24시간 안에서 반복) 안에 똑같은 간격으로.
-  예) 3시간 기다무 60개 → 3분마다 하나씩 충전, 그 뒤로도 3시간마다 같은 자리.
-- 카카오 일 단위 기다무(1·2·3·7일): 05~20시(--window)에 똑같은 간격으로. FF(rclone) 지연이 생기는 시간대를 피한다.
-  2·3·7일 기다무는 충전되는 날짜는 그대로 두고 그날 안의 시각만 바꾼다(날마다 나뉘어 들어오게).
-- 네이버(하루 1번 확인): 구독 작품마다 05~20시 안의 확인 시각을 정해(연재 요일별로 고르게) 그 시각에 받는다.
+- 카카오 1·2·3·6·12시간 기다무 (남은 회차가 10개 넘음): 주기별로 한 주기 안에 같은 간격 - 24시간 내내 주기마다.
+- 카카오 1·2·3·7일 기다무 (남은 회차가 10개 넘음): 오전 05~12시에 같은 간격. 2·3·7일은 날짜는 그대로 시각만.
+- 새 회차 (네이버 연재 작품, 카카오 구독·구매 작품 - 기다무가 아니거나 남은 회차가 10개 이하인 것 포함):
+  작품마다 오후 12~20시 안의 확인 시각을 연재 요일별로 고르게 정한다. 그 시각에 못 찾으면 12시간 뒤(다음 날 오전) 한 번 더.
+- 20~05시는 비운다 (FF·rclone 업로드 지연 시간대).
 
 카카오는 실제 충전보다 앞당길 수 없으므로(거절됨) 자리가 충전보다 이르면 다음 주기(일 단위면 다음 날)의 같은 자리로
 보낸다 → 그만큼 대여권을 한 번 포기한다(한 작품당 최대 한 주기). 한 작품의 계정들은 같은 시각으로 맞춘다.
---apply는 설정도 바꾼다: 새벽 사용 끔, 매일 1·2·3·7일 기다무를 같은 시간대에 유지(완결 목록 수집 때),
-네이버 작품별 확인 시각 켬(같은 시간대). 작업 프로세스가 작품 기록을 메모리에 들고 있으므로 서비스를 멈추고 실행한다.
+--apply는 설정도 바꾼다: 신규 회차 확인 계획 켬, 새벽 사용 끔, 매일 1일 이상 기다무를 오전에 유지.
+작업 프로세스가 작품 기록을 메모리에 들고 있으므로 서비스를 멈추고 실행한다.
 """
 import os
 import shutil
@@ -136,27 +136,31 @@ def _hist(rows):
 def main(argv):
     from wtm import host, kakao_pipeline as kp, state_store as ss, worker_ctl
     apply = "--apply" in argv
-    start_h, end_h = 5, 20
+    from wtm.pipeline import PLAN_AM, PLAN_PM
+    start_h, end_h = PLAN_AM          # 1일 이상 기다무: 오전 (신규 회차 확인 계획)
+    pm_a, pm_b = PLAN_PM              # 새 회차(네이버·카카오 연재일): 오후
     if "--window" in argv:
         i = argv.index("--window")
         try:
             start_h, end_h = int(argv[i + 1]) % 24, int(argv[i + 2]) % 24
         except (IndexError, ValueError):
-            print("사용법: python3 -m wtm.rebalance --window 시작시 끝시 [--apply]   (예: --window 5 20)")
+            print("사용법: python3 -m wtm.rebalance --window 시작시 끝시 [--apply]   (예: --window 5 12)")
             return 2
     if apply and "--force" not in argv and worker_ctl.status(timeout=0.5):
         print("웹툰 작업 프로세스가 돌고 있습니다. 먼저 systemctl stop bookoasis_assistant 로 멈추세요 "
               "(돌고 있으면 메모리의 작품 기록이 고친 내용을 덮어씀).")
         return 1
-    cfg = _cfg()
+    cfg = dict(_cfg(), CHECK_PLAN_ENABLE=True)   # 계획 기준으로 대상 고르기 (남은 회차 10개 이하는 대여권 대상 아님)
     now = time.time()
     ktitles = ss.load_kakao_titles()
     ntitles = ss.load_titles()
     kplan = kakao_plan(cfg, ktitles, start_h, end_h, now)
-    nplan = naver_plan(cfg, ntitles, start_h, end_h)
+    nplan = naver_plan(cfg, ntitles, pm_a, pm_b)
+    kslots = naver_plan(cfg, {sid: t for sid, t in ktitles.items() if t.get("purchased") or t.get("subscribed")}, pm_a, pm_b)
 
-    print("■ 다운로드 시각 다시 놓기 (지금 %s) - 일 단위·네이버: %02d:00~%02d:59, 시간 단위 기다무: 24시간"
-          % (time.strftime("%m-%d %H:%M"), start_h, (end_h - 1) % 24))
+    print("■ 신규 회차 확인 계획대로 다시 놓기 (지금 %s)\n  오전 %02d:00~%02d:59 1일 이상 기다무 대여권 · 오후 %02d:00~%02d:59 새 회차"
+          "(네이버·카카오 연재일) · 1~12시간 기다무는 24시간"
+          % (time.strftime("%m-%d %H:%M"), start_h, (end_h - 1) % 24, pm_a, (pm_b - 1) % 24))
     groups = {}
     for sid, (_p, cur, slot, pm) in kplan.items():
         g = groups.setdefault(pm, {"n": 0, "before": Counter(), "after": Counter(), "lost": 0, "delay": 0.0})
@@ -184,22 +188,22 @@ def main(argv):
     nb = Counter()
     from wtm import pipeline as pl
     for tid in nplan:
-        m = pl.naver_slot_min(dict(cfg, NAVER_SPREAD_ENABLE=True, NAVER_SPREAD_START=start_h, NAVER_SPREAD_END=end_h),
-                              dict(ntitles[tid], check_slot_min=nplan[tid]))
+        m = pl.naver_slot_min(cfg, dict(ntitles[tid], check_slot_min=nplan[tid]))
         nb[m // 60] += 1
     if nplan:
         print("\n  네이버 구독 %d개 확인 시각(시): %s" % (len(nplan), " ".join("%02d시 %d" % (h, nb[h]) for h in range(24) if nb[h])))
+    if kslots:
+        print("  카카오 %d개 새 회차 확인 시각: %02d~%02d시에 연재 요일별로 고르게" % (len(kslots), pm_a, (pm_b - 1) % 24))
 
-    settings = {"WAITFREE_NIGHT_ENABLE": False, "WAITFREE_SPREAD_ENABLE": True,
+    settings = {"CHECK_PLAN_ENABLE": True, "WAITFREE_NIGHT_ENABLE": False, "WAITFREE_SPREAD_ENABLE": True,
                 "WAITFREE_SPREAD_START": start_h, "WAITFREE_SPREAD_END": end_h,
-                "NAVER_SPREAD_ENABLE": True, "NAVER_SPREAD_START": start_h, "NAVER_SPREAD_END": end_h}
+                "NAVER_SPREAD_ENABLE": True, "NAVER_SPREAD_START": pm_a, "NAVER_SPREAD_END": pm_b}
     print("\n  설정: " + ", ".join("%s=%s" % kv for kv in settings.items()))
     if not apply:
         print("\n미리 보기입니다. 사용법 예시:")
         print("  venv/bin/python -m wtm.rebalance                 # 미리 보기 (아무것도 안 바꿈)")
         print("  systemctl stop bookoasis_assistant")
-        print("  venv/bin/python -m wtm.rebalance --window %d %d --apply         # 적용 (작품 기록 2개를 .bak-날짜시각으로 백업한 뒤)"
-              % (start_h, end_h))
+        print("  venv/bin/python -m wtm.rebalance --apply         # 적용 (작품 기록 2개를 .bak-날짜시각으로 백업한 뒤)")
         print("  systemctl start bookoasis_assistant")
         return 0
     stamp = time.strftime("%Y%m%d%H%M%S")
@@ -210,6 +214,8 @@ def main(argv):
         ss.upsert_kakao_title({sid: v[0] for sid, v in kplan.items()})
     if nplan:
         ss.upsert_title({tid: {"check_slot_min": m} for tid, m in nplan.items()})
+    if kslots:
+        ss.upsert_kakao_title({sid: {"check_slot_min": m} for sid, m in kslots.items()})
     ss.flush_titles()
     cur = host.load_settings()
     cur.update(settings)

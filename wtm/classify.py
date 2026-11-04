@@ -118,6 +118,10 @@ def classify(cfg=None, now=None):
         else:
             why = _kakao_reason(cfg, t, sid, cands, now)
             add(platform, (pidx, 1, pm), "%s · %s → 연재일 하루 1번" % (label, why), None, serial_per_day(t), 0, sid, t)
+    if pl.plan_enabled(cfg):   # 신규 회차 확인 계획: 1일 이상 기다무는 오전, 새 회차는 연재일 오후
+        for g in groups.values():
+            g["name"] = (g["name"].replace("하루 1번 대여권", "오전(%02d~%02d시) 대여권" % pl.PLAN_AM)
+                         .replace("연재일 하루 1번", "연재일 오후(%02d~%02d시) 확인" % pl.PLAN_PM))
     out = sorted(groups.values(), key=lambda g: (g["order"], g["name"]))
     for g in out:
         g["titles"].sort(key=lambda x: str(x[1]))
