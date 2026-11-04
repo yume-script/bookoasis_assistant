@@ -2408,6 +2408,38 @@
       });
     });
   }
+  // 입구 벽·안쪽 벽에 이 층 책 표지를 포스터처럼 (무작위, 누르면 작품 카드)
+  var posterGeo = new T.PlaneGeometry(1, 1); posterGeo.userData.shared = true;
+  function addPosters(fl, seed) {
+    if (!layout) return;
+    var r = rnd(seed * 211 + 5), pool = [];
+    fl.libs.forEach(function (lib) { lib.series.forEach(function (s) { if (s.last) pool.push([lib, s]); }); });
+    if (!pool.length) return;
+    var L = layout, PW = 1.5, PH = 2.15, frame = 0.07;
+    function poster(x, z, rotY) {
+      var pick0 = pool.splice(Math.floor(r() * pool.length), 1)[0];
+      if (!pick0) return;
+      var lib = pick0[0], s = pick0[1], base = colorOf(s.title);
+      var mat = new T.MeshStandardMaterial({ color: base, roughness: 0.55 });
+      var b = { key: lib.db_type + ':' + s.last, title: s.title || '(제목 없음)', count: s.count, lib: lib.name, db: lib.db_type,
+                front: mat, base: base, state: 2, kind: 'poster' };
+      var g = new T.Group(); g.position.set(x, 2.55 + (r() - 0.5) * 0.25, z); g.rotation.y = rotY; parent.add(g);
+      var back = new T.Mesh(unitBox, M.black); back.scale.set(PW + frame * 2, PH + frame * 2, 0.04); back.position.z = 0.02; g.add(back);
+      var m = new T.Mesh(posterGeo, mat); m.scale.set(PW, PH, 1); m.position.z = 0.045; m.userData.book = b; g.add(m);
+      b.mesh = m; books.push(b);
+      loader.load('api/lib3d/cover?k=' + encodeURIComponent(b.key), function (tex) {
+        tex.encoding = T.sRGBEncoding; tex.anisotropy = 8; mat.map = tex; mat.color.set(0xffffff); mat.needsUpdate = true; b.cover = true;
+      }, undefined, function () { b.state = 3; titleCover(b); });
+    }
+    var step = 2.6, x;
+    // 입구 벽 (안쪽을 보게, 문·엘리베이터 앞은 비움)
+    for (x = -L.w / 2 + 3.5; x < L.w / 2 - 2; x += step + r() * 0.8) {
+      if (Math.abs(x) < 3.2) continue;
+      if (r() < 0.85) poster(x, L.front - 0.12, Math.PI);
+    }
+    // 안쪽 벽
+    for (x = -L.w / 2 + 2.5; x < L.w / 2 - 2; x += step + r() * 0.8) if (r() < 0.85) poster(x, L.back + 0.12, 0);
+  }
   function buildFloor(i) {
     if (floorGroup) { scene.remove(floorGroup); disposeGroup(floorGroup); }
     books = []; booths = [];
@@ -2420,6 +2452,7 @@
     addBuilding(fl, COLS, Math.ceil(fl.libs.length / COLS));
     applyOutside.force = true; applyOutside();
     fl.libs.forEach(function (lib, j) { addSection(lib, j); });
+    addPosters(fl, i + 1);
     spawnPeople(fl, i + 1);
     booths.forEach(function (b) { b.floor = i; });
     fl.booths = booths.slice();
