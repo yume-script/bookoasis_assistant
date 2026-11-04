@@ -470,7 +470,10 @@
       keepShared(c.scene); HUMAN.trooper = c.scene; HUMAN.trooperClip = clip; respawn();
     }, undefined, function (e) { console.warn('3D 서재 스톰트루퍼:', e); });
     cl.load(COLLADA_BASE + 'elf/elf.dae', function (c) {
-      keepShared(c.scene); HUMAN.elf = c.scene; respawn();
+      keepShared(c.scene); HUMAN.elf = c.scene;
+      try { HUMAN.elfRig = rigElf(c.scene); if (HUMAN.elfRig) HUMAN.elfRig.geo.userData.shared = true; }
+      catch (e) { console.warn('3D 서재 엘프 뼈대:', e); HUMAN.elfRig = null; }   // 못 심으면 받침대째 피규어로
+      respawn();
     }, undefined, function (e) { console.warn('3D 서재 엘프:', e); });
   }
   function trooperHuman(r) {   // 총을 든 채 걷는 동작 하나뿐이라 멈추지 않고 계속 순찰한다
@@ -482,7 +485,159 @@
     walk.play(); mixer.update(r() * 3);
     return { g: g, mixer: mixer, acts: { walk: walk }, clips: {}, model: model, r: r, phase: r() * 6, sc: 1, walkW: 1, alwaysWalk: true };
   }
-  function elfStatue() {   // 받침대가 붙은 실물 크기 피규어
+  // ── 엘프 피규어를 걷는 사람으로: 뼈대 없는 정지 모형에 다리 뼈대를 직접 심는다 ──
+  // 받침대를 떼고, 치마 아래 다리를 이어진 덩어리별로 왼·오른 다리로 나눠 허벅지·종아리 뼈에 묶는다(나머지는 골반에 붙어 함께 움직임).
+  // 원래 자세가 한 발 앞·한 발 뒤인 걷는 모습이라 그 자세를 기준으로 다리를 앞뒤로 흔든다.
+  function rigElf(src) {
+    src.updateMatrixWorld(true);
+    var mesh = null; src.traverse(function (o) { if (o.isMesh && !mesh) mesh = o; });
+    if (!mesh) return null;
+    var g0 = mesh.geometry.index ? mesh.geometry.toNonIndexed() : mesh.geometry.clone();
+    g0.applyMatrix4(mesh.matrixWorld);
+    var P = g0.attributes.position, n = P.count, tri = n / 3;
+    // 같은 자리 꼭짓점을 하나로 보고 삼각형끼리 이어진 덩어리(union-find)를 만든다
+    var key = {}, vid = new Int32Array(n), nid = 0;
+    for (var i = 0; i < n; i++) {
+      var k = Math.round(P.getX(i) * 1e4) + ',' + Math.round(P.getY(i) * 1e4) + ',' + Math.round(P.getZ(i) * 1e4);
+      vid[i] = key[k] === undefined ? (key[k] = nid++) : key[k];
+    }
+    var par = new Int32Array(nid); for (i = 0; i < nid; i++) par[i] = i;
+    function find(a) { while (par[a] !== a) { par[a] = par[par[a]]; a = par[a]; } return a; }
+    function uni(a, b) { a = find(a); b = find(b); if (a !== b) par[a] = b; }
+    var box = new T.Box3().setFromBufferAttribute(P), H = box.max.y - box.min.y;
+    // 1) 받침대: 바닥에 붙은 납작한 덩어리들
+    for (var t = 0; t < tri; t++) { uni(vid[t * 3], vid[t * 3 + 1]); uni(vid[t * 3], vid[t * 3 + 2]); }
+    var cb = {};
+    for (i = 0; i < n; i++) {
+      var r0 = find(vid[i]), c = cb[r0] || (cb[r0] = { minX: 1e9, maxX: -1e9, minY: 1e9, maxY: -1e9 });
+      c.minX = Math.min(c.minX, P.getX(i)); c.maxX = Math.max(c.maxX, P.getX(i));
+      c.minY = Math.min(c.minY, P.getY(i)); c.maxY = Math.max(c.maxY, P.getY(i));
+    }
+    var base = new Uint8Array(n);   // 덩어리를 다시 나누기 전에 받침대 꼭짓점을 표시해 둔다
+    for (i = 0; i < n; i++) { var cq = cb[find(vid[i])]; base[i] = cq.maxY < box.min.y + H * 0.085 ? 1 : 0; }   // 바닥 가까이 납작한 덩어리 = 받침대(원판·무늬)
+    function isBase(i) { return base[i] === 1; }
+    // 받침대 위(발바닥)부터 키를 다시 잰다
+    var floorY = 1e9, topY = -1e9;
+    for (i = 0; i < n; i++) if (!isBase(i)) { floorY = Math.min(floorY, P.getY(i)); topY = Math.max(topY, P.getY(i)); }
+    var h = topY - floorY;
+    // 2) 치마 아래 다리: 사타구니보다 낮은 삼각형만으로 덩어리를 다시 나눈다
+    var crotch = floorY + h * 0.435;
+    for (i = 0; i < nid; i++) par[i] = i;
+    for (t = 0; t < tri; t++) {
+      var a = t * 3;
+      if (isBase(a)) continue;
+      if (P.getY(a) < crotch && P.getY(a + 1) < crotch && P.getY(a + 2) < crotch) { uni(vid[a], vid[a + 1]); uni(vid[a], vid[a + 2]); }
+    }
+    var comp = {};
+    for (i = 0; i < n; i++) {
+      if (isBase(i) || P.getY(i) >= crotch) continue;
+      var rr = find(vid[i]), cc = comp[rr] || (comp[rr] = { n: 0, x: 0, y: 0, z: 0, id: rr });
+      cc.n++; cc.x += P.getX(i); cc.y += P.getY(i); cc.z += P.getZ(i);
+    }
+    var comps = Object.keys(comp).map(function (k) { var c = comp[k]; c.x /= c.n; c.y /= c.n; c.z /= c.n; return c; })
+      .sort(function (a, b) { return b.n - a.n; });
+    if (comps.length < 2) return null;
+    var legA = comps[0], legB = comps[1];
+    var side = {}; side[legA.id] = legA.x > legB.x ? 0 : 1; side[legB.id] = 1 - side[legA.id];   // 0 = 모형의 왼쪽(+x)
+    // 작은 덩어리(부츠·밴드 등)는 가까운 다리로
+    var legPts = [[], []];
+    for (i = 0; i < n; i += 7) {
+      var ri = find(vid[i]);
+      if (side[ri] !== undefined && P.getY(i) < crotch) legPts[side[ri]].push([P.getX(i), P.getY(i), P.getZ(i)]);
+    }
+    comps.slice(2).forEach(function (c) {
+      var best = 0, bd = 1e9;
+      [0, 1].forEach(function (s) {
+        legPts[s].forEach(function (q) { var d = (q[0] - c.x) * (q[0] - c.x) + (q[1] - c.y) * (q[1] - c.y) + (q[2] - c.z) * (q[2] - c.z); if (d < bd) { bd = d; best = s; } });
+      });
+      side[c.id] = best;
+    });
+    // 3) 관절 위치: 엉덩이(사타구니 바로 아래 평균), 무릎(다리 가운데 높이 평균)
+    var knee = floorY + (crotch - floorY) * 0.5 + h * 0.02;
+    var hipJ = [new T.Vector3(), new T.Vector3()], kneeJ = [new T.Vector3(), new T.Vector3()], hc = [0, 0], kc = [0, 0];
+    for (i = 0; i < n; i++) {
+      var s = side[find(vid[i])], y = P.getY(i);
+      if (s === undefined || y >= crotch) continue;
+      if (y > crotch - h * 0.05) { hipJ[s].x += P.getX(i); hipJ[s].z += P.getZ(i); hc[s]++; }
+      if (Math.abs(y - knee) < h * 0.015) { kneeJ[s].x += P.getX(i); kneeJ[s].z += P.getZ(i); kc[s]++; }
+    }
+    [0, 1].forEach(function (s) {
+      hipJ[s].set(hipJ[s].x / Math.max(1, hc[s]), crotch, hipJ[s].z / Math.max(1, hc[s]));
+      kneeJ[s].set(kneeJ[s].x / Math.max(1, kc[s]), knee, kneeJ[s].z / Math.max(1, kc[s]));
+    });
+    // 4) 받침대를 뺀 새 형상 + 뼈 무게
+    var keep = [];
+    g0.groups.forEach(function (gr, gi) {
+      for (var tt = gr.start / 3; tt < (gr.start + gr.count) / 3; tt++) if (!isBase(tt * 3)) keep.push([tt, gr.materialIndex]);
+    });
+    if (!g0.groups.length) for (t = 0; t < tri; t++) if (!isBase(t * 3)) keep.push([t, 0]);
+    var names = ['position', 'normal', 'uv'].filter(function (nm) { return g0.attributes[nm]; });
+    var arrs = {}, m = keep.length * 3;
+    names.forEach(function (nm) { arrs[nm] = new Float32Array(m * g0.attributes[nm].itemSize); });
+    var sIdx = new Uint16Array(m * 4), sW = new Float32Array(m * 4);
+    var geo = new T.BufferGeometry(), lastMat = -1, gStart = 0;
+    function smooth(e0, e1, x) { var tq = Math.max(0, Math.min(1, (x - e0) / (e1 - e0))); return tq * tq * (3 - 2 * tq); }
+    keep.forEach(function (kt, j) {
+      if (kt[1] !== lastMat) { if (lastMat >= 0) geo.addGroup(gStart, j * 3 - gStart, lastMat); lastMat = kt[1]; gStart = j * 3; }
+      for (var v = 0; v < 3; v++) {
+        var src = kt[0] * 3 + v, dst = j * 3 + v;
+        names.forEach(function (nm) {
+          var at = g0.attributes[nm], sz = at.itemSize;
+          for (var q = 0; q < sz; q++) arrs[nm][dst * sz + q] = at.array[src * sz + q];
+        });
+        // 뼈: 0 골반(몸·치마·팔·머리), 1/2 왼 허벅지/종아리, 3/4 오른 허벅지/종아리
+        var sd = side[find(vid[src])], yy = P.getY(src), o = dst * 4;
+        if (sd === undefined || yy >= crotch) { sIdx[o] = 0; sW[o] = 1; continue; }
+        var up = 1 + sd * 2, lo = up + 1;
+        var wl = smooth(knee + h * 0.03, knee - h * 0.03, yy);          // 무릎 아래로 갈수록 종아리
+        var wh = smooth(crotch - h * 0.06, crotch, yy) * 0.6;           // 사타구니 근처는 골반과 섞는다
+        sIdx[o] = up; sW[o] = (1 - wl) * (1 - wh);
+        sIdx[o + 1] = lo; sW[o + 1] = wl * (1 - wh);
+        sIdx[o + 2] = 0; sW[o + 2] = wh;
+      }
+    });
+    geo.addGroup(gStart, m - gStart, lastMat);
+    names.forEach(function (nm) { geo.setAttribute(nm, new T.BufferAttribute(arrs[nm], g0.attributes[nm].itemSize)); });
+    geo.setAttribute('skinIndex', new T.Uint16BufferAttribute(sIdx, 4));
+    geo.setAttribute('skinWeight', new T.Float32BufferAttribute(sW, 4));
+    geo.translate(0, -floorY, 0);
+    hipJ.forEach(function (v) { v.y -= floorY; }); kneeJ.forEach(function (v) { v.y -= floorY; });
+    geo.computeBoundingSphere();
+    var mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+    return { geo: geo, mats: mats.map(function (mt) { var c2 = mt.clone(); c2.skinning = true; c2.userData.keep = true; return c2; }),
+             hip: hipJ, knee: kneeJ, crotch: crotch - floorY, h: h };
+  }
+  // 묶어 둔 엘프 하나를 만든다 (뼈대는 사람마다 따로)
+  function elfWalkerModel(rig) {
+    var root = new T.Bone(), pelvis = new T.Bone(); root.add(pelvis); pelvis.position.set(0, rig.crotch, 0);
+    var bones = [pelvis], legs = [];
+    [0, 1].forEach(function (s) {
+      var up = new T.Bone(), lo = new T.Bone();
+      up.position.copy(rig.hip[s]).sub(pelvis.position); pelvis.add(up);
+      lo.position.copy(rig.knee[s]).sub(rig.hip[s]); up.add(lo);
+      bones.push(up, lo); legs.push([up, lo]);
+    });
+    var sk = new T.SkinnedMesh(rig.geo, rig.mats.length > 1 ? rig.mats : rig.mats[0]);
+    sk.add(root); sk.bind(new T.Skeleton(bones));
+    sk.castShadow = true; sk.frustumCulled = false;
+    return { mesh: sk, root: root, pelvis: pelvis, legs: legs, crotch: rig.crotch };
+  }
+  // 걷기: 다리를 원래 자세 기준으로 앞뒤로 흔들고, 앞으로 나오는 다리의 무릎을 굽힌다. 골반은 살짝 오르내리고 비튼다.
+  function elfPose(m, ph, amt) {
+    var s0 = Math.sin(ph), s1 = Math.sin(ph + Math.PI);
+    m.legs[0][0].rotation.x = -0.32 * s0 * amt; m.legs[1][0].rotation.x = -0.32 * s1 * amt;
+    m.legs[0][1].rotation.x = 0.55 * Math.max(0, Math.sin(ph + 1.1)) * amt;
+    m.legs[1][1].rotation.x = 0.55 * Math.max(0, Math.sin(ph + 1.1 + Math.PI)) * amt;
+    m.pelvis.position.y = m.crotch + Math.abs(Math.cos(ph)) * m.crotch * 0.025 * amt;
+    m.pelvis.rotation.y = 0.06 * s0 * amt;
+    m.pelvis.rotation.z = 0.025 * s0 * amt;
+  }
+  function elfWalker(r) {   // 받침대를 떼고 다리 뼈대를 심은 엘프 (다른 손님처럼 통로를 걷는다)
+    var m = elfWalkerModel(HUMAN.elfRig), g = new T.Group();
+    m.mesh.scale.setScalar(0.25); g.add(m.mesh);
+    return { g: g, elf: m, r: r, phase: r() * 6, sc: 1, walkW: 0 };
+  }
+  function elfStatue() {   // 받침대가 붙은 실물 크기 피규어 (뼈대를 못 심었을 때)
     var e = HUMAN.elf.clone();
     e.traverse(function (o) { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
     var g = new T.Group(); e.scale.setScalar(0.25); g.add(e);
@@ -826,7 +981,12 @@
       nextNode(tp);
     }
     // 엘프 피규어: 들어서면 바로 보이는 로비 오른쪽 앞, 입구를 바라보게 전시
-    if (HUMAN.elf) place(elfStatue(), 4, L.front - 8.5, -0.3);
+    if (HUMAN.elfRig) {   // 엘프: 로비에서 시작해 통로를 걸어 다닌다
+      var ef = elfWalker(rnd(seed * 163 + 17)), li4 = Math.floor(r() * lanes.length);
+      ef.kind = 'walk'; ef.node = [li4, 0]; ef.speed = 1.0;
+      place(ef, lanes[li4], rowsZ[0], 0);
+      nextNode(ef);
+    } else if (HUMAN.elf) place(elfStatue(), 4, L.front - 8.5, -0.3);
     // 안내 데스크 직원
     var staff = makePerson(seed * 13 + 7);
     staff.kind = 'staff'; place(staff, L.w / 2 - 5.5, L.front - 6.35, 0);
@@ -865,6 +1025,11 @@
     // 걷기 ↔ 서 있기를 부드럽게 섞는다
     if (p.alwaysWalk) { p.mixer.update(dt * 0.9); return; }
     p.walkW += ((moving ? 1 : 0) - p.walkW) * Math.min(1, dt * 4);
+    if (p.elf) {   // 엘프는 직접 심은 다리 뼈대를 걸음에 맞춰 흔든다 (한 걸음 주기 약 0.95m)
+      p.phase += dt * p.speed * p.walkW * (Math.PI * 2 / 0.95);
+      elfPose(p.elf, p.phase, p.walkW);
+      return;
+    }
     if (p.acts.walk) { p.acts.walk.setEffectiveWeight(p.walkW); p.acts.walk.timeScale = p.speed / 1.25; }
     if (p.acts.idle) p.acts.idle.setEffectiveWeight(1 - p.walkW);
     p.mixer.update(dt);
@@ -874,7 +1039,7 @@
   function updatePeople(dt, now) {
     for (var i = 0; i < people.length; i++) {
       var p = people[i];
-      if (p.mixer) { updateHuman(p, dt, now); continue; }
+      if (p.mixer || p.elf) { updateHuman(p, dt, now); continue; }
       if (p.kind === 'walk') {
         if (p.pause > 0) {
           p.pause -= dt;
