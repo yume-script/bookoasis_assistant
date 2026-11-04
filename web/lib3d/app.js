@@ -369,7 +369,7 @@
   }
 
   // ── 사람들: 통로를 걷는 손님, 서가 앞에서 책을 고르는 손님, 서서 읽는 손님, 벤치에 앉은 손님, 안내 직원 ──
-  // 관절 모형(Xbot)을 받으면 그것으로, 못 받으면 둥근 몸통·원통 팔다리로 만든 단순한 사람. 누를 수 없고 걸어 다니는 사람과 부딪히지 않는다.
+  // 옷 입은 사람 모형(Michelle)·관절 모형(Xbot)을 받으면 그것으로, 못 받으면 둥근 몸통·원통 팔다리로 만든 단순한 사람. 누를 수 없고 걸어 다니는 사람과 부딪히지 않는다.
   var people = [], layout = null;
   var SKIN = [0xf1c9a5, 0xe5b48e, 0xc99067, 0x9c6845, 0xf6d9c4];
   var CLOTH = [0x2f3b4c, 0x7a3b3b, 0xe4e0d8, 0x3f5a4a, 0x9b8f7a, 0x26292f, 0x5e6f86, 0xb07a4f, 0x6d5a7e, 0xcfc7b8, 0x8a9a6b];
@@ -426,25 +426,97 @@
     g.scale.setScalar(sc);
     return { g: g, body: body, legL: legL, legR: legR, armL: armL, armR: armR, head: head, r: r, phase: r() * 6, sc: sc };
   }
-  // ── 관절이 있는 사람 모형 (three.js 예제의 Xbot, 걷기·서 있기 동작 포함) ──
-  // 받지 못하면 위의 단순한 사람으로 그대로 둔다.
-  var HUMAN_URL = 'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r128/examples/models/gltf/Xbot.glb';
-  var HUMAN = { gltf: null, clips: {} };
+  // ── 사람 모형: 옷 입은 사람(three.js 예제의 Michelle)에 Xbot의 걷기·서 있기 동작을 옮겨 입힌다 ──
+  // Michelle을 못 받으면 Xbot 마네킹으로, 둘 다 못 받으면 위의 단순한 사람으로 그대로 둔다.
+  var MODEL_BASE = 'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r160/examples/models/gltf/';
+  var HUMAN = { gltf: null, dressed: null, clips: {}, dclips: {}, looks: [], beachMat: null };
+  var POSES = ['sad_pose', 'agree', 'headShake'];   // 덧입히는 동작(고개 숙이기·끄덕임·도리도리)
+  // 손님 옷차림: 바지·윗옷·피부색
+  var LOOKS = [
+    { pants: 0x2f4a6e, top: 0xf2efe8, skin: 0xe8b996 }, { pants: 0x1e1f22, top: 0x8c2f39, skin: 0xc68a62 },
+    { pants: 0xb8a888, top: 0x2d3e57, skin: 0xf1cdb0 }, { pants: 0x4b5a3a, top: 0xd9c9a8, skin: 0x8d5a3b },
+    { pants: 0xe8e4dc, top: 0x1d1d1f, skin: 0xe0ac86 }, { pants: 0x3a4352, top: 0x6f8fa8, skin: 0xf3d2b8 },
+    { pants: 0x5b4636, top: 0xe9e2d0, skin: 0xd09a72 }, { pants: 0x26324a, top: 0xc9a227, skin: 0xb07650 },
+  ];
+  function respawn() {   // 지금 층의 사람들을 새 모형으로 다시 세운다
+    if (cur < 0 || !floorGroup) return;
+    people.forEach(function (q) { floorGroup.remove(q.g); disposeGroup(q.g); });
+    parent = floorGroup; spawnPeople(floors[cur], cur + 1); parent = scene;
+  }
   function loadHumans() {
     if (!T.GLTFLoader || !T.SkeletonUtils) return;
-    new T.GLTFLoader().load(HUMAN_URL, function (gltf) {
+    var loader = new T.GLTFLoader();
+    loader.load(MODEL_BASE + 'Xbot.glb', function (gltf) {
       gltf.scene.traverse(function (o) { if (o.geometry) o.geometry.userData.shared = true; });
-      gltf.animations.forEach(function (c) { HUMAN.clips[c.name] = c; });
-      ['sad_pose', 'agree', 'headShake'].forEach(function (n) {   // 덧입히는 동작(고개 숙이기·끄덕임·도리도리)
-        if (HUMAN.clips[n]) { var c = HUMAN.clips[n].clone(); T.AnimationUtils.makeClipAdditive(c); HUMAN.clips[n] = c; }
+      var raw = {};
+      gltf.animations.forEach(function (c) { raw[c.name] = c; HUMAN.clips[c.name] = c; });
+      POSES.forEach(function (n) {
+        if (raw[n]) { var c = raw[n].clone(); T.AnimationUtils.makeClipAdditive(c); HUMAN.clips[n] = c; }
       });
       HUMAN.gltf = gltf;
-      if (cur >= 0 && floorGroup) {   // 지금 층의 사람들을 새 모형으로 다시 세운다
-        people.forEach(function (q) { floorGroup.remove(q.g); disposeGroup(q.g); });
-        parent = floorGroup; spawnPeople(floors[cur], cur + 1); parent = scene;
-      }
+      respawn();
+      loader.load(MODEL_BASE + 'Michelle.glb', function (dg) {
+        try {
+          var base = null;
+          dg.scene.traverse(function (o) { if (o.geometry) o.geometry.userData.shared = true; if (o.isMesh) base = o.material; });
+          ['idle', 'walk'].concat(POSES).forEach(function (n) {
+            if (!raw[n]) return;
+            var c = retargetClip(gltf.scene, dg.scene, raw[n]);
+            if (POSES.indexOf(n) >= 0) T.AnimationUtils.makeClipAdditive(c);
+            HUMAN.dclips[n] = c;
+          });
+          function mat(look) {
+            var m = base.clone(); m.map = recolorSkin(base.map.image, look); m.userData.keep = true; return m;
+          }
+          HUMAN.looks = LOOKS.map(mat);
+          HUMAN.beachMat = mat({ pants: 0xe9b995, top: 0xd92f45, skin: 0xe9b995, beach: true });
+          HUMAN.dressed = dg;
+          respawn();
+        } catch (e) { HUMAN.dressed = null; }
+      }, undefined, function () { /* 못 받으면 마네킹 그대로 */ });
     }, undefined, function () { /* 못 받으면 단순한 사람 그대로 */ });
   }
+  // ── 옷 입은 사람: Michelle(glTF)에 Xbot의 걷기·서 있기 동작을 옮겨 입힌다 ──
+  function boneMap(root) { var o = {}; root.updateMatrixWorld(true); root.traverse(function (b) { if (b.isBone) o[b.name] = b; }); return o; }
+  function worldQ(o) { var q = new T.Quaternion(); o.getWorldQuaternion(q); return q; }
+  // 두 모형의 기본 자세(T자) 차이를 뼈마다 앞뒤로 보정해 회전 동작만 옮긴다 (위치 이동 트랙은 버림: 제자리 걷기)
+  function retargetClip(srcRoot, dstRoot, clip) {
+    var S = boneMap(srcRoot), D = boneMap(dstRoot), tracks = [];
+    clip.tracks.forEach(function (tr) {
+      var mm = /^(.*)\.quaternion$/.exec(tr.name); if (!mm) return;
+      var sb = S[mm[1]], db = D[mm[1]]; if (!sb || !db) return;
+      var P = worldQ(db.parent).invert().multiply(worldQ(sb.parent)), Q = worldQ(sb).invert().multiply(worldQ(db));
+      var v = tr.values.slice(), q = new T.Quaternion();
+      for (var i = 0; i < v.length; i += 4) { q.fromArray(v, i); q.premultiply(P).multiply(Q); q.toArray(v, i); }
+      tracks.push(new T.QuaternionKeyframeTrack(tr.name, tr.times, v));
+    });
+    return new T.AnimationClip(clip.name, clip.duration, tracks);
+  }
+  function hsl2rgb(h, s, l) { var c = new T.Color(); c.setHSL(h, s, l); return [c.r * 255, c.g * 255, c.b * 255]; }
+  // 바지(노란색)·윗옷(회색)·피부(갈색)를 골라 다시 칠한 옷 무늬를 만든다
+  function recolorSkin(img, look) {
+    var w = img.width, h = img.height, cv = document.createElement('canvas'); cv.width = w; cv.height = h;
+    var cx = cv.getContext('2d'); cx.drawImage(img, 0, 0);
+    var d = cx.getImageData(0, 0, w, h), a = d.data, hsl = {}, col = new T.Color();
+    var pants = new T.Color(look.pants).getHSL({}), top = new T.Color(look.top).getHSL({}), skin = new T.Color(look.skin).getHSL({});
+    for (var i = 0; i < a.length; i += 4) {
+      col.setRGB(a[i] / 255, a[i + 1] / 255, a[i + 2] / 255); col.getHSL(hsl);
+      var out = null;
+      if (hsl.h > 0.11 && hsl.h < 0.19 && hsl.s > 0.45 && hsl.l > 0.3) {   // 노란 바지
+        out = hsl2rgb(pants.h, pants.s, Math.min(0.95, pants.l * hsl.l / 0.55));
+      } else if (hsl.s < 0.1 && hsl.l > 0.3 && hsl.l < 0.62) {   // 회색 윗옷
+        out = hsl2rgb(top.h, top.s, Math.min(0.95, top.l * hsl.l / 0.45));
+      } else if (hsl.h > 0.02 && hsl.h < 0.1 && hsl.s > 0.25 && hsl.s < 0.75 && hsl.l > 0.12 && hsl.l < 0.6) {   // 피부
+        out = hsl2rgb(skin.h, skin.s, Math.min(0.95, skin.l * hsl.l / 0.3));
+      }
+      if (look.beach && hsl.h > 0.45 && hsl.h < 0.56 && hsl.s > 0.3) out = hsl2rgb(skin.h, skin.s, skin.l);   // 바지 무늬 지우기
+      if (out) { a[i] = out[0]; a[i + 1] = out[1]; a[i + 2] = out[2]; }
+    }
+    cx.putImageData(d, 0, 0);
+    var tex = new T.CanvasTexture(cv); tex.flipY = false; tex.encoding = T.sRGBEncoding;
+    return tex;
+  }
+
   function findBone(root, name) {
     var re = new RegExp('mixamorig:?' + name + '$'), hit = null;
     root.traverse(function (o) { if (!hit && o.isBone && re.test(o.name)) hit = o; });
@@ -459,7 +531,37 @@
     bone.add(mesh); return mesh;
   }
   var SHIRT = [0x2f3b4c, 0x7a3b3b, 0xd9d3c7, 0x3f5a4a, 0x9b8f7a, 0x2b2e35, 0x5e6f86, 0xb07a4f, 0x6d5a7e, 0xc4b9a6, 0x8a9a6b, 0x34506b];
+  function dressedHuman(seed, beach) {
+    var r = rnd(seed * 7919 + 13);
+    var model = T.SkeletonUtils.clone(HUMAN.dressed.scene);
+    var mat = beach ? HUMAN.beachMat : HUMAN.looks[Math.floor(r() * HUMAN.looks.length)];
+    model.traverse(function (o) { if (o.isMesh) { o.material = mat; o.castShadow = true; o.frustumCulled = false; } });
+    var g = new T.Group(); g.add(model);
+    var head = findBone(model, 'Head'), hips = findBone(model, 'Hips'), handL = findBone(model, 'LeftHand');
+    if (beach && hips && head) {   // 숨은 인물: 빨간 비키니 아랫도리·맨다리·밀짚모자
+      ['Left', 'Right'].forEach(function (sd) {   // 헐렁한 바지 다리를 맨다리 굵기로
+        var up = findBone(model, sd + 'UpLeg'), ft = findBone(model, sd + 'Foot');
+        if (up) up.scale.set(0.6, 1, 0.6);
+        if (ft) ft.scale.set(1 / 0.6, 1, 1 / 0.6);
+      });
+      var suit = std(0xd92f45, 0.45);
+      var bot = new T.Mesh(new T.CylinderGeometry(0.128, 0.11, 0.085, 24), suit); bot.scale.z = 0.8; onBone(hips, bot, [0, -0.095, 0]);
+      var straw = std(0xe9d29a, 0.85);
+      var brim = new T.Mesh(new T.CylinderGeometry(0.3, 0.3, 0.012, 32), straw); onBone(head, brim, [0, 0.2, 0]);
+      var crown = new T.Mesh(new T.CylinderGeometry(0.11, 0.13, 0.11, 24), straw); onBone(head, crown, [0, 0.255, 0]);
+      var band = new T.Mesh(new T.CylinderGeometry(0.131, 0.131, 0.025, 24), suit); onBone(head, band, [0, 0.215, 0]);
+    }
+    var mixer = new T.AnimationMixer(model), acts = {};
+    ['idle', 'walk'].forEach(function (n) { if (HUMAN.dclips[n]) acts[n] = mixer.clipAction(HUMAN.dclips[n]); });
+    if (acts.idle) acts.idle.play();
+    if (acts.walk) { acts.walk.play(); acts.walk.setEffectiveWeight(0); }
+    mixer.update(r() * 3);
+    var sc = beach ? 1.04 : 0.98 + r() * 0.1;
+    g.scale.setScalar(sc);
+    return { g: g, mixer: mixer, acts: acts, clips: HUMAN.dclips, model: model, handL: handL, r: r, phase: r() * 6, sc: sc, walkW: 0 };
+  }
   function human(seed, beach) {
+    if (HUMAN.dressed) return dressedHuman(seed, beach);
     var r = rnd(seed * 7919 + 13), pick = function (a) { return a[Math.floor(r() * a.length)]; };
     var model = T.SkeletonUtils.clone(HUMAN.gltf.scene);
     var bodyCol = beach ? 0xf0c4a0 : pick(SHIRT), jointCol = beach ? 0xe2b18b : pick(PANTS);
@@ -499,11 +601,11 @@
     mixer.update(r() * 3);   // 모두 같은 박자로 움직이지 않게
     var sc = beach ? 1.0 : 0.93 + r() * 0.12;
     g.scale.setScalar(sc);
-    return { g: g, mixer: mixer, acts: acts, model: model, handL: handL, r: r, phase: r() * 6, sc: sc, walkW: 0 };
+    return { g: g, mixer: mixer, acts: acts, clips: HUMAN.clips, model: model, handL: handL, r: r, phase: r() * 6, sc: sc, walkW: 0 };
   }
   function addPose(p, name, w, speed) {   // 서 있는 사람 위에 덧입히는 동작
-    if (!p.mixer || !HUMAN.clips[name]) return;
-    var a = p.mixer.clipAction(HUMAN.clips[name]);
+    if (!p.mixer || !p.clips[name]) return;
+    var a = p.mixer.clipAction(p.clips[name]);
     a.blendMode = T.AdditiveAnimationBlendMode; a.setEffectiveWeight(w); a.timeScale = speed || 1; a.play();
   }
   function carryBook(p) {   // 왼손에 든 책
@@ -1157,7 +1259,7 @@
       if (o.geometry && !o.geometry.userData.shared && [faceGeo, torsoGeo, legGeo, armGeo, ballGeo, hairGeo, neckGeo].indexOf(o.geometry) < 0) o.geometry.dispose();
       var ms = Array.isArray(o.material) ? o.material : (o.material ? [o.material] : []);
       ms.forEach(function (m) {
-        if (shared.indexOf(m) >= 0) return;   // 공용 재질은 그대로
+        if (shared.indexOf(m) >= 0 || m.userData.keep) return;   // 공용 재질은 그대로
         if (m.map && m.map !== oakTex && m.map !== floorTex && m.map !== skyTex) m.map.dispose();
         m.dispose();
       });
