@@ -286,6 +286,7 @@
         <label class="gdw-wide">Plex 주소 <small>(비우면 Plex는 쓰지 않음)</small><input type="text" data-plex="plex_url" placeholder="http://127.0.0.1:32400"></label>
         <label class="gdw-wide">PLEX_TOKEN <small>(X-Plex-Token · 바꿀 때만 입력)</small><input type="password" data-plex="plex_token" autocomplete="new-password" readonly onfocus="this.removeAttribute('readonly')"></label>
         <label class="gdw-wide">경로 매핑 <small>(Plex가 다른 경로로 볼 때만: 이 프로그램 경로=Plex 경로, 여러 개는 ; 로)</small><input type="text" data-plex="plex_path_map" placeholder="/mnt/gds2=/data"></label>
+        <label class="gdw-wide">rclone RC 주소 <small>(Plex 폴더가 있는 rclone 마운트의 --rc-addr · VFS 새로고침용, 비우면 감시 설정의 VFS 규칙만)</small><input type="text" data-plex="plex_rc_url" placeholder="http://127.0.0.1:5572"></label>
       </div>
       <div class="gdw-actions-row">
         <button type="button" class="gdw-pill-btn" data-act="check_plex">Plex 확인</button>

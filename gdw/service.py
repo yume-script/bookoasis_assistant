@@ -678,9 +678,17 @@ class Service:
                     finished = 0
                 if now - finished > 1800 or now - float(result.get("db_at") or 0) < 30:
                     continue
-            label = next((x.get("library") for x in result.get("scans") or [] if x.get("ok") and x.get("library")), "")
+            # BookOasis 보관함 스캔만 BookOasis DB로 확인한다 - Plex 라이브러리(plex#번호)는 BookOasis DB에 없다
+            # (예전엔 plex를 세션 이름으로 보고 bookoasis_plex 같은 DB에 접속하려다 권한 오류가 났다)
+            label = next((x.get("library") for x in result.get("scans") or []
+                          if x.get("ok") and x.get("library") and not str(x["library"]).startswith("plex#")), "")
             m = re.match(r"^(\w+)#(\d+)", label or "")
             if not m:
+                if result.get("db_msg", "").startswith("확인 실패") and not result.get("db_ok"):
+                    result.pop("db_msg", None)   # 예전 버전이 Plex 기록에 남긴 'DB 확인 실패' 정리
+                    item["result"] = result
+                    with db:
+                        db.execute("UPDATE event SET result=? WHERE id=?", (json.dumps(result, ensure_ascii=False), item["id"]))
                 continue
             try:
                 ok, message = self._check_book(m.group(1), int(m.group(2)), item)
@@ -991,6 +999,7 @@ class Service:
                              "bookoasis_url": settings["bookoasis_url"], "auto_start": settings["auto_start"],
                              "token_set": bool(settings["webhook_token"]), "env_file": config.ENV_PATH,
                              "plex_url": settings.get("plex_url") or "", "plex_path_map": settings.get("plex_path_map") or "",
+                             "plex_rc_url": settings.get("plex_rc_url") or "",
                              "plex_token_set": bool(settings.get("plex_token")),
                              "plex_libraries": [{"id": l["id"], "name": l["name"], "roots": l["roots"]}
                                                 for l in (_read_json("plex_libraries.json") or {}).get("items") or []],
@@ -1522,7 +1531,8 @@ class Service:
         """Plex 설정만 .env에 저장 (PLEX_URL · PLEX_PATH_MAP, PLEX_TOKEN은 입력했을 때만)"""
         env = ctx.get("env") or {}
         clean = {"PLEX_URL": str(env.get("plex_url") or "").strip().rstrip("/"),
-                 "PLEX_PATH_MAP": str(env.get("plex_path_map") or "").strip()}
+                 "PLEX_PATH_MAP": str(env.get("plex_path_map") or "").strip(),
+                 "PLEX_RC_URL": str(env.get("plex_rc_url") or "").strip().rstrip("/")}
         if str(env.get("plex_token") or "").strip():
             clean["PLEX_TOKEN"] = str(env["plex_token"]).strip()
         fixed = config.overridden(clean)

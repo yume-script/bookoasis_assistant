@@ -453,6 +453,9 @@ Drive Changes/Activity 확인 (기본 60초)
 - `.env`에 `GDWPLX_ENABLED=true`를 넣고 다시 시작하면 메뉴가 보입니다(기본 false - 메뉴 숨김, Plex 스캔 안 함).
 - [드라이브 변경 감시 > **Plex 설정**]에서 **Plex 주소 · PLEX_TOKEN · 경로 매핑**을 넣고 저장 → **Plex 확인**으로 라이브러리와 폴더가 보이는지 확인
   (`.env`의 `PLEX_URL`, `PLEX_TOKEN`, `PLEX_PATH_MAP`). 라이브러리 목록은 Plex에서 10분마다 자동으로 읽습니다.
+- **rclone RC 주소**(`PLEX_RC_URL`, 예: `http://127.0.0.1:5572`)를 넣으면 Plex 폴더 변경도 rclone VFS를 새로고침한 뒤 스캔합니다
+  (BookOasis 보관함의 RC 주소처럼 마운트 경로를 자동으로 찾음). 비우면 감시 설정의 VFS 규칙에 걸리는 경로만 새로고침합니다.
+- 스캔 뒤의 'DB 확인'(BookOasis DB에 도서가 들어갔는지)은 BookOasis 보관함만 합니다. Plex는 BookOasis DB와 상관없습니다.
 - Plex가 도커 등에서 다른 경로로 보면 경로 매핑: `이 프로그램 경로=Plex 경로` (예: `/mnt/gds2=/data`), 여러 개는 `;`.
 - Plex 미디어 폴더도 감시 폴더에 넣어야 하고, rclone VFS 새로고침은 VFS 규칙(수동 규칙 또는 보관함 RC)에 걸리는 경로만 합니다.
 - 삭제된 폴더는 남아 있는 상위 폴더를 스캔합니다. 결과는 변경 기록에 `plex#번호 이름`으로 나옵니다.

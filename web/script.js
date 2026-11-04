@@ -374,7 +374,9 @@
         if (!(r.vfs || []).length) v.appendChild(el('li', { text: ev.status === 'pending' ? '처리 전' : '해당 VFS 규칙 없음' }));
         box.appendChild(v);
         if (r.db_msg) box.appendChild(el('div', { class: r.db_ok === false ? 'msg' : 'gdw-muted', text: 'DB 확인: ' + r.db_msg }));
-        box.appendChild(el('h4', { text: 'BookOasis 스캔' }));
+        var plexScan = (r.scans || []).some(function (x) { return /^plex#/.test(x.library || ''); });
+        var booScan = (r.scans || []).some(function (x) { return x.library && !/^plex#/.test(x.library); });
+        box.appendChild(el('h4', { text: plexScan && !booScan ? 'Plex 스캔' : plexScan ? 'BookOasis · Plex 스캔' : 'BookOasis 스캔' }));
         var s = el('ul');
         (r.scans || []).forEach(function (x) {
             var cls = x.ok === true ? 'ok' : x.ok === false ? 'fail' : '';

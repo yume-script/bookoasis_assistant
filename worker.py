@@ -2555,9 +2555,9 @@ class Vfs:
         return errors
 
 
-def rc_sources(vfs_rules, libraries):
-    """토큰을 빌려 올 수 있는 rclone RC 후보: 직접 지정한 VFS 규칙 + 보관함에 설정된 RC 주소."""
-    out = []
+def rc_sources(vfs_rules, libraries, plex_rc=""):
+    """토큰을 빌려 올 수 있는 rclone RC 후보: 직접 지정한 VFS 규칙 + 보관함에 설정된 RC 주소 + Plex용 RC 주소."""
+    out = [{"rc": plex_rc}] if plex_rc else []
     for rule in vfs_rules or []:
         if rule.get("rc"):
             out.append({"rc": rule["rc"], "user": rule.get("user"), "pass": rule.get("pass")})
@@ -2608,6 +2608,8 @@ class BookOasis:
         self.libraries.extend(self.plex_libraries)
         self.libraries.sort(key=lambda l: len(l["root"]), reverse=True)
         auto = [(root, lib.get("rclone_rc_url")) for lib in libraries or [] for root in lib.get("roots") or []]
+        if cfg.get("plex_rc_url"):   # Plex 라이브러리 폴더도 그 마운트의 RC로 VFS 새로고침 (보관함 RC처럼 자동 감지)
+            auto += [(lib["root"], cfg["plex_rc_url"]) for lib in self.plex_libraries]
         self.vfs = Vfs(vfs_rules, int(cfg.get("rc_timeout", 60)), auto, store)
 
     def library_for(self, path):
@@ -3198,7 +3200,7 @@ class Worker:
                 if watcher.name in rules:
                     watcher.cfg["folder_rules"] = rules[watcher.name]
             self.notifier = Notifier(cfg, self.data_dir)
-            self.rclone.rc_sources = rc_sources(cfg.get("vfs"), cfg.get("libraries"))
+            self.rclone.rc_sources = rc_sources(cfg.get("vfs"), cfg.get("libraries"), cfg.get("plex_rc_url") or "")
             old = self.target
             self.target = BookOasis(cfg, cfg.get("libraries"), cfg.get("vfs"), self.store)
             if old:  # 설정을 다시 읽어도 VFS 생략 대상과 BookOasis 연결 끊김 상태는 이어 간다
@@ -3272,7 +3274,7 @@ class Worker:
         self.rclone = rclone
         rclone.config_changed()  # 기준 상태 기록
         log.info("rclone 설정 파일: %s", rclone.config_path() or "(확인 실패)")
-        rclone.rc_sources = rc_sources(cfg.get("vfs"), cfg.get("libraries"))
+        rclone.rc_sources = rc_sources(cfg.get("vfs"), cfg.get("libraries"), cfg.get("plex_rc_url") or "")
         self.target = BookOasis(cfg, cfg.get("libraries"), cfg.get("vfs"), self.store)
         self.target.skip_vfs = {w.name for w in locals_}  # 로컬 폴더는 이미 파일을 보고 감지했으므로 VFS 새로고침 불필요
         log.info("설정 적용: Drive 감시 %d개, 로컬 감시 %d개, 보관함 경로 %d개, VFS 규칙 %d개",
