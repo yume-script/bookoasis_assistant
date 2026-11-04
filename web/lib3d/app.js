@@ -288,6 +288,128 @@
   // ── 건물 (한 층) ──
   var hall = { x0: -20, x1: 20, z0: -40, z1: 10 };
   var elevator = null;
+  // ── 창밖 경치: 먼 하늘·산·도시(둘러싼 원통 그림) + 길·보도·가로수·건너편 건물(실제 입체, 걸으면 시차가 생긴다) ──
+  var SCENE_R = 130;   // 먼 경치 원통 반지름
+  var panoTex = canvasTex(4096, 1024, function (g, w, h) {
+    var r = rnd(23), hz = h * 0.7;   // 지평선(눈높이)
+    var sky = g.createLinearGradient(0, 0, 0, hz);
+    sky.addColorStop(0, '#7fb2e3'); sky.addColorStop(0.55, '#b9d7f0'); sky.addColorStop(1, '#eef4f6');
+    g.fillStyle = sky; g.fillRect(0, 0, w, hz);
+    var sunX = w * 0.32, glow = g.createRadialGradient(sunX, hz * 0.35, 4, sunX, hz * 0.35, 260);   // 햇무리
+    glow.addColorStop(0, 'rgba(255,250,232,0.95)'); glow.addColorStop(1, 'rgba(255,250,232,0)');
+    g.fillStyle = glow; g.fillRect(sunX - 260, hz * 0.35 - 260, 520, 520);
+    for (var c = 0; c < 46; c++) {   // 구름 (흐릿한 타원 뭉치)
+      var cx = r() * w, cy = hz * (0.12 + r() * 0.55), cw = 90 + r() * 260;
+      for (var k = 0; k < 7; k++) {
+        g.fillStyle = 'rgba(255,255,255,' + (0.18 + r() * 0.3) + ')';
+        g.beginPath(); g.ellipse(cx + (r() - 0.5) * cw, cy + (r() - 0.5) * 18, cw * (0.25 + r() * 0.3), 12 + r() * 16, 0, 0, Math.PI * 2); g.fill();
+      }
+    }
+    function ridge(base, amp, col, step) {   // 산등성이
+      g.fillStyle = col; g.beginPath(); g.moveTo(0, hz);
+      var y = base;
+      for (var x = 0; x <= w; x += step) { y += (r() - 0.5) * amp; y = Math.max(base - amp * 3, Math.min(base + amp, y)); g.lineTo(x, y); }
+      g.lineTo(w, hz); g.closePath(); g.fill();
+    }
+    ridge(hz - 120, 26, '#a9bccb', 40);
+    ridge(hz - 70, 22, '#8fa7b6', 30);
+    for (var b = 0; b < 260; b++) {   // 먼 도시 실루엣
+      var bx = r() * w, bw = 14 + r() * 46, bh = 18 + Math.pow(r(), 2.2) * 150;
+      g.fillStyle = 'rgb(' + (120 + Math.floor(r() * 30)) + ',' + (138 + Math.floor(r() * 25)) + ',' + (155 + Math.floor(r() * 25)) + ')';
+      g.fillRect(bx, hz - bh, bw, bh);
+      g.fillStyle = 'rgba(235,242,248,0.35)';
+      for (var wy = hz - bh + 5; wy < hz - 6; wy += 9) for (var wx = bx + 3; wx < bx + bw - 4; wx += 7) if (r() < 0.5) g.fillRect(wx, wy, 3, 4);
+    }
+    for (var t = 0; t < 900; t++) {   // 가까운 나무 줄
+      var tx = r() * w, tr = 10 + r() * 22;
+      g.fillStyle = ['#5f7f52', '#6e8d5c', '#557447', '#7a9864'][Math.floor(r() * 4)];
+      g.beginPath(); g.arc(tx, hz - tr * 0.4, tr, 0, Math.PI * 2); g.fill();
+    }
+    var ground = g.createLinearGradient(0, hz, 0, h);
+    ground.addColorStop(0, '#7f9a6c'); ground.addColorStop(1, '#6d8a5b');
+    g.fillStyle = ground; g.fillRect(0, hz, w, h - hz);
+  });
+  panoTex.wrapS = T.RepeatWrapping;
+  var grassTex = canvasTex(256, 256, function (g, w, h) {
+    var r = rnd(31); g.fillStyle = '#8aa36f'; g.fillRect(0, 0, w, h);
+    for (var i = 0; i < 2200; i++) { g.fillStyle = 'rgba(' + (60 + Math.floor(r() * 60)) + ',' + (100 + Math.floor(r() * 60)) + ',50,' + (0.15 + r() * 0.25) + ')'; g.fillRect(r() * w, r() * h, 2, 2 + r() * 3); }
+  }, [60, 60]);
+  var paveTex = canvasTex(256, 256, function (g, w, h) {   // 보도블록
+    var r = rnd(37); g.fillStyle = '#c9c2b6'; g.fillRect(0, 0, w, h);
+    for (var y = 0; y < h; y += 32) for (var x = (y / 32) % 2 ? -32 : 0; x < w; x += 64) {
+      var t = 190 + Math.floor(r() * 25); g.fillStyle = 'rgb(' + t + ',' + (t - 6) + ',' + (t - 16) + ')'; g.fillRect(x + 1, y + 1, 62, 30);
+    }
+  }, [2, 40]);
+  var roadTex = canvasTex(256, 512, function (g, w, h) {   // 아스팔트 + 가운데 점선
+    var r = rnd(41); g.fillStyle = '#5d6064'; g.fillRect(0, 0, w, h);
+    for (var i = 0; i < 3000; i++) { g.fillStyle = 'rgba(255,255,255,' + r() * 0.06 + ')'; g.fillRect(r() * w, r() * h, 1.5, 1.5); }
+    g.fillStyle = '#e9d27a'; for (var y = 0; y < h; y += 128) g.fillRect(w / 2 - 4, y, 8, 64);
+    g.fillStyle = '#f2f2ee'; g.fillRect(8, 0, 6, h); g.fillRect(w - 14, 0, 6, h);
+  }, [1, 20]);
+  var facadeTex = canvasTex(256, 512, function (g, w, h) {   // 건너편 건물 외벽 (창 격자)
+    var r = rnd(43); g.fillStyle = '#ffffff'; g.fillRect(0, 0, w, h);
+    for (var y = 12; y < h - 8; y += 32) for (var x = 10; x < w - 10; x += 30) {
+      var lit = r();
+      g.fillStyle = lit < 0.12 ? '#f6e7b8' : lit < 0.55 ? '#7c8c9c' : '#93a5b6'; g.fillRect(x, y, 20, 20);
+      g.fillStyle = 'rgba(255,255,255,0.25)'; g.fillRect(x, y, 20, 3);
+    }
+  }, [1, 1]);
+  facadeTex.wrapS = facadeTex.wrapT = T.RepeatWrapping;
+  Object.assign(M, {
+    pano: new T.MeshBasicMaterial({ map: panoTex, side: T.BackSide, fog: false }),
+    grass: new T.MeshStandardMaterial({ map: grassTex, roughness: 1 }),
+    pave: new T.MeshStandardMaterial({ map: paveTex, roughness: 0.95 }),
+    road: new T.MeshStandardMaterial({ map: roadTex, roughness: 0.9 }),
+    trunk: new T.MeshStandardMaterial({ color: 0x6b4f3a, roughness: 0.9 }),
+    leaf: [0x5d8a4e, 0x6f9a55, 0x4f7a44, 0x83a862].map(function (c) { return new T.MeshStandardMaterial({ color: c, roughness: 0.9, flatShading: true }); }),
+    facade: [0xd9d2c4, 0xb8c2cc, 0xe7e1d6, 0xa9b3ab, 0xcfc4b8].map(function (c) { return new T.MeshStandardMaterial({ map: facadeTex, color: c, roughness: 0.85 }); }),
+    glassPane: new T.MeshStandardMaterial({ color: 0xdfeaf2, roughness: 0.05, metalness: 0.1, transparent: true, opacity: 0.12, depthWrite: false })
+  });
+  var trunkGeo = new T.CylinderGeometry(0.12, 0.18, 2.6, 8), crownGeo = new T.IcosahedronGeometry(1.6, 1), unitBox = new T.BoxGeometry(1, 1, 1);
+  [trunkGeo, crownGeo, unitBox].forEach(function (gq) { gq.userData.shared = true; });
+
+  // 창 구멍이 난 옆벽: 창 아래·위 띠 + 창 사이 기둥
+  function sideWall(x, z0, z1, wins) {
+    var len = z1 - z0, cz0 = (z0 + z1) / 2;
+    add(new T.Mesh(new T.BoxGeometry(0.2, 0.5, len), M.wall), x, 0.25, cz0).receiveShadow = true;
+    add(new T.Mesh(new T.BoxGeometry(0.2, CEIL - 4.1, len), M.wall), x, (CEIL + 4.1) / 2, cz0).receiveShadow = true;
+    var edges = [z0];
+    wins.slice().sort(function (a, b) { return a - b; }).forEach(function (wz) { edges.push(wz - 2.7, wz + 2.7); });
+    edges.push(z1);
+    for (var i = 0; i < edges.length; i += 2) {
+      var a = edges[i], b = edges[i + 1];
+      if (b - a > 0.01) add(new T.Mesh(new T.BoxGeometry(0.2, 3.6, b - a), M.wall), x, 2.3, (a + b) / 2).receiveShadow = true;
+    }
+  }
+  // 바깥: 층이 높을수록 땅이 내려간다(위층에서 내려다보는 경치)
+  function addOutside(w, back, front, floorIdx) {
+    var gy = -floorIdx * 4.5 - 0.05, cz = (front + back) / 2, d = front - back, r = rnd(53 + floorIdx);
+    var ground = new T.Mesh(new T.CircleGeometry(SCENE_R - 2, 48), M.grass); ground.rotation.x = -Math.PI / 2; add(ground, 0, gy, cz);
+    var pano = new T.Mesh(new T.CylinderGeometry(SCENE_R, SCENE_R, 110, 64, 1, true), M.pano);
+    add(pano, 0, EYE - 110 * 0.3 + 110 / 2, cz);   // 그림의 지평선(아래에서 30%)을 눈높이에 맞춘다
+    pano.rotation.y = floorIdx * 1.3;
+    var len = d + 120;
+    [-1, 1].forEach(function (side) {
+      var walkX = side * (w / 2 + 2.5), roadX = side * (w / 2 + 9), farWalkX = side * (w / 2 + 15.5);
+      var walk = new T.Mesh(new T.PlaneGeometry(5, len), M.pave); walk.rotation.x = -Math.PI / 2; add(walk, walkX, gy + 0.02, cz);
+      var road = new T.Mesh(new T.PlaneGeometry(8, len), M.road); road.rotation.x = -Math.PI / 2; add(road, roadX, gy + 0.01, cz);
+      var walk2 = new T.Mesh(new T.PlaneGeometry(5, len), M.pave); walk2.rotation.x = -Math.PI / 2; add(walk2, farWalkX, gy + 0.02, cz);
+      for (var tz = back - 40; tz < front + 40; tz += 7 + r() * 3) {   // 가로수 (양쪽 보도)
+        [walkX + side * 1.4, farWalkX - side * 1.4].forEach(function (tx) {
+          var trunk = new T.Mesh(trunkGeo, M.trunk); add(trunk, tx, gy + 1.3, tz);
+          var crown = new T.Mesh(crownGeo, M.leaf[Math.floor(r() * M.leaf.length)]);
+          crown.scale.set(1 + r() * 0.4, 1.1 + r() * 0.5, 1 + r() * 0.4); crown.rotation.y = r() * 3; add(crown, tx, gy + 3.4 + r() * 0.5, tz);
+        });
+      }
+      for (var bz = back - 50; bz < front + 50;) {   // 건너편 건물들
+        var bw = 10 + r() * 14, bd = 10 + r() * 10, bh = 9 + Math.pow(r(), 1.6) * 34;
+        var mat = M.facade[Math.floor(r() * M.facade.length)];
+        var bld = new T.Mesh(unitBox, mat); bld.scale.set(bd, bh, bw);
+        add(bld, side * (w / 2 + 18 + bd / 2 + r() * 6), gy + bh / 2, bz + bw / 2);
+        bz += bw + 2 + r() * 6;
+      }
+    });
+  }
   function addBuilding(fl, cols, rows) {
     var w = cols * BOOTH_W + (cols - 1) * GAP + 12, back = -LOBBY - rows * (BOOTH_D + GAP) - 2, front = 10;
     var d = front - back, cz = (front + back) / 2;
@@ -304,18 +426,23 @@
         var l = new T.Mesh(new T.PlaneGeometry(0.6, 0.6), M.lamp); l.rotation.x = Math.PI / 2; add(l, lx, CEIL - 0.01, lz);
       }
     }
-    // 벽 + 걸레받이
-    [[0, front, w, 0], [0, back, w, 0], [-w / 2, cz, d, Math.PI / 2], [w / 2, cz, d, Math.PI / 2]].forEach(function (s) {
-      var wall = new T.Mesh(new T.BoxGeometry(s[2], CEIL, 0.2), M.wall);
-      wall.rotation.y = s[3]; wall.receiveShadow = true; add(wall, s[0], CEIL / 2, s[1]);
+    // 벽 + 걸레받이 (앞뒤 벽은 통으로, 옆벽은 창 구멍을 내서)
+    var wins = [];
+    for (var wz0 = front - 6; wz0 > back + 3; wz0 -= 7) wins.push(wz0);
+    [[0, front, w, 0], [0, back, w, 0], [-w / 2, cz, d, Math.PI / 2], [w / 2, cz, d, Math.PI / 2]].forEach(function (s, si) {
+      if (si < 2) {
+        var wall = new T.Mesh(new T.BoxGeometry(s[2], CEIL, 0.2), M.wall);
+        wall.rotation.y = s[3]; wall.receiveShadow = true; add(wall, s[0], CEIL / 2, s[1]);
+      } else sideWall(s[0], back, front, wins);
       var base = new T.Mesh(new T.BoxGeometry(s[2], 0.12, 0.24), M.black);
       base.rotation.y = s[3]; add(base, s[0], 0.06, s[1]);
     });
-    // 큰 창 (양옆 벽, 검은 창틀)
+    addOutside(w, back, front, Math.max(0, cur));
+    // 큰 창 (양옆 벽, 검은 창틀, 거의 투명한 유리 너머로 바깥 경치)
     for (var wz = front - 6; wz > back + 3; wz -= 7) {
       [-1, 1].forEach(function (side) {
         var gx = side * (w / 2 - 0.11);
-        var glass = new T.Mesh(new T.PlaneGeometry(5.4, 3.6), M.sky);
+        var glass = new T.Mesh(new T.PlaneGeometry(5.4, 3.6), M.glassPane);
         glass.rotation.y = -side * Math.PI / 2; add(glass, gx, 2.3, wz);
         [-2.7, 0, 2.7].forEach(function (o) { var mul = new T.Mesh(new T.BoxGeometry(0.05, 3.7, 0.06), M.black); mul.rotation.y = -side * Math.PI / 2; add(mul, gx, 2.3, wz + o); });
         [0.5, 4.1].forEach(function (y) { add(new T.Mesh(new T.BoxGeometry(0.06, 0.05, 5.5), M.black), gx, y, wz); });
@@ -1775,7 +1902,7 @@
       return { key: k, label: (i + 1) + '층 ' + (FLOOR_NAMES[k] || k), libs: list, total: total, booths: [] };
     });
   }
-  var shared = Object.keys(M).map(function (k) { return M[k]; });
+  var shared = [].concat.apply([], Object.keys(M).map(function (k) { return M[k]; }));   // 배열(나뭇잎·외벽 색)도 펼친다
   function disposeGroup(g) {
     g.traverse(function (o) {
       if (o.geometry && !o.geometry.userData.shared && [faceGeo, torsoGeo, legGeo, armGeo, ballGeo, hairGeo, neckGeo].indexOf(o.geometry) < 0) o.geometry.dispose();
