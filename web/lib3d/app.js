@@ -876,7 +876,7 @@
             var m = base.clone(); m.map = recolorSkin(base.map.image, look); m.userData.keep = true; return m;
           }
           HUMAN.looks = LOOKS.map(mat);
-          HUMAN.beachMat = mat({ pants: 0xe9b995, top: 0xd92f45, skin: 0xe9b995, beach: true });
+          HUMAN.beachMat = mat({ pants: 0xf0c8a8, top: 0x8e0a1f, skin: 0xf0c8a8, beach: true });   // 숨은 인물: 빨간 상의, 밝은 피부
           HUMAN.dressed = dg;
           respawn();
         } catch (e) { console.warn('3D 서재 사람 모형:', e); HUMAN.dressed = null; }
@@ -1015,6 +1015,61 @@
     g.scale.setScalar(sc);
     return { g: g, mixer: mixer, acts: acts, clips: HUMAN.man.clips, model: model, handL: findBone(model, 'LeftHand'), r: r, phase: r() * 6, sc: sc, walkW: 0 };
   }
+  // ── 숨은 인물 의상: 크리스마스 토끼 (빨간 벨벳 + 흰 털 테두리, 토끼 귀 머리띠, 털 목장식·리본, 손목 커프스, 빨간 망사 스타킹) ──
+  var netTex = canvasTex(64, 64, function (g, w, h) {   // 망사: 투명 바탕에 빨간 사선 격자
+    g.clearRect(0, 0, w, h); g.strokeStyle = '#c4122e'; g.lineWidth = 5;
+    g.beginPath(); g.moveTo(0, 0); g.lineTo(w, h); g.moveTo(w, 0); g.lineTo(0, h); g.stroke();
+  }, [7, 9]);
+  var COSTUME = {
+    red: new T.MeshStandardMaterial({ color: 0x8e0a1f, roughness: 0.8 }),   // 벨벳 느낌의 짙은 빨강
+    fur: new T.MeshStandardMaterial({ color: 0xfbf8f3, roughness: 1 }),
+    net: new T.MeshStandardMaterial({ map: netTex, transparent: true, alphaTest: 0.35, side: T.DoubleSide, roughness: 0.6 })
+  };
+  Object.keys(COSTUME).forEach(function (k) { COSTUME[k].userData.keep = true; });
+  function santaBunny(model, hips, head) {
+    hips.updateWorldMatrix(true, false);
+    var ws = new T.Vector3(); hips.getWorldScale(ws);
+    var k = 1 / (ws.x || 1);   // 뼈대 축척(0.01)을 되돌려 미터 단위로 붙인다 (가늘게 줄인 다리 뼈에 붙인 것은 같이 가늘어진다)
+    function put(bone, geo, mat, pos, rot, scl) {
+      if (!bone) return null;
+      var m = new T.Mesh(geo, mat); m.castShadow = true;
+      m.scale.setScalar(k); if (scl) m.scale.set(k * scl[0], k * scl[1], k * scl[2]);
+      if (pos) m.position.set(pos[0] * k, pos[1] * k, pos[2] * k);
+      if (rot) m.rotation.set(rot[0], rot[1], rot[2]);
+      bone.add(m); return m;
+    }
+    function len(bone) { var c = bone && bone.children.filter(function (x) { return x.isBone; })[0]; return c ? c.position.length() / k : 0.3; }
+    ['Left', 'Right'].forEach(function (sd) {   // 헐렁한 바지 다리를 맨다리 굵기로
+      var up = findBone(model, sd + 'UpLeg'), ft = findBone(model, sd + 'Foot');
+      if (up) up.scale.set(0.6, 1, 0.6);
+      if (ft) ft.scale.set(1 / 0.6, 1, 1 / 0.6);
+    });
+    var spine2 = findBone(model, 'Spine2'), neck = findBone(model, 'Neck');
+    // 토끼 귀 머리띠
+    put(head, new T.TorusGeometry(0.1, 0.008, 6, 24, Math.PI), COSTUME.red, [0, 0.15, 0.01]);
+    [-1, 1].forEach(function (sd) {
+      var ear = put(head, new T.SphereGeometry(1, 16, 12), COSTUME.fur, [sd * 0.055, 0.31, 0], [0, 0, -sd * 0.22], [0.034, 0.12, 0.016]);
+      if (ear) put(head, new T.SphereGeometry(1, 16, 12), COSTUME.red, [sd * 0.057, 0.30, 0.009], [0, 0, -sd * 0.22], [0.02, 0.095, 0.01]);
+    });
+    // 털 목장식 + 빨간 리본
+    put(neck, new T.TorusGeometry(0.047, 0.013, 8, 24), COSTUME.fur, [0, 0.055, 0.008], [Math.PI / 2, 0, 0]);
+    [-1, 1].forEach(function (sd) { put(neck, new T.SphereGeometry(1, 10, 8), COSTUME.red, [sd * 0.013, 0.04, 0.058], [0, 0, sd * 0.6], [0.015, 0.009, 0.007]); });
+    // 상의 윗단 털 테두리, 하의 + 털 테두리
+    put(spine2, new T.TorusGeometry(0.128, 0.018, 8, 28), COSTUME.fur, [0, 0.05, 0.015], [Math.PI / 2, 0, 0], [1, 0.78, 1]);
+    put(hips, new T.CylinderGeometry(0.118, 0.1, 0.08, 24), COSTUME.red, [0, -0.095, 0], null, [1, 1, 0.8]);
+    put(hips, new T.TorusGeometry(0.118, 0.013, 8, 28), COSTUME.fur, [0, -0.057, 0], [Math.PI / 2, 0, 0], [1, 0.8, 1]);
+    // 손목 커프스 (아래팔 끝)
+    ['Left', 'Right'].forEach(function (sd) {
+      var fa = findBone(model, sd + 'ForeArm'), L = len(fa);
+      put(fa, new T.CylinderGeometry(0.036, 0.033, 0.07, 16), COSTUME.red, [0, L * 0.86, 0]);
+      put(fa, new T.TorusGeometry(0.037, 0.012, 8, 20), COSTUME.fur, [0, L * 0.8, 0], [Math.PI / 2, 0, 0]);
+      // 망사 스타킹 (허벅지 아래쪽 ~ 발목) + 윗단 빨간 띠
+      var up = findBone(model, sd + 'UpLeg'), lg = findBone(model, sd + 'Leg'), Lu = len(up), Ll = len(lg);
+      put(up, new T.CylinderGeometry(0.105, 0.09, Lu * 0.5, 18, 1, true), COSTUME.net, [0, Lu * 0.75, 0]);
+      put(up, new T.CylinderGeometry(0.108, 0.106, 0.05, 18), COSTUME.red, [0, Lu * 0.5, 0]);
+      put(lg, new T.CylinderGeometry(0.088, 0.062, Ll, 18, 1, true), COSTUME.net, [0, Ll * 0.5, 0]);
+    });
+  }
   function dressedHuman(seed, beach) {
     var r = rnd(seed * 7919 + 13);
     if (!beach && HUMAN.man && r() < 0.5) return manHuman(r);
@@ -1023,19 +1078,7 @@
     model.traverse(function (o) { if (o.isMesh) { o.material = mat; o.castShadow = true; o.frustumCulled = false; } });
     var g = new T.Group(); g.add(model);
     var head = findBone(model, 'Head'), hips = findBone(model, 'Hips'), handL = findBone(model, 'LeftHand');
-    if (beach && hips && head) {   // 숨은 인물: 빨간 비키니 아랫도리·맨다리·밀짚모자
-      ['Left', 'Right'].forEach(function (sd) {   // 헐렁한 바지 다리를 맨다리 굵기로
-        var up = findBone(model, sd + 'UpLeg'), ft = findBone(model, sd + 'Foot');
-        if (up) up.scale.set(0.6, 1, 0.6);
-        if (ft) ft.scale.set(1 / 0.6, 1, 1 / 0.6);
-      });
-      var suit = std(0xd92f45, 0.45);
-      var bot = new T.Mesh(new T.CylinderGeometry(0.128, 0.11, 0.085, 24), suit); bot.scale.z = 0.8; onBone(hips, bot, [0, -0.095, 0]);
-      var straw = std(0xe9d29a, 0.85);
-      var brim = new T.Mesh(new T.CylinderGeometry(0.3, 0.3, 0.012, 32), straw); onBone(head, brim, [0, 0.2, 0]);
-      var crown = new T.Mesh(new T.CylinderGeometry(0.11, 0.13, 0.11, 24), straw); onBone(head, crown, [0, 0.255, 0]);
-      var band = new T.Mesh(new T.CylinderGeometry(0.131, 0.131, 0.025, 24), suit); onBone(head, band, [0, 0.215, 0]);
-    }
+    if (beach && hips && head) santaBunny(model, hips, head);
     var mixer = new T.AnimationMixer(model), acts = {};
     ['idle', 'walk'].forEach(function (n) { if (HUMAN.dclips[n]) acts[n] = mixer.clipAction(HUMAN.dclips[n]); });
     if (acts.idle) acts.idle.play();
@@ -1128,7 +1171,7 @@
   var PEOPLE_KINDS = [
     { k: 'walk', label: '걷는 손님' }, { k: 'browse', label: '책 고르는 손님' }, { k: 'read', label: '서서 읽는 손님' },
     { k: 'sit', label: '벤치 손님' }, { k: 'chat', label: '대화하는 손님(쌍)' }, { k: 'staff', label: '안내 직원' },
-    { k: 'trooper', label: '스톰트루퍼' }, { k: 'elf', label: '엘프' }, { k: 'beach', label: '숨은 인물(비키니)' },
+    { k: 'trooper', label: '스톰트루퍼' }, { k: 'elf', label: '엘프' }, { k: 'beach', label: '숨은 인물(산타 토끼)' },
   ];
   var PEOPLE_MAX = 20;
   function spawnPeople(fl, seed) {
