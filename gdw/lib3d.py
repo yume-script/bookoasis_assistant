@@ -3,10 +3,13 @@
 
 - 보관함·작품: BookOasis DB에서 읽는다 (세션마다 libraries, 보관함마다 최근 추가된 작품 LIB3D_PER_LIBRARY개)
 - 표지 (/api/lib3d/cover?k=세션:도서번호 - 가까이 간 책만 화면이 요청, 작게 줄여 DATA_DIR/lib3d_covers에 저장):
-  1) LIB3D_COVER_URL (BookOasis 표지 주소 형식, {id}·{db_type}) 2) 웹툰 다운로더가 받은 작품 썸네일
-  (폴더 이름 끝의 '(작품번호)'로 찾음) 3) 작품 폴더의 cover/folder/poster 그림 4) 첫 zip의 첫 그림
-- 책을 누르면 LIB3D_BOOK_URL 형식({id}·{db_type}·{library_id})으로 BookOasis에서 연다 (비우면 정보만)
+  BookOasis가 화면에 쓰는 표지 그대로 - BookOasis 주소(BOOKOASIS_URL)의 /covers/… (로그인 없이 열림)
+  1) 시리즈 대표 표지 ({보관함}/series_{md5(시리즈)}.jpg) 2) 그 책의 books.cover_image 3) 같은 시리즈 다른 책의 cover_image
+  BookOasis에 표지가 없을 때만: LIB3D_COVER_URL → 웹툰 다운로더 썸네일 → 폴더의 cover/folder/poster → 첫 zip의 첫 그림
+- 책을 누르면 BookOasis의 작품 상세 화면을 연다: {BOOKOASIS_URL}/#detail?series=…&libraryId=…&type=세션&repBookId=…
+  (BookOasis 화면이 쓰는 주소 형식, 다른 형식이 필요하면 LIB3D_BOOK_URL)
 """
+import hashlib
 import io
 import json
 import os
@@ -14,11 +17,12 @@ import re
 import threading
 import time
 import zipfile
+from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
 
 from . import bookoasis_db, config
 
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 CACHE_SEC = 300
 COVER_WIDTH = 200
 _DATA = {"at": 0.0, "v": None}
@@ -85,18 +89,27 @@ def data(force=False):
                                  "name": lib.get("name") or "보관함 %s" % lib["id"], "series": series})
         except Exception as error:  # noqa: BLE001
             errors.append("%s: %s" % (db_type, error))
-    out = {"libraries": libs, "errors": errors, "book_url": bool(config.env("LIB3D_BOOK_URL")), "at": time.time()}
+    out = {"libraries": libs, "errors": errors, "book_url": True, "at": time.time()}
     with _LOCK:
         _DATA.update(at=time.time(), v=out)
     return out
 
 
-def book_url(db_type, book_id, library_id=""):
+def _bookoasis():
+    return config.settings()["bookoasis_url"].rstrip("/")
+
+
+def book_url(db_type, book_id, library_id="", series=""):
+    """BookOasis 작품 상세 화면 주소. BookOasis 화면(static/js/url_obfuscator.js)이 받는 형식:
+    /#detail?series=…&libraryId=…&type=…&repBookId=… (LIB3D_BOOK_URL이 있으면 그 형식)"""
     tpl = config.env("LIB3D_BOOK_URL") or ""
-    if not tpl:
+    if tpl:
+        return (tpl.replace("{id}", str(book_id)).replace("{db_type}", db_type).replace("{library_id}", str(library_id))
+                .replace("{series}", quote(str(series or ""))).replace("{bookoasis}", _bookoasis()))
+    if not series:
         return ""
-    return (tpl.replace("{id}", str(book_id)).replace("{db_type}", db_type).replace("{library_id}", str(library_id))
-            .replace("{bookoasis}", config.settings()["bookoasis_url"]))
+    q = urlencode({"series": series, "libraryId": library_id or "all", "type": db_type, "repBookId": book_id}, quote_via=quote)
+    return "%s/#detail?%s" % (_bookoasis(), q)
 
 
 # ── 표지 ──
@@ -121,6 +134,48 @@ def _http(url):
     req = Request(url, headers={"User-Agent": "Mozilla/5.0", "Referer": "%s://%s/" % (u.scheme, u.netloc)})
     with urlopen(req, timeout=15) as resp:
         return resp.read()
+
+
+def _cover_src(cover_image):
+    """books.cover_image → 주소 (BookOasis 화면의 getBookCoverSrc와 같은 규칙: 파일 이름이면 /covers/…)"""
+    c = str(cover_image or "").strip()
+    if not c:
+        return ""
+    if c.startswith(("http://", "https://")):
+        return c
+    if c.startswith("/api/"):
+        return ""          # 오디오북·영상 포스터 주소는 로그인이 필요하다
+    c = c.lstrip("/\\").split("?", 1)[0]
+    if c.lower().startswith("covers/"):
+        c = c[7:].lstrip("/\\")
+    if not c or "." not in os.path.basename(c):
+        return ""
+    return "%s/covers/%s" % (_bookoasis(), quote(c.replace("\\", "/")))
+
+
+def bookoasis_covers(gw, row):
+    """BookOasis에 있는 표지 주소 후보 (시리즈 대표 표지 → 이 책 → 같은 시리즈 다른 책)"""
+    out = []
+    series, lib = str(row.get("series_name") or ""), row.get("library_id")
+    if series:
+        h = hashlib.md5(series.encode("utf-8")).hexdigest()
+        if lib is not None:
+            out.append("%s/covers/%s/series_%s.jpg" % (_bookoasis(), lib, h))
+        out.append("%s/covers/series_%s.jpg" % (_bookoasis(), h))
+    out.append(_cover_src(row.get("cover_image")))
+    if series and lib is not None:
+        try:
+            for r in gw.fetch_all("SELECT cover_image FROM books WHERE library_id = %s AND series_name = %s AND "
+                                  "cover_image IS NOT NULL AND cover_image <> '' ORDER BY id LIMIT 3", (lib, series)):
+                out.append(_cover_src(r.get("cover_image")))
+        except Exception:  # noqa: BLE001
+            pass
+    seen, uniq = set(), []
+    for u in out:
+        if u and u not in seen:
+            seen.add(u)
+            uniq.append(u)
+    return uniq
 
 
 def _webtoon_thumb(folder):
@@ -185,14 +240,18 @@ def cover(key):
             return f.read(), "image/jpeg"
     if os.path.isfile(miss) and time.time() - os.path.getmtime(miss) < 86400:
         return None, "표지 없음"
-    row = bookoasis_db.gateway(db_type).fetch_one("SELECT id, file_path FROM books WHERE id = %s", (book_id,))
+    gw = bookoasis_db.gateway(db_type)
+    try:
+        row = gw.fetch_one("SELECT id, library_id, series_name, cover_image, file_path FROM books WHERE id = %s", (book_id,))
+    except Exception:  # noqa: BLE001 - 칼럼이 다른 BookOasis 버전
+        row = gw.fetch_one("SELECT id, file_path FROM books WHERE id = %s", (book_id,))
     if not row:
         return None, "없는 도서"
     file_path = str(row.get("file_path") or "")
     folder = file_path if os.path.isdir(file_path) else os.path.dirname(file_path)
     raw = b""
     tpl = config.env("LIB3D_COVER_URL") or ""
-    tries = []
+    tries = [(lambda u=u: _http(u)) for u in bookoasis_covers(gw, row)]   # BookOasis 표지 먼저
     if tpl:
         tries.append(lambda: _http(tpl.replace("{id}", str(book_id)).replace("{db_type}", db_type)
                                    .replace("{bookoasis}", config.settings()["bookoasis_url"])))
@@ -224,11 +283,13 @@ def open_url(key):
         return "", ""
     row = None
     try:
-        row = bookoasis_db.gateway(m.group(1)).fetch_one("SELECT id, library_id, file_path FROM books WHERE id = %s",
-                                                         (int(m.group(2)),))
+        row = bookoasis_db.gateway(m.group(1)).fetch_one(
+            "SELECT id, library_id, series_name, file_path FROM books WHERE id = %s", (int(m.group(2)),))
     except Exception:  # noqa: BLE001
         pass
-    return book_url(m.group(1), m.group(2), (row or {}).get("library_id") or ""), (row or {}).get("file_path") or ""
+    row = row or {}
+    return (book_url(m.group(1), m.group(2), row.get("library_id") or "", row.get("series_name") or ""),
+            row.get("file_path") or "")
 
 
 def info_json(key):
