@@ -1037,7 +1037,7 @@
   // 삼각형마다 옷 그림(UV) 안의 픽셀을 훑으며, 그 픽셀이 몸의 어디(기본 자세 높이, 미터)인지 무게중심 좌표로 구해 칠한다.
   // 바지 → 빨간 하의(옆이 높게 파인 모양)+허리 흰 털 / 맨 허벅지 / 빨간 스타킹 윗단 / 망사 스타킹,
   // 윗옷 → 가슴만 가리는 빨간 상의 + 윗단 흰 털, 나머지는 맨살. 원래 그림의 밝기로 주름 음영을 살린다.
-  // 선글라스·헤드폰 조각을 뺀 형상 (이어진 덩어리 단위: 얼굴 앞 렌즈·코받침, 머리 둘레의 빨간 헤드폰)
+  // 헤드폰 조각을 뺀 형상 (이어진 덩어리 단위: 머리 둘레의 빨간 헤드폰. 선글라스는 남김)
   function bunnyGeometry(mesh) {
     var geo = mesh.geometry, P = geo.attributes.position, UV = geo.attributes.uv, idx = geo.index, n = P.count, i;
     var img = mesh.material.map.image, W = img.width, H = img.height, cv = document.createElement('canvas'); cv.width = W; cv.height = H;
@@ -1054,9 +1054,8 @@
       if (hsl.s > 0.45 && (hsl.h < 0.14 || hsl.h > 0.93) && hsl.l > 0.25) q.red++;
     }
     function drop(q) {
-      if (q.mn[1] > 1.38 && q.mx[1] < 1.53 && q.mn[2] > 0.075) return true;                                        // 렌즈
-      if (q.mn[1] > 1.415 && q.mx[1] < 1.46 && q.mn[0] > -0.035 && q.mx[0] < 0.035 && q.mn[2] > 0.065) return true;  // 코받침
-      return q.mn[1] > 1.36 && q.red / q.n > 0.3;                                                                   // 헤드폰
+      // 선글라스(얼굴 앞, z > 0.06)는 남겨 코를 가린다
+      return q.mn[1] > 1.36 && q.red / q.n > 0.3 && q.mn[2] < 0.06;                                                 // 헤드폰
     }
     var keep = [];
     for (t = 0; t < idx.count; t += 3) if (!drop(C[f(idx.getX(t))])) keep.push(idx.getX(t), idx.getX(t + 1), idx.getX(t + 2));
