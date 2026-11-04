@@ -27,7 +27,7 @@
   scene.fog = new T.Fog(0xf3efe8, 40, 120);
   var camera = new T.PerspectiveCamera(60, 1, 0.05, 200);
   var EYE = 1.62, CEIL = 5.4;
-  scene.add(new T.HemisphereLight(0xffffff, 0xcbb89c, 0.6));
+  var hemi = new T.HemisphereLight(0xffffff, 0xcbb89c, 0.6); scene.add(hemi);
   scene.add(new T.AmbientLight(0xffffff, 0.12));
   var sun = new T.DirectionalLight(0xfff4e2, 0.85);   // 창으로 들어오는 빛
   sun.castShadow = true;
@@ -290,46 +290,6 @@
   var elevator = null;
   // ── 창밖 경치: 먼 하늘·산·도시(둘러싼 원통 그림) + 길·보도·가로수·건너편 건물(실제 입체, 걸으면 시차가 생긴다) ──
   var SCENE_R = 130;   // 먼 경치 원통 반지름
-  var panoTex = canvasTex(4096, 1024, function (g, w, h) {
-    var r = rnd(23), hz = h * 0.7;   // 지평선(눈높이)
-    var sky = g.createLinearGradient(0, 0, 0, hz);
-    sky.addColorStop(0, '#7fb2e3'); sky.addColorStop(0.55, '#b9d7f0'); sky.addColorStop(1, '#eef4f6');
-    g.fillStyle = sky; g.fillRect(0, 0, w, hz);
-    var sunX = w * 0.32, glow = g.createRadialGradient(sunX, hz * 0.35, 4, sunX, hz * 0.35, 260);   // 햇무리
-    glow.addColorStop(0, 'rgba(255,250,232,0.95)'); glow.addColorStop(1, 'rgba(255,250,232,0)');
-    g.fillStyle = glow; g.fillRect(sunX - 260, hz * 0.35 - 260, 520, 520);
-    for (var c = 0; c < 46; c++) {   // 구름 (흐릿한 타원 뭉치)
-      var cx = r() * w, cy = hz * (0.12 + r() * 0.55), cw = 90 + r() * 260;
-      for (var k = 0; k < 7; k++) {
-        g.fillStyle = 'rgba(255,255,255,' + (0.18 + r() * 0.3) + ')';
-        g.beginPath(); g.ellipse(cx + (r() - 0.5) * cw, cy + (r() - 0.5) * 18, cw * (0.25 + r() * 0.3), 12 + r() * 16, 0, 0, Math.PI * 2); g.fill();
-      }
-    }
-    function ridge(base, amp, col, step) {   // 산등성이
-      g.fillStyle = col; g.beginPath(); g.moveTo(0, hz);
-      var y = base;
-      for (var x = 0; x <= w; x += step) { y += (r() - 0.5) * amp; y = Math.max(base - amp * 3, Math.min(base + amp, y)); g.lineTo(x, y); }
-      g.lineTo(w, hz); g.closePath(); g.fill();
-    }
-    ridge(hz - 120, 26, '#a9bccb', 40);
-    ridge(hz - 70, 22, '#8fa7b6', 30);
-    for (var b = 0; b < 260; b++) {   // 먼 도시 실루엣
-      var bx = r() * w, bw = 14 + r() * 46, bh = 18 + Math.pow(r(), 2.2) * 150;
-      g.fillStyle = 'rgb(' + (120 + Math.floor(r() * 30)) + ',' + (138 + Math.floor(r() * 25)) + ',' + (155 + Math.floor(r() * 25)) + ')';
-      g.fillRect(bx, hz - bh, bw, bh);
-      g.fillStyle = 'rgba(235,242,248,0.35)';
-      for (var wy = hz - bh + 5; wy < hz - 6; wy += 9) for (var wx = bx + 3; wx < bx + bw - 4; wx += 7) if (r() < 0.5) g.fillRect(wx, wy, 3, 4);
-    }
-    for (var t = 0; t < 900; t++) {   // 가까운 나무 줄
-      var tx = r() * w, tr = 10 + r() * 22;
-      g.fillStyle = ['#5f7f52', '#6e8d5c', '#557447', '#7a9864'][Math.floor(r() * 4)];
-      g.beginPath(); g.arc(tx, hz - tr * 0.4, tr, 0, Math.PI * 2); g.fill();
-    }
-    var ground = g.createLinearGradient(0, hz, 0, h);
-    ground.addColorStop(0, '#7f9a6c'); ground.addColorStop(1, '#6d8a5b');
-    g.fillStyle = ground; g.fillRect(0, hz, w, h - hz);
-  });
-  panoTex.wrapS = T.RepeatWrapping;
   var grassTex = canvasTex(256, 256, function (g, w, h) {
     var r = rnd(31); g.fillStyle = '#8aa36f'; g.fillRect(0, 0, w, h);
     for (var i = 0; i < 2200; i++) { g.fillStyle = 'rgba(' + (60 + Math.floor(r() * 60)) + ',' + (100 + Math.floor(r() * 60)) + ',50,' + (0.15 + r() * 0.25) + ')'; g.fillRect(r() * w, r() * h, 2, 2 + r() * 3); }
@@ -356,7 +316,10 @@
   }, [1, 1]);
   facadeTex.wrapS = facadeTex.wrapT = T.RepeatWrapping;
   Object.assign(M, {
-    pano: new T.MeshBasicMaterial({ map: panoTex, side: T.BackSide, fog: false }),
+    pano: new T.MeshBasicMaterial({ side: T.BackSide, fog: false }),   // 그림은 applyOutside()가 상태별로
+    lightPool: new T.MeshBasicMaterial({ map: canvasTex(64, 64, function (g) { var gr = g.createRadialGradient(32, 32, 2, 32, 32, 31); gr.addColorStop(0, 'rgba(255,214,150,0.55)'); gr.addColorStop(1, 'rgba(255,214,150,0)'); g.fillStyle = gr; g.fillRect(0, 0, 64, 64); }), transparent: true, depthWrite: false, opacity: 0 }),
+    streetLight: new T.MeshStandardMaterial({ color: 0xfff6e0, emissive: 0x000000, emissiveIntensity: 1.6, roughness: 0.4 }),
+    pole: new T.MeshStandardMaterial({ color: 0x3a3d42, roughness: 0.5, metalness: 0.6 }),
     grass: new T.MeshStandardMaterial({ map: grassTex, roughness: 1 }),
     pave: new T.MeshStandardMaterial({ map: paveTex, roughness: 0.95 }),
     road: new T.MeshStandardMaterial({ map: roadTex, roughness: 0.9 }),
@@ -365,8 +328,186 @@
     facade: [0xd9d2c4, 0xb8c2cc, 0xe7e1d6, 0xa9b3ab, 0xcfc4b8].map(function (c) { return new T.MeshStandardMaterial({ map: facadeTex, color: c, roughness: 0.85 }); }),
     glassPane: new T.MeshStandardMaterial({ color: 0xdfeaf2, roughness: 0.05, metalness: 0.1, transparent: true, opacity: 0.12, depthWrite: false })
   });
+  var poolGeo = new T.PlaneGeometry(7, 7); poolGeo.userData.shared = true;
   var trunkGeo = new T.CylinderGeometry(0.12, 0.18, 2.6, 8), crownGeo = new T.IcosahedronGeometry(1.6, 1), unitBox = new T.BoxGeometry(1, 1, 1);
   [trunkGeo, crownGeo, unitBox].forEach(function (gq) { gq.userData.shared = true; });
+  // ── 창밖 풍경 상태: 시간(낮·노을·밤) × 계절(봄·여름·가을·겨울) × 날씨(맑음·흐림·비·눈), 각각 자동 가능 ──
+  var OUTSIDE = { time: 'auto', season: 'auto', weather: 'clear' };   // 설정값 (lib3d.json outside)
+  var OUT = null;                                                       // 지금 적용된 실제 값
+  function resolveOutside() {
+    var now = new Date(), hr = now.getHours() + now.getMinutes() / 60, mo = now.getMonth() + 1;
+    var time = OUTSIDE.time !== 'auto' ? OUTSIDE.time : (hr >= 6.5 && hr < 17 ? 'day' : hr >= 17 && hr < 19 ? 'dusk' : 'night');
+    var season = OUTSIDE.season !== 'auto' ? OUTSIDE.season : (mo >= 3 && mo <= 5 ? 'spring' : mo >= 6 && mo <= 8 ? 'summer' : mo >= 9 && mo <= 11 ? 'autumn' : 'winter');
+    var weather = OUTSIDE.weather;
+    if (weather === 'auto') {   // 날마다 바뀌는 날씨 (겨울은 눈, 여름은 비가 잦게)
+      var d = Math.floor(now.getTime() / 86400000), x = ((d * 9301 + 49297) % 233280) / 233280;
+      weather = x < 0.55 ? 'clear' : x < 0.75 ? 'cloudy' : season === 'winter' ? 'snow' : 'rain';
+    }
+    return { time: time, season: season, weather: weather };
+  }
+  var SEASON_LEAF = {
+    spring: [0xf2b8c6, 0xf6c9d4, 0xe9a3b8, 0xffdbe4], summer: [0x5d8a4e, 0x6f9a55, 0x4f7a44, 0x83a862],
+    autumn: [0xd9822b, 0xc8562a, 0xe0a43a, 0xb84a2a], winter: [0xe9edf1, 0xdfe5ea, 0xf3f5f7, 0xd5dce2]
+  };
+  var panoCache = {};
+  function makePano(o) {   // 먼 경치 그림 (상태별로 한 번만 그려 둔다)
+    var key = o.time + o.season + o.weather;
+    if (panoCache[key]) return panoCache[key];
+    var night = o.time === 'night', dusk = o.time === 'dusk', grey = o.weather !== 'clear', winter = o.season === 'winter';
+    var t = canvasTex(4096, 1024, function (g, w, h) {
+      var r = rnd(23), hz = h * 0.7;
+      var sky = g.createLinearGradient(0, 0, 0, hz);
+      if (night) { sky.addColorStop(0, grey ? '#121722' : '#0b1430'); sky.addColorStop(0.6, grey ? '#1d2330' : '#1a2a52'); sky.addColorStop(1, grey ? '#2a303c' : '#34466e'); }
+      else if (dusk) { sky.addColorStop(0, grey ? '#5c5a66' : '#3d4f86'); sky.addColorStop(0.5, grey ? '#8a7d7c' : '#d9877a'); sky.addColorStop(1, grey ? '#b19a88' : '#f4c27c'); }
+      else if (grey) { sky.addColorStop(0, o.weather === 'cloudy' ? '#9aa5b0' : '#7f8994'); sky.addColorStop(1, '#c9cfd4'); }
+      else { sky.addColorStop(0, '#7fb2e3'); sky.addColorStop(0.55, '#b9d7f0'); sky.addColorStop(1, '#eef4f6'); }
+      g.fillStyle = sky; g.fillRect(0, 0, w, hz);
+      if (night && !grey) {   // 별·달
+        for (var s = 0; s < 700; s++) { g.fillStyle = 'rgba(255,255,255,' + (0.3 + r() * 0.7) + ')'; var sz = r() < 0.08 ? 2.4 : 1.3; g.fillRect(r() * w, r() * hz * 0.85, sz, sz); }
+        var mx = w * 0.62, my = hz * 0.28, mg = g.createRadialGradient(mx, my, 10, mx, my, 160);
+        mg.addColorStop(0, 'rgba(220,230,255,0.45)'); mg.addColorStop(1, 'rgba(220,230,255,0)');
+        g.fillStyle = mg; g.fillRect(mx - 160, my - 160, 320, 320);
+        g.fillStyle = '#f4f1e2'; g.beginPath(); g.arc(mx, my, 26, 0, Math.PI * 2); g.fill();
+      } else if (!night && !grey) {   // 해 (노을이면 지평선 가까이 크게)
+        var sx = w * 0.32, sy = dusk ? hz * 0.82 : hz * 0.35, rad = dusk ? 420 : 260, glow = g.createRadialGradient(sx, sy, 4, sx, sy, rad);
+        glow.addColorStop(0, dusk ? 'rgba(255,214,150,1)' : 'rgba(255,250,232,0.95)'); glow.addColorStop(1, 'rgba(255,214,150,0)');
+        g.fillStyle = glow; g.fillRect(sx - rad, sy - rad, rad * 2, rad * 2);
+      }
+      var clouds = grey ? 160 : 46;
+      for (var c = 0; c < clouds; c++) {   // 구름
+        var cx = r() * w, cy = hz * (0.05 + r() * (grey ? 0.75 : 0.55)), cw = 90 + r() * (grey ? 420 : 260);
+        for (var k = 0; k < 7; k++) {
+          var a = (grey ? 0.25 : 0.18) + r() * 0.3;
+          g.fillStyle = night ? 'rgba(70,78,98,' + a + ')' : dusk ? 'rgba(255,200,180,' + a + ')' : grey ? 'rgba(' + (o.weather === 'cloudy' ? 222 : 170) + ',' + (o.weather === 'cloudy' ? 226 : 176) + ',' + (o.weather === 'cloudy' ? 232 : 186) + ',' + a + ')' : 'rgba(255,255,255,' + a + ')';
+          g.beginPath(); g.ellipse(cx + (r() - 0.5) * cw, cy + (r() - 0.5) * 18, cw * (0.25 + r() * 0.3), 12 + r() * 16, 0, 0, Math.PI * 2); g.fill();
+        }
+      }
+      function ridge(base, amp, col, step, cap) {
+        var pts = [], y = base;
+        for (var x = 0; x <= w; x += step) { y += (r() - 0.5) * amp; y = Math.max(base - amp * 3, Math.min(base + amp, y)); pts.push([x, y]); }
+        g.fillStyle = col; g.beginPath(); g.moveTo(0, hz); pts.forEach(function (p) { g.lineTo(p[0], p[1]); }); g.lineTo(w, hz); g.closePath(); g.fill();
+        if (cap) {   // 눈 덮인 산마루
+          g.strokeStyle = cap; g.lineWidth = 10; g.beginPath(); pts.forEach(function (p, i) { if (i) g.lineTo(p[0], p[1] + 4); else g.moveTo(p[0], p[1] + 4); }); g.stroke();
+        }
+      }
+      var dim = night ? 0.35 : dusk ? 0.75 : grey ? 0.85 : 1;
+      function shade(hex, f) { var cc = new T.Color(hex); cc.multiplyScalar(f || dim); return '#' + cc.getHexString(); }
+      ridge(hz - 120, 26, shade('#a9bccb'), 40, winter ? shade('#f2f5f8') : null);
+      ridge(hz - 70, 22, shade('#8fa7b6'), 30, winter ? shade('#e8eef3') : null);
+      for (var b = 0; b < 260; b++) {   // 먼 도시
+        var bx = r() * w, bw = 14 + r() * 46, bh = 18 + Math.pow(r(), 2.2) * 150;
+        g.fillStyle = shade('#' + new T.Color((120 + Math.floor(r() * 30)) / 255, (138 + Math.floor(r() * 25)) / 255, (155 + Math.floor(r() * 25)) / 255).getHexString());
+        g.fillRect(bx, hz - bh, bw, bh);
+        for (var wy = hz - bh + 5; wy < hz - 6; wy += 9) for (var wx = bx + 3; wx < bx + bw - 4; wx += 7) {
+          var on = r();
+          if (night || dusk) { if (on < (night ? 0.45 : 0.2)) { g.fillStyle = r() < 0.8 ? '#ffd98a' : '#cfe3ff'; g.fillRect(wx, wy, 3, 4); } }
+          else if (on < 0.5) { g.fillStyle = 'rgba(235,242,248,0.35)'; g.fillRect(wx, wy, 3, 4); }
+        }
+      }
+      var leaf = SEASON_LEAF[o.season];
+      for (var tt = 0; tt < 900; tt++) {   // 가까운 나무 줄
+        var tx = r() * w, tr = 10 + r() * 22;
+        g.fillStyle = shade('#' + new T.Color(leaf[Math.floor(r() * 4)]).getHexString(), dim * 0.9);
+        g.beginPath(); g.arc(tx, hz - tr * 0.4, tr, 0, Math.PI * 2); g.fill();
+      }
+      var ground = g.createLinearGradient(0, hz, 0, h);
+      var gc = winter ? '#e9eef2' : o.season === 'autumn' ? '#9c9364' : '#7f9a6c';
+      ground.addColorStop(0, shade(gc)); ground.addColorStop(1, shade(gc, dim * 0.88));
+      g.fillStyle = ground; g.fillRect(0, hz, w, h - hz);
+    });
+    t.wrapS = T.RepeatWrapping;
+    panoCache[key] = t;
+    return t;
+  }
+  var facadeNightTex = canvasTex(256, 512, function (g, w, h) {   // 밤에 켜진 건물 창 (발광 그림)
+    var r = rnd(43); g.fillStyle = '#000000'; g.fillRect(0, 0, w, h);
+    for (var y = 12; y < h - 8; y += 32) for (var x = 10; x < w - 10; x += 30) {
+      var lit = r(); r();
+      if (lit < 0.42) { g.fillStyle = lit < 0.34 ? '#ffd58a' : '#bfd8ff'; g.fillRect(x, y, 20, 20); }
+    }
+  }, [1, 1]);
+  facadeNightTex.wrapS = facadeNightTex.wrapT = T.RepeatWrapping;
+  // 비·눈 입자 (건물 바깥 양옆에만, 층마다 새로 만든다)
+  var weatherFx = null;
+  function addWeather(w, back, front, gy) {
+    var N = 4000, pos = new Float32Array(N * 6), sp = new Float32Array(N), r = rnd(71);
+    var box = { x0: w / 2 + 0.4, x1: w / 2 + 26, z0: back - 30, z1: front + 30, y0: gy, y1: CEIL + 14 };
+    for (var i = 0; i < N; i++) {
+      var side = i % 2 ? 1 : -1, x = side * (box.x0 + r() * (box.x1 - box.x0)), y = box.y0 + r() * (box.y1 - box.y0), z = box.z0 + r() * (box.z1 - box.z0);
+      pos[i * 6] = pos[i * 6 + 3] = x; pos[i * 6 + 1] = y; pos[i * 6 + 4] = y - 0.35; pos[i * 6 + 2] = pos[i * 6 + 5] = z; sp[i] = 0.7 + r() * 0.6;
+    }
+    var rainGeo = new T.BufferGeometry(); rainGeo.setAttribute('position', new T.BufferAttribute(pos, 3));
+    var rain = new T.LineSegments(rainGeo, new T.LineBasicMaterial({ color: 0xdfe8f2, transparent: true, opacity: 0.75 }));
+    var sp2 = new Float32Array(N * 3); for (i = 0; i < N; i++) { sp2[i * 3] = pos[i * 6]; sp2[i * 3 + 1] = pos[i * 6 + 1]; sp2[i * 3 + 2] = pos[i * 6 + 2]; }
+    var snowGeo = new T.BufferGeometry(); snowGeo.setAttribute('position', new T.BufferAttribute(sp2, 3));
+    var snow = new T.Points(snowGeo, new T.PointsMaterial({ color: 0xffffff, size: 0.22, map: flakeTex, transparent: true, alphaTest: 0.2, depthWrite: false }));
+    [rain, snow].forEach(function (m) { m.frustumCulled = false; m.visible = false; parent.add(m); });
+    weatherFx = { rain: rain, snow: snow, sp: sp, box: box, N: N };
+  }
+  var flakeTex = canvasTex(32, 32, function (g, w, h) {
+    var gr = g.createRadialGradient(16, 16, 1, 16, 16, 15); gr.addColorStop(0, 'rgba(255,255,255,1)'); gr.addColorStop(1, 'rgba(255,255,255,0)');
+    g.fillStyle = gr; g.fillRect(0, 0, w, h);
+  });
+  function updateWeather(dt, now) {
+    if (!weatherFx || !OUT) return;
+    var f = weatherFx, b = f.box, H = b.y1 - b.y0;
+    if (OUT.weather === 'rain' && f.rain.visible) {
+      var a = f.rain.geometry.attributes.position.array;
+      for (var i = 0; i < f.N; i++) {
+        var o = i * 6, y = a[o + 1] - dt * 16 * f.sp[i];
+        if (y < b.y0) y += H;
+        a[o + 1] = y; a[o + 4] = y - 0.35;
+      }
+      f.rain.geometry.attributes.position.needsUpdate = true;
+    } else if (OUT.weather === 'snow' && f.snow.visible) {
+      var s = f.snow.geometry.attributes.position.array, t = now / 1000;
+      for (var j = 0; j < f.N; j++) {
+        var q = j * 3, yy = s[q + 1] - dt * 1.1 * f.sp[j];
+        if (yy < b.y0) yy += H;
+        s[q + 1] = yy; s[q + 2] += Math.sin(t * 0.8 + j) * dt * 0.25;
+      }
+      f.snow.geometry.attributes.position.needsUpdate = true;
+    }
+  }
+  var streetLamps = [];
+  // 상태를 장면에 입힌다 (층을 다시 짓지 않고 재질·빛·입자만 바꾼다)
+  function applyOutside() {
+    var o = resolveOutside();
+    if (OUT && OUT.time === o.time && OUT.season === o.season && OUT.weather === o.weather && !applyOutside.force) return;
+    applyOutside.force = false;
+    OUT = o;
+    var night = o.time === 'night', dusk = o.time === 'dusk', grey = o.weather !== 'clear', winter = o.season === 'winter';
+    M.pano.map = makePano(o); M.pano.needsUpdate = true;
+    // 바깥 물체는 실내 조명을 같이 받으므로 시간·날씨만큼 색을 어둡게 한다 (밤에는 켜진 창·가로등만 밝게)
+    var f = night ? 0.13 : dusk ? 0.7 : grey ? 0.8 : 1;
+    function tint(m, hex) { m.color.setHex(hex).multiplyScalar(f); }
+    var lc = SEASON_LEAF[o.season]; M.leaf.forEach(function (m, i) { tint(m, lc[i]); });
+    tint(M.grass, winter ? 0xf4f7fa : o.season === 'autumn' ? 0xd8c690 : 0xffffff);
+    M.grass.map = winter ? null : grassTex; M.grass.needsUpdate = true;
+    var wet = o.weather === 'rain';
+    M.road.roughness = wet ? 0.25 : 0.9; tint(M.road, wet ? 0x8a8f96 : winter ? 0xe4e8ec : 0xffffff);
+    M.pave.roughness = wet ? 0.35 : 0.95; tint(M.pave, winter ? 0xf2f4f6 : wet ? 0xb7b4ae : 0xffffff);
+    tint(M.trunk, winter ? 0x5a4a3e : 0x6b4f3a); tint(M.pole, 0x3a3d42);
+    var FC = [0xd9d2c4, 0xb8c2cc, 0xe7e1d6, 0xa9b3ab, 0xcfc4b8];
+    M.facade.forEach(function (m, i) {
+      tint(m, FC[i % FC.length]);
+      m.emissiveMap = (night || dusk) ? facadeNightTex : null; m.emissive.setHex((night || dusk) ? 0xffffff : 0x000000);
+      m.emissiveIntensity = night ? 1 : 0.5; m.needsUpdate = true;
+    });
+    M.streetLight.emissive.setHex(night || dusk || grey ? 0xffe2a8 : 0x000000);
+    M.lightPool.opacity = night ? 1 : dusk ? 0.5 : 0;
+    // 빛: 낮은 지금 그대로, 노을은 따뜻하게 낮게, 밤은 달빛 + 실내 조명
+    var bg = night ? 0x1a2030 : dusk ? 0xe9cdb5 : grey ? 0xd9dcde : 0xf3efe8;
+    scene.background.setHex(bg); scene.fog.color.setHex(bg);
+    scene.fog.near = night ? 70 : 40; scene.fog.far = night ? 170 : 120;
+    sun.color.setHex(night ? 0x9fb4e0 : dusk ? 0xffb27a : 0xfff4e2);
+    sun.intensity = night ? 0.18 : dusk ? 0.6 : grey ? 0.45 : 0.85;
+    if (hemi) { hemi.intensity = night ? 0.5 : grey ? 0.7 : 0.6; hemi.color.setHex(night ? 0xfff1dc : 0xffffff); }
+    if (weatherFx) { weatherFx.rain.visible = o.weather === 'rain'; weatherFx.snow.visible = o.weather === 'snow'; }
+    M.glassPane.opacity = o.weather === 'rain' ? 0.22 : night ? 0.08 : 0.12;
+  }
+  setInterval(function () { applyOutside(); }, 60000);   // 자동(시간·계절·날씨)이면 1분마다 확인
+
 
   // 창 구멍이 난 옆벽: 창 아래·위 띠 + 창 사이 기둥
   function sideWall(x, z0, z1, wins) {
@@ -401,6 +542,13 @@
           crown.scale.set(1 + r() * 0.4, 1.1 + r() * 0.5, 1 + r() * 0.4); crown.rotation.y = r() * 3; add(crown, tx, gy + 3.4 + r() * 0.5, tz);
         });
       }
+      for (var lz = back - 30; lz < front + 30; lz += 14) {   // 가로등 (밤·흐린 날 켜짐)
+        var lx = walkX + side * 2.1;   // 차도 쪽 보도 가장자리
+        var pole = new T.Mesh(unitBox, M.pole); pole.scale.set(0.12, 5, 0.12); add(pole, lx, gy + 2.5, lz);
+        var arm = new T.Mesh(unitBox, M.pole); arm.scale.set(1.1, 0.08, 0.08); add(arm, lx + side * 0.5, gy + 4.95, lz);
+        var bulb = new T.Mesh(unitBox, M.streetLight); bulb.scale.set(0.5, 0.12, 0.28); add(bulb, lx + side * 1.0, gy + 4.85, lz);
+        var pool = new T.Mesh(poolGeo, M.lightPool); pool.rotation.x = -Math.PI / 2; add(pool, lx + side * 1.0, gy + 0.04, lz);   // 바닥 불빛
+      }
       for (var bz = back - 50; bz < front + 50;) {   // 건너편 건물들
         var bw = 10 + r() * 14, bd = 10 + r() * 10, bh = 9 + Math.pow(r(), 1.6) * 34;
         var mat = M.facade[Math.floor(r() * M.facade.length)];
@@ -409,6 +557,7 @@
         bz += bw + 2 + r() * 6;
       }
     });
+    addWeather(w, back, front, gy);
   }
   function addBuilding(fl, cols, rows) {
     var w = cols * BOOTH_W + (cols - 1) * GAP + 12, back = -LOBBY - rows * (BOOTH_D + GAP) - 2, front = 10;
@@ -2156,7 +2305,26 @@
   el('l3d-ppl-save').addEventListener('click', function () { savePeople(false); });
   el('l3d-ppl-auto').addEventListener('click', function () { savePeople(true); });
   el('l3d-ppl-close').addEventListener('click', function () { pplBox.classList.remove('on'); });
+  // 창밖 풍경 설정: 고르는 즉시 미리 보이고, [저장]하면 lib3d.json에 남는다
+  var outBox = el('l3d-out');
+  function openOutside() {
+    setBox.classList.remove('on'); aiBox.classList.remove('on'); pplBox.classList.remove('on'); outBox.classList.add('on');
+    el('l3d-out-time').value = OUTSIDE.time; el('l3d-out-season').value = OUTSIDE.season; el('l3d-out-weather').value = OUTSIDE.weather;
+    el('l3d-out-msg').textContent = '';
+  }
+  function outsideForm() { return { time: el('l3d-out-time').value, season: el('l3d-out-season').value, weather: el('l3d-out-weather').value }; }
+  ['l3d-out-time', 'l3d-out-season', 'l3d-out-weather'].forEach(function (id) {
+    el(id).addEventListener('change', function () { OUTSIDE = outsideForm(); applyOutside.force = true; applyOutside(); el('l3d-out-msg').textContent = '미리 보기 중 - 저장해야 남습니다.'; });
+  });
+  el('l3d-out-save').addEventListener('click', function () {
+    postJSON('api/lib3d/settings', { outside: outsideForm() }).then(function (d) {
+      OUTSIDE = d.outside; applyOutside.force = true; applyOutside(); el('l3d-out-msg').textContent = '저장했습니다.';
+    }).catch(function (e) { el('l3d-out-msg').textContent = e.message; });
+  });
+  el('l3d-out-close').addEventListener('click', function () { outBox.classList.remove('on'); });
+  el('l3d-set-out').addEventListener('click', openOutside);
   function hashNav() {
+    if (location.hash === '#outside') openOutside();
     if (location.hash === '#settings') openSettings();
     if (location.hash === '#ai') openAI();
     if (location.hash === '#people') { if (floors.length) openPeople(); else pendingPeople = true; }
@@ -2250,6 +2418,7 @@
     parent = floorGroup;
     COLS = Math.max(2, Math.min(4, fl.libs.length));
     addBuilding(fl, COLS, Math.ceil(fl.libs.length / COLS));
+    applyOutside.force = true; applyOutside();
     fl.libs.forEach(function (lib, j) { addSection(lib, j); });
     spawnPeople(fl, i + 1);
     booths.forEach(function (b) { b.floor = i; });
@@ -2272,6 +2441,7 @@
         }
         if (d.ai) setAI(d.ai);
         PEOPLE = d.people || {};
+        if (d.outside) OUTSIDE = Object.assign({ time: 'auto', season: 'auto', weather: 'clear' }, d.outside);
         floors = makeFloors(libs);
         floors.forEach(function (f, i) {
           var cols = Math.max(2, Math.min(4, f.libs.length));
@@ -2294,7 +2464,7 @@
     var dt = Math.min(0.05, (now - last) / 1000);
     last = now;
     step(dt);
-    if (!reading) updatePeople(dt, now);
+    if (!reading) { updatePeople(dt, now); updateWeather(dt, now); }
     acc += dt;
     if (acc > 0.3) { acc = 0; loadNear(); where(); }
     if (!reading) renderer.render(scene, camera);

@@ -22,7 +22,7 @@ from urllib.request import Request, urlopen
 
 from . import bookoasis_db, config
 
-VERSION = "2.15.1"
+VERSION = "2.16.0"
 CACHE_SEC = 300
 COVER_WIDTH = 200
 _DATA = {"at": 0.0, "v": None}
@@ -121,6 +121,25 @@ def save_people(people):
         if row:
             clean[str(floor)] = row
     data_ = dict(load_settings(), people=clean)
+    os.makedirs(config.data_dir(), exist_ok=True)
+    tmp = _settings_path() + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data_, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, _settings_path())
+    return clean
+
+
+OUTSIDE_CHOICES = {"time": ("auto", "day", "dusk", "night"), "season": ("auto", "spring", "summer", "autumn", "winter"),
+                   "weather": ("auto", "clear", "cloudy", "rain", "snow")}
+
+
+def save_outside(outside):
+    """창밖 풍경 {"time", "season", "weather"} 저장 (모르는 값은 기본값으로)"""
+    clean = {}
+    for key, choices in OUTSIDE_CHOICES.items():
+        value = str((outside or {}).get(key) or "")
+        clean[key] = value if value in choices else ("clear" if key == "weather" else "auto")
+    data_ = dict(load_settings(), outside=clean)
     os.makedirs(config.data_dir(), exist_ok=True)
     tmp = _settings_path() + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:

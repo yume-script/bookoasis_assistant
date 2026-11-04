@@ -29,6 +29,7 @@
     'chart-column': '<path d="M3 3v16a2 2 0 0 0 2 2h16"/><path d="M8 17v-4"/><path d="M13 17V8"/><path d="M18 17v-7"/>',
     'gear': '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>',
     'users': '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
+    'image': '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21"/>',
     'comment': '<path d="M21 12a8 8 0 0 1-11.6 7.1L3 21l1.9-6.4A8 8 0 1 1 21 12z"/>',
     'circle-question': '<circle cx="12" cy="12" r="10"/><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3"/><path d="M12 17h.01"/>',
     'angles-left': '<path d="m11 17-5-5 5-5"/><path d="m18 17-5-5 5-5"/>',
@@ -71,7 +72,7 @@
     // BookOasis 3D 서재 (.env LIB3D_ENABLED=true): 화면 하나라 탭 막대 없이 #hall
     { id: 'lib3d', title: 'BookOasis 3D 서재', icon: 'cube', href: 'library3d', hashNav: true,
       items: [{ tab: 'hall', label: '둘러보기', icon: 'cube' }, { tab: 'settings', label: '설정', icon: 'gear' },
-               { tab: 'people', label: '인물 수', icon: 'users' }, { tab: 'ai', label: 'AI 설정', icon: 'comment' }] }
+               { tab: 'people', label: '인물 수', icon: 'users' }, { tab: 'outside', label: '창밖 풍경', icon: 'image' }, { tab: 'ai', label: 'AI 설정', icon: 'comment' }] }
   ];
   var THEMES = [
     { id: 'dark', label: '다크', colors: ['#141517', '#1d1f22', '#ececec'] },
