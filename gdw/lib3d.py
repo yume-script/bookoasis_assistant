@@ -22,7 +22,7 @@ from urllib.request import Request, urlopen
 
 from . import bookoasis_db, config
 
-VERSION = "2.22.0"
+VERSION = "2.23.0"
 CACHE_SEC = 300
 COVER_WIDTH = 200
 _DATA = {"at": 0.0, "v": None}
@@ -158,6 +158,70 @@ def save_models(value):
         json.dump(data_, f, ensure_ascii=False, indent=2)
     os.replace(tmp, _settings_path())
     return clean
+
+
+# ── CRARES 건물 현수막 그림: 등록한 주소의 그림을 서버가 받아 두었다가 내려준다 (브라우저 CORS 제한을 피함) ──
+BANNER_MAX = 15 * 1024 * 1024
+BANNER_TTL = 6 * 3600
+
+
+def save_banner(url):
+    url = str(url or "").strip()
+    if url and not re.match(r"^https?://", url, re.I):
+        raise ValueError("그림 주소는 http:// 또는 https://로 시작해야 합니다.")
+    data_ = dict(load_settings(), banner=url)
+    os.makedirs(config.data_dir(), exist_ok=True)
+    tmp = _settings_path() + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data_, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, _settings_path())
+    return url
+
+
+def banner_info():
+    url = load_settings().get("banner") or ""
+    return {"url": url, "v": hashlib.md5(url.encode("utf-8")).hexdigest()[:10] if url else ""}
+
+
+def banner_image(force=False):
+    """(그림 바이트, content-type) - 등록한 주소가 바뀌었거나 6시간이 지나면 다시 받는다"""
+    url = load_settings().get("banner") or ""
+    if not url:
+        raise ValueError("현수막 그림 주소가 없습니다.")
+    path = os.path.join(config.data_dir(), "lib3d_banner.bin")
+    meta_path = path + ".json"
+    try:
+        with open(meta_path, encoding="utf-8") as f:
+            meta = json.load(f)
+    except (OSError, ValueError):
+        meta = {}
+    if not force and meta.get("url") == url and os.path.isfile(path) and time.time() - os.path.getmtime(path) < BANNER_TTL:
+        with open(path, "rb") as f:
+            return f.read(), meta.get("type") or "image/jpeg"
+    req = Request(url, headers={"User-Agent": "Mozilla/5.0 (BookOasisAssistant 3D library)"})
+    try:
+        with urlopen(req, timeout=20) as r:
+            ctype = (r.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+            data_ = r.read(BANNER_MAX + 1)
+    except Exception as error:  # noqa: BLE001 - 못 받으면 예전 그림이라도
+        if meta.get("url") == url and os.path.isfile(path):
+            with open(path, "rb") as f:
+                return f.read(), meta.get("type") or "image/jpeg"
+        raise ValueError("현수막 그림을 받지 못했습니다: %s" % error) from error
+    if len(data_) > BANNER_MAX:
+        raise ValueError("현수막 그림이 너무 큽니다 (15MB 넘음).")
+    if not ctype.startswith("image/"):
+        sig = data_[:12]
+        ctype = ("image/jpeg" if sig[:3] == b"\xff\xd8\xff" else "image/png" if sig[:8] == b"\x89PNG\r\n\x1a\n"
+                 else "image/gif" if sig[:4] == b"GIF8" else "image/webp" if sig[8:12] == b"WEBP" else "")
+        if not ctype:
+            raise ValueError("그 주소는 그림(jpg·png·gif·webp)이 아닙니다.")
+    os.makedirs(config.data_dir(), exist_ok=True)
+    with open(path, "wb") as f:
+        f.write(data_)
+    with open(meta_path, "w", encoding="utf-8") as f:
+        json.dump({"url": url, "type": ctype}, f)
+    return data_, ctype
 
 
 def all_libraries():

@@ -757,6 +757,28 @@
       c.g.position.z = z;
     }
   }
+  // CRARES 건물 현수막: 설정에 그림 주소가 있으면 간판 아래 벽에 건다 (그림은 서버가 받아 둔 것을 쓴다)
+  var CRARES = null, bannerMesh = null, BANNER = { url: '', v: '' };
+  function placeBanner() {
+    if (bannerMesh && bannerMesh.parent) { bannerMesh.parent.remove(bannerMesh); disposeGroup(bannerMesh); }
+    bannerMesh = null;
+    if (!CRARES || !BANNER.url || !floorGroup) return;
+    var spot = CRARES, holder = floorGroup;
+    loader.load('api/lib3d/banner?v=' + encodeURIComponent(BANNER.v), function (tex) {
+      if (spot !== CRARES || holder !== floorGroup) { tex.dispose(); return; }   // 그새 층이 바뀜
+      tex.encoding = T.sRGBEncoding; tex.anisotropy = 8;
+      var iw = tex.image.width || 1, ih = tex.image.height || 1, maxH = Math.max(2, spot.top - spot.bottom);
+      var w = spot.maxW, h = w * ih / iw;
+      if (h > maxH) { h = maxH; w = h * iw / ih; }
+      var g = new T.Group(); g.position.set(spot.face - spot.side * 0.25, spot.top - h / 2, spot.z); g.rotation.y = -spot.side * Math.PI / 2;
+      var pic = new T.Mesh(new T.PlaneGeometry(w, h), new T.MeshBasicMaterial({ map: tex, toneMapped: false, side: T.DoubleSide }));
+      g.add(pic);
+      [h / 2 + 0.06, -h / 2 - 0.06].forEach(function (y) {   // 현수막 위아래 봉
+        var bar = new T.Mesh(new T.CylinderGeometry(0.05, 0.05, w + 0.3, 10), M.pole); bar.rotation.z = Math.PI / 2; bar.position.set(0, y, 0.02); g.add(bar);
+      });
+      holder.add(g); bannerMesh = g;
+    }, undefined, function () { console.warn('3D 서재 현수막 그림을 불러오지 못했습니다.'); });
+  }
   // 건너편 건물 간판 이름 (오른쪽 서재 옆 건물은 (주)CRARES)
   var SIGN_NAMES = ['betty2859', 'C-Rhapsody', 'colaiuta', 'daydreamrabbit', 'grandfoxx', 'javara999', 'madnite1', 'venushoon'];
   var SIGN_COLORS = [['#1d3557', '#f1faee'], ['#7a1f2b', '#fff4e6'], ['#f4f1ea', '#1d1e20'], ['#2d6a4f', '#ffffff'], ['#f2b705', '#1d1e20'],
@@ -769,6 +791,7 @@
     pano.rotation.y = floorIdx * 1.3;
     var len = d + 120;
     var signed = { crares: false, next: 0 };
+    CRARES = null; bannerMesh = null;
     [1, -1].forEach(function (side) {
       var walkX = side * (w / 2 + 2.5), roadX = side * (w / 2 + 9), farWalkX = side * (w / 2 + 15.5);
       var walk = new T.Mesh(new T.PlaneGeometry(5, len), M.pave); walk.rotation.x = -Math.PI / 2; add(walk, walkX, gy + 0.02, cz);
@@ -807,7 +830,10 @@
         else if (mid > back - 35 && mid < front + 35 && signed.next < SIGN_NAMES.length) nm = SIGN_NAMES[signed.next++];
         if (nm) {
           var sw = Math.min(bw * 0.85, 11), sh = sw * 0.22, sy = gy + Math.min(bh - sh, 14), sx = bx - side * (bd / 2 + 0.2), sc0 = SIGN_COLORS[(signed.next + (side > 0 ? 0 : 3)) % SIGN_COLORS.length];
-          if (nm === '(주)CRARES') sc0 = ['#14181f', '#ffffff'];
+          if (nm === '(주)CRARES') {
+            sc0 = ['#14181f', '#ffffff'];
+            CRARES = { face: bx - side * (bd / 2), side: side, z: mid, top: sy - sh / 2 - 0.5, bottom: gy + 4.6, maxW: Math.min(bw * 0.75, 9) };
+          }
           var sign = new T.Mesh(new T.PlaneGeometry(sw, sh), new T.MeshBasicMaterial({ map: textTex([nm], 1024, 224, sc0[0], sc0[1], nm.length > 10 ? 120 : 150), toneMapped: false }));
           sign.rotation.y = -side * Math.PI / 2; add(sign, sx, sy, mid);   // 서재 쪽을 보게
           var sbk = new T.Mesh(unitBox, M.pole); sbk.scale.set(0.15, sh + 0.25, sw + 0.25); add(sbk, bx - side * (bd / 2 + 0.05), sy, mid);
@@ -818,6 +844,7 @@
     });
     addWeather(w, back, front, gy);
     addCars(w, back, front, gy);
+    setTimeout(placeBanner, 0);   // 층을 다 지은 뒤
   }
   function addBuilding(fl, cols, rows) {
     var w = cols * BOOTH_W + (cols - 1) * GAP + 12, back = -LOBBY - rows * (BOOTH_D + GAP) - 2, front = 10;
@@ -2600,6 +2627,7 @@
   var outBox = el('l3d-out');
   function openOutside() {
     setBox.classList.remove('on'); aiBox.classList.remove('on'); pplBox.classList.remove('on'); outBox.classList.add('on');
+    el('l3d-out-banner').value = BANNER.url || '';
     el('l3d-out-time').value = OUTSIDE.time; el('l3d-out-season').value = OUTSIDE.season; el('l3d-out-weather').value = OUTSIDE.weather;
     el('l3d-out-msg').textContent = '';
   }
@@ -2613,6 +2641,13 @@
     }).catch(function (e) { el('l3d-out-msg').textContent = e.message; });
   });
   el('l3d-out-close').addEventListener('click', function () { outBox.classList.remove('on'); });
+  el('l3d-out-banner-save').addEventListener('click', function () {
+    el('l3d-out-msg').textContent = '그림을 받아 보는 중...';
+    postJSON('api/lib3d/settings', { banner: el('l3d-out-banner').value.trim() }).then(function (d) {
+      BANNER = d.banner; placeBanner();
+      el('l3d-out-msg').textContent = BANNER.url ? '저장했습니다. 오른쪽 창밖 CRARES 건물에 걸었습니다.' : '현수막을 내렸습니다.';
+    }).catch(function (e) { el('l3d-out-msg').textContent = e.message; });
+  });
   el('l3d-set-out').addEventListener('click', openOutside);
   // 3D 모형: 지금 그대로(코드로 그린 가구) | 모형 파일
   var mdlBox = el('l3d-mdl');
@@ -2792,6 +2827,7 @@
         if (d.ai) setAI(d.ai);
         PEOPLE = d.people || {};
         MODELS = d.models === 'real' ? 'real' : 'basic'; loadReal();
+        if (d.banner) { BANNER = d.banner; if (el('l3d-out').classList.contains('on')) el('l3d-out-banner').value = BANNER.url || ''; }
         if (d.outside) OUTSIDE = Object.assign({ time: 'auto', season: 'auto', weather: 'clear' }, d.outside);
         floors = makeFloors(libs);
         floors.forEach(function (f, i) {

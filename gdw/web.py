@@ -328,7 +328,11 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, dict(lib3d.data(force=bool(q.get("refresh"))), ai=lib3d_ai.flags(),
                                             people=lib3d.load_settings().get("people") or {},
                                             outside=lib3d.load_settings().get("outside") or {},
-                                            models=lib3d.load_settings().get("models") or "basic", success=True))
+                                            models=lib3d.load_settings().get("models") or "basic",
+                                            banner=lib3d.banner_info(), success=True))
+            if path == "/api/lib3d/banner":   # CRARES 건물 현수막 그림 (서버가 받아 둔 것)
+                raw, ctype = lib3d.banner_image(force=bool(q.get("force")))
+                return self._send(200, raw, ctype, extra={"Cache-Control": "private, max-age=600"})
             # AI: 손님 대화 / 설정 / BookOasis MCP 연결 시험
             if path == "/api/lib3d/ai/settings":
                 return self._send(200, dict(lib3d_ai.settings(), success=True))
@@ -444,6 +448,14 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/lib3d/settings":  # 3D 서재 설정: 보여 줄 보관함 ({"libraries": [키…] 또는 null=전부})
             if not modules()["lib3d"]:
                 return self._send(404, {"success": False, "error": "BookOasis 3D 서재가 꺼져 있습니다 (LIB3D_ENABLED)."})
+            if "banner" in context and "libraries" not in context:   # CRARES 현수막 그림 주소만 저장
+                try:
+                    url = lib3d.save_banner(context.get("banner"))
+                    if url:
+                        lib3d.banner_image(force=True)   # 바로 받아 보고 못 받으면 알린다
+                    return self._send(200, {"success": True, "banner": lib3d.banner_info()})
+                except ValueError as e:
+                    return self._send(400, {"success": False, "error": str(e), "banner": lib3d.banner_info()})
             if "models" in context and "libraries" not in context:   # 3D 모형 선택만 저장
                 return self._send(200, {"success": True, "models": lib3d.save_models(context.get("models"))})
             if "outside" in context and "libraries" not in context:   # 창밖 풍경만 저장
