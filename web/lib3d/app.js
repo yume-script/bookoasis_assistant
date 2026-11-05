@@ -252,12 +252,12 @@
     parent.add(g);
     g.updateMatrixWorld(true);
     var queue = lib.series.slice();
-    // 평대 (가장 최근 작품 표지를 눕혀서)
+    // 평대 (작품 표지를 눕혀서)
     var tbl = new T.Group(); tbl.position.set(0, 0, 1.6); g.add(tbl);
     var top = new T.Mesh(new T.BoxGeometry(2.8, 0.05, 1.3), M.oak); top.position.y = 0.82; top.castShadow = top.receiveShadow = true; tbl.add(top);
     var body = new T.Mesh(new T.BoxGeometry(2.6, 0.78, 1.1), M.white); body.position.y = 0.4; body.castShadow = body.receiveShadow = true; tbl.add(body);
-    for (var t = 0; t < 10 && queue.length; t++) {
-      var b = makeBook('flat', queue.shift(), lib);
+    for (var t = 0; t < 10 && queue.length; t++) {   // 평대: 들어올 때마다 이 보관함 작품 중 무작위 10개 (책장에서는 뺀다)
+      var b = makeBook('flat', queue.splice(Math.floor(Math.random() * queue.length), 1)[0], lib);
       b.mesh.rotation.x = -Math.PI / 2;
       b.mesh.rotation.z = ((hashStr(b.title) % 7) - 3) * 0.02;
       b.mesh.position.set(-1.12 + (t % 5) * 0.56, 0.86, -0.27 + Math.floor(t / 5) * 0.55);
