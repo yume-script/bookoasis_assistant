@@ -64,7 +64,28 @@ cd /mnt/bookoasis_assistant && git pull && systemctl restart bookoasis_assistant
 
 3D 모형 파일 출처: GlamVelvetSofa·ChairDamaskPurplegold (© Wayfair, Eric Chadwick, CC BY 4.0), DiffuseTransmissionPlant (© Darmstadt Graphics Group, CC BY 4.0) - Khronos glTF Sample Assets / Ferrari 458 Italia (vicent091036, three.js 예제). 사람 모형은 three.js 예제의 Xbot·Michelle·readyplayer.me·스톰트루퍼·엘프를 씁니다.
 
-## 4. AI: 손님 대화 · 질문하기 (선택)
+## 4. 여러 사람이 쓰기 (관리자 · 관람자 · 함께 보기)
+
+### 계정과 권한
+사이드바 아래 [설정 > 사용자]에서 사람을 추가하고 권한을 고릅니다. 예전부터 있던 계정은 모두 관리자입니다.
+
+| 권한 | 쓸 수 있는 것 |
+|---|---|
+| 관리자 | 모든 화면 (웹툰 다운로더·드라이브 감시·미니게임·3D 서재와 그 설정·사용자 관리) |
+| 관람자 | **3D 서재 둘러보기·읽기·함께 보기만**. 로그인하면 바로 3D 서재로 가고, 다른 화면·설정·질문하기는 서버에서 막힘 (자기 비밀번호 변경·로그아웃은 가능) |
+| 관람자 (성인 층 허용) | 위와 같고 2층 성인 서재도 보임. 허용하지 않은 관람자에게는 성인 층·표지·책 열기가 모두 막힘 |
+
+- 관리자가 한 명은 남아야 하고, 자기 자신을 관람자로 내리거나 지울 수 없습니다.
+- 3D 서재 설정(보관함·인물 수·창밖 풍경·3D 모형·현수막·AI)은 관리자만 바꾸며, 모두에게 같이 적용됩니다.
+- 읽던 쪽·마지막 자리는 **사람마다** 따로 기억합니다(이 브라우저에, 계정별로).
+
+### 함께 보기
+같은 시간에 3D 서재에 들어온 사람끼리 서로 보입니다. 따로 켤 것은 없습니다.
+- 같은 층의 다른 사람이 이름표를 단 사람 모형으로 걸어 다니고, 왼쪽 위에 "함께 보는 사람 N · 이름(층 · 읽는 중)"이 나옵니다.
+- 왼쪽 아래 **채팅**: Enter로 보내면 모두에게 보이고, 같은 층 사람이면 그 사람 머리 위에 말풍선이 잠깐 뜹니다. 💬 버튼으로 접기.
+- 위치는 0.4초마다 서버와 주고받습니다(서버 메모리에만, 다시 시작하면 채팅도 비워짐). 몇 명~십여 명 규모에 맞춘 방식입니다.
+
+## 5. AI: 손님 대화 · 질문하기 (선택)
 
 [3D 서재 > AI 설정]에서 켭니다. 값은 `.env`에 저장됩니다(파일 권한 0600). 유료 API면 호출마다 요금이 듭니다.
 
@@ -75,7 +96,7 @@ cd /mnt/bookoasis_assistant && git pull && systemctl restart bookoasis_assistant
 | API 키 | `LIB3D_AI_API_KEY` | anthropic에서 비우면 `ANTHROPIC_API_KEY` |
 | 모델 | `LIB3D_AI_MODEL` | 게이트웨이에 등록된 이름 그대로 (예 `gemini-free3_1`). anthropic은 비우면 `claude-opus-5-5` |
 | 손님 대화 | `LIB3D_AI_CHAT`, `LIB3D_AI_CHAT_SEC` | 층마다 두 손님이 무작위 책 한 권(제목·작가·장르·줄거리)을 두고 나누는 말을 말풍선으로. 간격(기본 60초)보다 자주 부르지 않고, 가까이 있고 탭이 보일 때만 부름 |
-| 질문하기 | `LIB3D_AI_ASK`, `LIB3D_MCP_COMMAND`, `LIB3D_MCP_SERVERS`, `LIB3D_AI_BUILTIN` | 아래 [질문] 버튼 → LLM이 BookOasis MCP(서재)·기본 도구(시각·날씨·웹 페이지)·추가 MCP로 찾아 답함 (모델이 도구 호출을 지원해야 함) |
+| 질문하기 (관리자만) | `LIB3D_AI_ASK`, `LIB3D_MCP_COMMAND`, `LIB3D_MCP_SERVERS`, `LIB3D_AI_BUILTIN` | 아래 [질문] 버튼 → LLM이 BookOasis MCP(서재)·기본 도구(시각·날씨·웹 페이지)·추가 MCP로 찾아 답함 (모델이 도구 호출을 지원해야 함) |
 
 ### 기본 도구 · 추가 MCP
 
@@ -114,7 +135,7 @@ docker exec -i bookoasis python3 tools/mcp_server.py
 - 이 프로그램 자체를 도커로 돌리면 컨테이너 안에서 `docker` 명령을 쓸 수 없는 경우가 많습니다. 그때는 이 프로그램을 서버에 직접 설치하거나, 컨테이너에 도커 소켓(`/var/run/docker.sock`)과 docker CLI를 넣어야 합니다.
 - 입력한 뒤 **[MCP 연결 시험]** 을 눌러 "연결됨 - 쓸 수 있는 도구 N개"가 나오는지 확인하세요.
 
-## 5. 자주 막히는 곳
+## 6. 자주 막히는 곳
 
 | 증상 | 확인할 것 |
 |---|---|

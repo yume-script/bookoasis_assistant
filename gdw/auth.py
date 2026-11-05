@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
 """사용자 계정과 로그인 세션 (YMPlayer auth.py와 같은 방식)
 
-- 사용자: DATA_DIR/users.json  [{"username", "salt", "hash", "iterations", "pw_ver", "created"}]
-  관리 화면이라 로그인한 사람은 모두 관리자다. 비밀번호는 PBKDF2-SHA256(20만 번)으로만 저장한다.
+- 사용자: DATA_DIR/users.json  [{"username", "salt", "hash", "iterations", "pw_ver", "created", "role", "adult"}]
+  role: admin(관리자, 기본 - 예전 사용자도 관리자) | viewer(관람자: 3D 서재 보기·읽기만), adult: 관람자의 성인 층 허용.
+  비밀번호는 PBKDF2-SHA256(20만 번)으로만 저장한다.
 - 세션: 서명한 쿠키 하나 (gdw_session). 내용 = 사용자명|만료시각|pw_ver, 서명 = HMAC-SHA256(DATA_DIR/secret.key).
   비밀번호를 바꾸거나 사용자를 지우면 pw_ver가 바뀌거나 사용자가 없어져서 그 사람의 기존 쿠키는 바로 무효.
 - 처음 실행: 사용자가 하나도 없으면
@@ -90,8 +91,24 @@ def find_user(username):
     return next((u for u in load_users() if u["username"].lower() == username), None)
 
 
+ROLES = ("admin", "viewer")
+
+
+def role_of(u):
+    return "viewer" if (u or {}).get("role") == "viewer" else "admin"
+
+
+def is_admin(u):
+    return role_of(u) == "admin"
+
+
+def adult_ok(u):
+    """성인 서재(층)를 볼 수 있는지: 관리자는 늘, 관람자는 허용했을 때만"""
+    return is_admin(u) or bool((u or {}).get("adult"))
+
+
 def public_user(u):
-    return {"username": u["username"], "role": "admin", "created": u.get("created")}
+    return {"username": u["username"], "role": role_of(u), "adult": adult_ok(u), "created": u.get("created")}
 
 
 def _hash(password, salt, iterations=ITERATIONS):
@@ -108,7 +125,7 @@ def _new_secret_fields(password):
     return {"salt": salt.hex(), "hash": _hash(password, salt), "iterations": ITERATIONS, "pw_ver": secrets.token_hex(4)}
 
 
-def create_user(username, password, check_rules=True):
+def create_user(username, password, check_rules=True, role="admin", adult=False):
     username = str(username or "").strip()
     if not USERNAME_RE.match(username):
         raise AuthError("아이디는 2~32자의 영문/숫자/한글과 _ . @ - 만 쓸 수 있습니다.")
@@ -119,7 +136,8 @@ def create_user(username, password, check_rules=True):
     users = load_users()
     if any(u["username"].lower() == username.lower() for u in users):
         raise AuthError("이미 있는 아이디입니다.")
-    user = {"username": username, **_new_secret_fields(password), "created": int(time.time())}
+    user = {"username": username, **_new_secret_fields(password), "created": int(time.time()),
+            "role": "viewer" if role == "viewer" else "admin", "adult": bool(adult)}
     users.append(user)
     save_users(users)
     return public_user(user)
@@ -137,6 +155,22 @@ def set_password(username, password):
     return user
 
 
+def set_role(username, role, adult=False, acting=None):
+    """권한 바꾸기. 관리자가 한 명도 안 남게 되거나 자기 자신을 관람자로 내리는 것은 막는다."""
+    users = load_users()
+    user = next((u for u in users if u["username"].lower() == str(username).lower()), None)
+    if not user:
+        raise AuthError("없는 사용자입니다.")
+    role = "viewer" if role == "viewer" else "admin"
+    if role == "viewer" and acting and acting.lower() == user["username"].lower():
+        raise AuthError("자기 자신은 관람자로 바꿀 수 없습니다.")
+    if role == "viewer" and is_admin(user) and sum(1 for u in users if is_admin(u)) <= 1:
+        raise AuthError("관리자가 한 명은 있어야 합니다.")
+    user["role"], user["adult"] = role, bool(adult)
+    save_users(users)
+    return public_user(user)
+
+
 def delete_user(username, acting=None):
     users = load_users()
     user = next((u for u in users if u["username"].lower() == str(username).lower()), None)
@@ -146,6 +180,8 @@ def delete_user(username, acting=None):
         raise AuthError("자기 자신은 지울 수 없습니다.")
     if len(users) <= 1:
         raise AuthError("사용자가 한 명은 있어야 합니다.")
+    if is_admin(user) and sum(1 for u in users if is_admin(u)) <= 1:
+        raise AuthError("관리자가 한 명은 있어야 합니다.")
     save_users([u for u in users if u is not user])
 
 

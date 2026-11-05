@@ -358,7 +358,7 @@ venv\Scripts\python app.py
 
 ## BookOasis 3D 서재
 `/library3d` (사이드바 **BookOasis 3D 서재**, `.env`의 `LIB3D_ENABLED=true` + `BOOKOASIS_DB_URL` 필요). BookOasis 서재를 서점 건물로 지어 걸어 다니며 둘러보고 그 자리에서 읽습니다.
-켜는 법·설정(보관함·인물 수·창밖 풍경·3D 모형)·AI 손님 대화와 BookOasis MCP 질문하기·자주 막히는 곳은 **[3D 서재 가이드](docs/guide_lib3d.md)** 를 보세요.
+켜는 법·설정(보관함·인물 수·창밖 풍경·3D 모형)·여러 사람이 쓰기(관리자/관람자 권한, 함께 보기·채팅)·AI 손님 대화와 BookOasis MCP 질문하기·자주 막히는 곳은 **[3D 서재 가이드](docs/guide_lib3d.md)** 를 보세요.
 
 ## 미니게임
 `/games` (사이드바 **미니게임**). 게임 12종이 사이드바 서브 메뉴로 나오고, 주소의 `#게임id`(예: `/games#tetris`)로 바로 열 수 있습니다.

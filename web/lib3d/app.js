@@ -1051,6 +1051,7 @@
     if (cur < 0 || !floorGroup) return;
     people.forEach(function (q) { floorGroup.remove(q.g); disposeGroup(q.g); });
     parent = floorGroup; spawnPeople(floors[cur], cur + 1); parent = scene; dimEnv(floorGroup);
+    if (remotes) Object.keys(remotes).forEach(dropRemote);   // 함께 보는 사람도 새 모형으로 다시
   }
   // three.js 예제의 Collada 모형: 걷는 스톰트루퍼(뼈대·동작 포함)와 받침대 위 엘프 피규어(정지 모형)
   var COLLADA_BASE = 'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r175/examples/models/collada/';
@@ -2037,13 +2038,13 @@
   function savePos() {
     if (cur < 0 || !floors[cur]) return;
     try {
-      localStorage.setItem(POS_KEY, JSON.stringify({ floor: floors[cur].key, x: +camera.position.x.toFixed(2), z: +camera.position.z.toFixed(2),
+      localStorage.setItem(ukey(POS_KEY), JSON.stringify({ floor: floors[cur].key, x: +camera.position.x.toFixed(2), z: +camera.position.z.toFixed(2),
                                                      yaw: +yaw.toFixed(3), pitch: +pitch.toFixed(3) }));
     } catch (e) { /* 저장 못 하면 다음에 입구에서 시작 */ }
   }
   function restorePos() {   // 처음 지을 때 한 번: 저장한 층을 짓고 그 자리로. 못 하면 false
     var p = null;
-    try { p = JSON.parse(localStorage.getItem(POS_KEY) || 'null'); } catch (e) { p = null; }
+    try { p = JSON.parse(localStorage.getItem(ukey(POS_KEY)) || 'null'); } catch (e) { p = null; }
     if (!p || typeof p.x !== 'number') return false;
     var idx = floors.map(function (f) { return f.key; }).indexOf(p.floor);
     if (idx < 0) return false;
@@ -2251,7 +2252,7 @@
     R.box.classList.add('on'); note('불러오는 중...');
     el('l3d-r-title').textContent = b.title;
     var saved = null;
-    try { saved = JSON.parse(localStorage.getItem('l3d_read_' + b.key) || 'null'); } catch (e) { saved = null; }
+    try { saved = JSON.parse(localStorage.getItem(ukey('l3d_read_' + b.key)) || 'null'); } catch (e) { saved = null; }
     try { R.rtl = localStorage.getItem('l3d_rtl') === '1'; } catch (e) { R.rtl = false; }
     R.series = b.key;
     api('api/lib3d/volumes?k=' + encodeURIComponent(b.key)).then(function (d) {
@@ -2269,7 +2270,7 @@
   function remember() {
     if (!R.info) return;
     var at = R.info.kind === 'epub' ? { c: R.chap || 0, p: R.idx } : R.idx;
-    try { localStorage.setItem('l3d_read_' + R.series, JSON.stringify({ key: R.info.key, page: at })); } catch (e) { /* 무시 */ }
+    try { localStorage.setItem(ukey('l3d_read_' + R.series), JSON.stringify({ key: R.info.key, page: at })); } catch (e) { /* 무시 */ }
   }
   function loadVolume(i, page) {
     var v = R.list[i];
@@ -2727,6 +2728,7 @@
     }).catch(function (e) { el('l3d-mdl-msg').textContent = e.message; });
   });
   function hashNav() {
+    if (ME && ME.role === 'viewer') return;
     if (location.hash === '#outside') openOutside();
     if (location.hash === '#models') openModels();
     if (location.hash === '#settings') openSettings();
@@ -2883,6 +2885,7 @@
             ((d.errors || []).length ? ' (' + d.errors.join(' / ') + ')' : '');
           return;
         }
+        applyMe(d.me);
         if (d.ai) setAI(d.ai);
         PEOPLE = d.people || {};
         MODELS = d.models === 'real' ? 'real' : 'basic'; loadReal();
@@ -2904,13 +2907,143 @@
       .catch(function (e) { msg.textContent = '불러오지 못했습니다: ' + e.message; });
   }
 
+  // ── 함께 보기: 0.4초마다 내 위치를 보내고, 같은 층 사람들을 이름표 단 사람으로 보여 준다 + 채팅 ──
+  var ME = null;                    // {username, role, adult} (서재 데이터와 함께 받음)
+  function ukey(k) { return ME ? k + '@' + ME.username : k; }   // 같은 브라우저를 여러 사람이 써도 기억을 따로
+  var remotes = {};                 // 사용자 → 사람 모형 {g, mixer, acts, tag, tx, tz, tyaw, msg, msgUntil}
+  var chatSince = 0, presBusy = false, onlineList = [];
+  function nameTag(name, msg) {   // 머리 위 이름표 (말하면 말풍선 위에 한 줄)
+    var c = document.createElement('canvas'); c.width = 512; c.height = msg ? 220 : 90;
+    var g = c.getContext('2d');
+    function pill(y, h, bg, fg, text, size, bold) {
+      g.font = (bold ? '700 ' : '500 ') + size + 'px ' + FONT;
+      var w = Math.min(500, g.measureText(text).width + 40), x = (512 - w) / 2;
+      g.fillStyle = bg; g.beginPath(); g.moveTo(x + h / 2, y); g.lineTo(x + w - h / 2, y); g.arc(x + w - h / 2, y + h / 2, h / 2, -Math.PI / 2, Math.PI / 2);
+      g.lineTo(x + h / 2, y + h); g.arc(x + h / 2, y + h / 2, h / 2, Math.PI / 2, Math.PI * 1.5); g.fill();
+      g.fillStyle = fg; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(text, 256, y + h / 2 + 2, 470);
+    }
+    if (msg) {
+      var line = msg.length > 26 ? msg.slice(0, 25) + '…' : msg;
+      pill(10, 100, 'rgba(255,255,255,0.96)', '#1d1e20', line, 40, false);
+    }
+    pill(c.height - 78, 66, 'rgba(20,21,23,0.82)', '#ffd166', name, 36, true);
+    var tex = new T.CanvasTexture(c); tex.encoding = T.sRGBEncoding;
+    var sp = new T.Sprite(new T.SpriteMaterial({ map: tex, depthTest: false, transparent: true }));
+    sp.scale.set(1.6, 1.6 * c.height / 512, 1); sp.renderOrder = 10;
+    return sp;
+  }
+  function setTag(p, name, msg) {
+    if (p.tag) { p.g.remove(p.tag); p.tag.material.map.dispose(); p.tag.material.dispose(); }
+    p.tag = nameTag(name, msg); p.tag.position.y = 2.1 + (msg ? 0.2 : 0); p.g.add(p.tag);
+  }
+  function makeRemote(name) {
+    var p = makePerson(hashStr(name) % 100000 + 7);
+    p.kind = 'remote'; p.remote = name; p.walkW = 0;
+    setTag(p, name, '');
+    return p;
+  }
+  function updateRemote(p, dt) {
+    var dx = p.tx - p.g.position.x, dz = p.tz - p.g.position.z, d = Math.hypot(dx, dz);
+    if (d > 6) { p.g.position.x = p.tx; p.g.position.z = p.tz; d = 0; }   // 엘리베이터·지도 이동은 바로
+    var k = Math.min(1, dt * 6);
+    p.g.position.x += dx * k; p.g.position.z += dz * k;
+    var cy = p.g.rotation.y, diff = Math.atan2(Math.sin(p.tyaw - cy), Math.cos(p.tyaw - cy));
+    p.g.rotation.y = cy + diff * Math.min(1, dt * 8);
+    var moving = p.moving || d > 0.08;
+    p.walkW += ((moving ? 1 : 0) - p.walkW) * Math.min(1, dt * 5);
+    if (p.mixer) {
+      if (p.acts.walk) { p.acts.walk.setEffectiveWeight(p.walkW); p.acts.walk.timeScale = 1.1; }
+      if (p.acts.idle) p.acts.idle.setEffectiveWeight(1 - p.walkW);
+      p.mixer.update(dt);
+    }
+    if (p.msgUntil && performance.now() > p.msgUntil) { p.msgUntil = 0; setTag(p, p.remote, ''); }
+    p.g.visible = Math.hypot(camera.position.x - p.g.position.x, camera.position.z - p.g.position.z) > 0.9;   // 내 자리와 겹치면 숨김
+  }
+  function dropRemote(name) {
+    var p = remotes[name]; if (!p) return;
+    if (p.g.parent) p.g.parent.remove(p.g);
+    disposeGroup(p.g); delete remotes[name];
+  }
+  function syncRemotes(list) {
+    var seen = {};
+    list.forEach(function (o) {
+      seen[o.user] = true;
+      var p = remotes[o.user];
+      if (p && p.g.parent !== floorGroup) { dropRemote(o.user); p = null; }   // 층을 다시 지었으면 새로
+      if (!p) {
+        p = remotes[o.user] = makeRemote(o.user);
+        p.g.position.set(o.x, 0, o.z); p.g.rotation.y = o.yaw;
+        floorGroup.add(p.g);
+        dimEnv(p.g);
+      }
+      p.tx = o.x; p.tz = o.z; p.tyaw = o.yaw; p.moving = o.moving; p.readingTitle = o.reading;
+    });
+    Object.keys(remotes).forEach(function (n) { if (!seen[n]) dropRemote(n); });
+  }
+  // 채팅
+  var chatLog = el('l3d-chat-log'), chatIn = el('l3d-chat-in');
+  function chatLine(m) {
+    var d = document.createElement('div'); d.className = 'l3d-chat-line';
+    var who = document.createElement('b'); who.textContent = m.user + (m.floor && floors[cur] && m.floor !== floors[cur].key ? ' (' + floorLabel(m.floor) + ')' : '');
+    d.appendChild(who); d.appendChild(document.createTextNode(' ' + m.text));
+    chatLog.appendChild(d);
+    while (chatLog.children.length > 30) chatLog.removeChild(chatLog.firstChild);
+    chatLog.scrollTop = chatLog.scrollHeight;
+    var p = remotes[m.user];
+    if (p && Date.now() / 1000 - m.t < 20) { setTag(p, m.user, m.text); p.msgUntil = performance.now() + 7000; }
+  }
+  function floorLabel(key) {
+    var f = floors.filter(function (x) { return x.key === key; })[0];
+    return f ? f.label.split(' ')[0] : (FLOOR_NAMES[key] || key || '?');
+  }
+  function onlineChip() {
+    var chip = el('l3d-online'), others = onlineList.filter(function (o) { return !ME || o.user !== ME.username; });
+    chip.hidden = !others.length;
+    chip.textContent = '함께 보는 사람 ' + others.length + ' · ' + others.map(function (o) {
+      return o.user + '(' + floorLabel(o.floor) + (o.reading ? ' · 읽는 중' : '') + ')';
+    }).join(', ');
+  }
+  function presenceTick() {
+    if (presBusy || !floors.length || cur < 0 || !floors[cur] || document.visibilityState !== 'visible') return;
+    presBusy = true;
+    var body = { floor: floors[cur].key, x: +camera.position.x.toFixed(2), z: +camera.position.z.toFixed(2), yaw: +(yaw + Math.PI).toFixed(3),
+                 moving: !!(keys.w || keys.s || keys.a || keys.d || keys.arrowup || keys.arrowdown || moveStick.x || moveStick.y),
+                 reading: reading ? el('l3d-r-title').textContent : null, since: chatSince };
+    fetch('api/lib3d/presence', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (!d.success) return;
+        syncRemotes(d.others || []);
+        onlineList = d.online || []; onlineChip();
+        (d.chat || []).forEach(function (m) { if (m.id > chatSince) chatLine(m); });
+        chatSince = Math.max(chatSince, d.chat_id || 0);
+      }).catch(function (e) { console.warn('3D 서재 함께 보기:', e && e.message); })
+      .then(function () { presBusy = false; });
+  }
+  setInterval(presenceTick, 400);
+  chatIn.addEventListener('keydown', function (e) {
+    e.stopPropagation();
+    if (e.key !== 'Enter' || e.isComposing) return;
+    var text = chatIn.value.trim(); if (!text || !floors[cur]) return;
+    chatIn.value = '';
+    postJSON('api/lib3d/say', { text: text, floor: floors[cur].key }).then(presenceTick)
+      .catch(function (er) { var m = { user: '알림', text: er.message, t: Date.now() / 1000 }; chatLine(m); });
+  });
+  el('l3d-chat-toggle').addEventListener('click', function () { el('l3d-chat').classList.toggle('min'); });
+  function applyMe(me) {   // 관람자: 설정 버튼·질문하기를 숨긴다 (서버도 막음)
+    ME = me || null;
+    var viewer = ME && ME.role === 'viewer';
+    ['l3d-set-btn'].forEach(function (id) { el(id).hidden = viewer; });
+    if (viewer) ['l3d-set', 'l3d-ai', 'l3d-ppl', 'l3d-out', 'l3d-mdl'].forEach(function (id) { el(id).classList.remove('on'); });
+  }
+
   // ── 그리기 ──
   var last = performance.now(), acc = 0;
   function frame(now) {
     var dt = Math.min(0.05, (now - last) / 1000);
     last = now;
     step(dt);
-    if (!reading) { updatePeople(dt, now); updateWeather(dt, now); updateCars(dt); }
+    if (!reading) { updatePeople(dt, now); updateWeather(dt, now); updateCars(dt); for (var rn in remotes) updateRemote(remotes[rn], dt); }
     acc += dt;
     if (acc > 0.3) { acc = 0; loadNear(); where(); if (now - posSavedAt > 2000) { posSavedAt = now; savePos(); } }
     if (!reading) renderer.render(scene, camera);

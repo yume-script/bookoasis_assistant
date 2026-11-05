@@ -90,6 +90,16 @@
   .l3d-bubble::after { content: ""; position: absolute; left: 50%; bottom: -6px; margin-left: -6px; border: 6px solid transparent; border-bottom: 0;
     border-top-color: #fff; }
   .l3d-bubble b { display: block; font-size: 0.72rem; color: #8a6a1f; margin-bottom: 2px; }
+  /* 함께 보기 채팅 */
+  .l3d-chat { position: absolute; left: 12px; bottom: 64px; width: min(340px, calc(100% - 24px)); z-index: 4; display: flex; flex-direction: column; gap: 6px; }
+  .l3d-chat-log { max-height: 150px; overflow: auto; display: flex; flex-direction: column; gap: 3px; font-size: 0.8rem; line-height: 1.4; }
+  .l3d-chat-line { align-self: flex-start; max-width: 100%; background: rgba(20, 21, 23, 0.72); color: #f5f2ec; border-radius: 10px; padding: 4px 9px;
+    word-break: break-word; }
+  .l3d-chat-line b { color: #ffd166; font-weight: 700; }
+  .l3d-chat-in { font: inherit; font-size: 0.85rem; padding: 7px 11px; border-radius: 999px; border: 0; background: rgba(255, 255, 255, 0.9); color: #1d1e20; }
+  .l3d-chat-toggle { align-self: flex-start; border: 0; border-radius: 999px; background: rgba(20, 21, 23, 0.7); color: #fff; padding: 4px 9px; cursor: pointer; }
+  .l3d-chat.min .l3d-chat-log, .l3d-chat.min .l3d-chat-in { display: none; }
+  .l3d-chat-log:empty { display: none; }
   /* 서재 안에서 읽기 (뷰어) */
   .l3d-reader { position: absolute; inset: 0; z-index: 5; display: none; flex-direction: column; background: rgba(24, 22, 20, 0.62);
     backdrop-filter: blur(7px); -webkit-backdrop-filter: blur(7px); color: #eee; }
@@ -162,6 +172,7 @@
     <div class="l3d-msg" id="l3d-msg">서재를 짓는 중...</div>
     <div class="l3d-hud">
       <div class="l3d-chip" id="l3d-where">BookOasis 3D 서재</div>
+      <div class="l3d-chip" id="l3d-online" hidden></div>
       <div class="l3d-chip" id="l3d-help">이동 W A S D · 방향키 / 둘러보기 마우스 끌기 / 책·엘리베이터 누르기</div>
     </div>
     <div class="l3d-card" id="l3d-card" role="dialog" aria-label="작품 정보">
@@ -288,6 +299,11 @@
       <button type="button" class="l3d-btn" id="l3d-ask-close">닫기</button>
     </div>
     <div class="l3d-bubble" id="l3d-bubble"></div>
+    <div class="l3d-chat" id="l3d-chat">
+      <button type="button" class="l3d-chat-toggle" id="l3d-chat-toggle" title="채팅 접기·펴기" aria-label="채팅 접기·펴기">💬</button>
+      <div class="l3d-chat-log" id="l3d-chat-log" aria-live="polite"></div>
+      <input type="text" class="l3d-chat-in" id="l3d-chat-in" maxlength="200" placeholder="채팅 (Enter로 보내기)" autocomplete="off">
+    </div>
     <div class="l3d-reader" id="l3d-reader" role="dialog" aria-label="읽기">
       <div class="l3d-r-top">
         <b id="l3d-r-title"></b>

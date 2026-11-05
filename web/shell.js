@@ -360,12 +360,13 @@
     draw();
     return box;
   }
-  /** 설정 > 사용자 (YMPlayer 사용자 관리). 이 화면은 관리용이라 모든 사용자가 관리자다. */
+  /** 설정 > 사용자 (YMPlayer 사용자 관리): 관리자 / 관람자(3D 서재만, 성인 층 허용 여부) */
   function usersPane() {
     var box = h('div', { class: 'users-box' });
     function load() {
       while (box.firstChild) box.removeChild(box.firstChild);
-      box.appendChild(h('p', { class: 'muted', text: '로그인할 수 있는 사람 (모두 관리자). 비밀번호를 바꾸면 그 사람의 다른 기기 로그인은 끊깁니다.' }));
+      box.appendChild(h('p', { class: 'muted', text: '로그인할 수 있는 사람. 관리자는 모든 화면을, 관람자는 3D 서재 보기·읽기·함께 보기만 쓸 수 있습니다' +
+        '(성인 층은 허용한 관람자만). 비밀번호를 바꾸면 그 사람의 다른 기기 로그인은 끊깁니다.' }));
       var list = h('div', { class: 'about-list' });
       box.appendChild(list);
       api('api/users').then(function (d) {
@@ -382,18 +383,32 @@
             if (!window.confirm(u.username + ' 사용자를 지울까요?')) return;
             api('api/users/delete', { username: u.username }).then(load, function (e) { toast(e.message, 'error'); });
           } }, [icon('trash')]);
+          var roleSel = h('select', { class: 'input', title: '권한', 'aria-label': u.username + ' 권한' }, [
+            h('option', { value: 'admin', text: '관리자' }), h('option', { value: 'viewer', text: '관람자' }),
+            h('option', { value: 'viewer+adult', text: '관람자 (성인 층 허용)' })]);
+          roleSel.value = u.role === 'viewer' ? (u.adult ? 'viewer+adult' : 'viewer') : 'admin';
+          roleSel.disabled = me;
+          roleSel.addEventListener('change', function () {
+            var v = roleSel.value;
+            api('api/users/role', { username: u.username, role: v === 'admin' ? 'admin' : 'viewer', adult: v === 'viewer+adult' })
+              .then(function () { toast('권한을 바꿨습니다.', 'success'); }, function (e) { toast(e.message, 'error'); load(); });
+          });
           list.appendChild(h('div', { class: 'about-row' }, [h('span', { text: u.username + (me ? ' (나)' : '') }),
-            h('span', { class: 'row-actions' }, [pw, del])]));
+            h('span', { class: 'row-actions' }, [roleSel, pw, del])]));
         });
       }, function (e) { box.appendChild(h('p', { class: 'muted', text: e.message })); });
       var name = h('input', { class: 'input', type: 'text', placeholder: '아이디', autocomplete: 'off' });
       var pass = h('input', { class: 'input', type: 'password', placeholder: '비밀번호 (6자 이상)', autocomplete: 'new-password' });
+      var newRole = h('select', { class: 'input', 'aria-label': '권한' }, [
+        h('option', { value: 'viewer', text: '관람자 (3D 서재만)' }), h('option', { value: 'viewer+adult', text: '관람자 (성인 층 허용)' }),
+        h('option', { value: 'admin', text: '관리자' })]);
       var add = h('button', { type: 'button', class: 'btn btn-accent', text: '추가', onclick: function () {
-        api('api/users', { username: name.value.trim(), password: pass.value })
+        var rv = newRole.value;
+        api('api/users', { username: name.value.trim(), password: pass.value, role: rv === 'admin' ? 'admin' : 'viewer', adult: rv === 'viewer+adult' })
           .then(function () { toast('추가했습니다.', 'success'); load(); }, function (e) { toast(e.message, 'error'); });
       } });
       box.appendChild(h('h4', { text: '사용자 추가' }));
-      box.appendChild(h('div', { class: 'user-add' }, [name, pass, add]));
+      box.appendChild(h('div', { class: 'user-add' }, [name, pass, newRole, add]));
     }
     load();
     return box;
@@ -676,7 +691,17 @@
     }
     var name = m.user || '?';
     who.firstChild.textContent = name;
-    who.lastChild.textContent = '관리자';
+    who.lastChild.textContent = m.role === 'viewer' ? '관람자' : '관리자';
+    if (m.role === 'viewer') {   // 관람자: 설정 메뉴와 3D 서재의 설정 하위 메뉴를 숨긴다 (서버도 막음)
+      document.body.classList.add('is-viewer');
+      var setLink = nav.querySelector('.nav-footer > .nav-link'); if (setLink) setLink.style.display = 'none';   // hidden은 CSS display에 밀린다
+      var l3 = MENU.filter(function (x) { return x.id === 'lib3d'; })[0];
+      (l3.items || []).forEach(function (it) {
+        if (it.tab === 'hall') return;
+        var link = l3.itemsEl && l3.itemsEl.querySelector('.nav-link[data-tab="' + CSS.escape(it.tab) + '"]');
+        if (link) link.style.display = 'none';
+      });
+    }
     avatar.textContent = name.slice(0, 1).toUpperCase();
   }).catch(function () {});
 })();

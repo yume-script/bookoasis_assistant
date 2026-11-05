@@ -28,7 +28,7 @@ import zipfile
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import lib3d, lib3d_ai, auth, config, mcp, service
+from . import lib3d, lib3d_ai, lib3d_presence, auth, config, mcp, service
 
 log = logging.getLogger("gdw.web")
 WEB_DIR = os.path.join(config.ROOT, "web")
@@ -44,6 +44,10 @@ OFF_PAGE = """<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta n
 <link rel="stylesheet" href="theme.css"></head><body data-module=""><main class="gdw-page"><div class="app-off"><h2>{title}: 꺼져 있음</h2>
 <p>{note}</p></div></main><script src="shell.js"></script></body></html>"""
 MAX_BODY = 2 * 1024 * 1024
+# 관람자(role=viewer)가 쓸 수 있는 것: 3D 서재 보기·읽기·함께 보기와 자기 비밀번호·로그아웃
+VIEWER_GET = {"/library3d", "/library3d/", "/library3d/app.js", "/theme.css", "/shell.js", "/api/modules", "/api/auth/state"}
+VIEWER_LIB3D_ADMIN_ONLY = {"/api/lib3d/libraries", "/api/lib3d/ai/settings", "/api/lib3d/ai/test"}
+VIEWER_POST = {"/api/auth/logout", "/api/auth/password", "/api/lib3d/presence", "/api/lib3d/say"}
 
 
 THEMES = ("dark", "light", "black", "navy", "auto")
@@ -250,6 +254,11 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(302, b"", extra={"Location": "./"})
         if not user and path not in PUBLIC:
             return self._deny(path)
+        if user and not auth.is_admin(user):   # 관람자: 3D 서재만
+            if path in ("/", "/index.html") or (path in PAGES and path not in VIEWER_GET):
+                return self._send(302, b"", extra={"Location": "/library3d"})
+            if not (path in VIEWER_GET or (path.startswith("/api/lib3d/") and path not in VIEWER_LIB3D_ADMIN_ONLY)):
+                return self._send(403, {"success": False, "error": "관람자 계정은 3D 서재만 볼 수 있습니다."})
         if path == "/api/users":
             return self._send(200, {"success": True, "users": [auth.public_user(u) for u in auth.load_users()]})
         if path == "/api/mcp":
@@ -258,7 +267,11 @@ class Handler(BaseHTTPRequestHandler):
         mods = modules()
         if path == "/api/modules":
             info = dict(mods, version=service._plugin_version(), versions=module_versions(), ui=ui_prefs(),
-                        user=user["username"], windows=os.name == "nt", update=update_info())
+                        user=user["username"], role=auth.role_of(user), windows=os.name == "nt", update=update_info())
+            if not auth.is_admin(user):   # 관람자에게는 3D 서재만 켜진 것으로
+                info = {k: (v if k == "lib3d" else False) if isinstance(v, bool) else v for k, v in info.items()}
+                info.pop("update", None)
+                return self._send(200, info)
             if mods["mini"]:
                 from mini import bundle
                 info["games"] = bundle.menu()
@@ -286,7 +299,7 @@ class Handler(BaseHTTPRequestHandler):
         if path in ("/library3d", "/library3d/app.js") and not mods["lib3d"]:
             return self._send(200, OFF_PAGE.format(title="BookOasis 3D 서재", note=".env에 <code>LIB3D_ENABLED=true</code>를 넣고 다시 시작하세요.").encode(), "text/html; charset=utf-8")
         if path.startswith("/api/lib3d/"):
-            return self._lib3d(path, mods)
+            return self._lib3d(path, mods, user)
         if path in ("/", "/index.html"):  # 첫 화면: 웹툰 다운로더 → 드라이브 변경 감시 → 미니게임 순으로 켜진 것
             first = next((p for k, p in (("wtm", "webtoon"), ("gdw", "watch"), ("mini", "games"),
                                                 ("lib3d", "library3d")) if mods[k]), None)
@@ -314,24 +327,37 @@ class Handler(BaseHTTPRequestHandler):
             ctype += "; charset=utf-8"
         self._send(200, data, ctype)
 
-    def _lib3d(self, path, mods):
+    def _lib3d(self, path, mods, user=None):
         """BookOasis 3D 서재: 보관함·작품 목록, 표지, 책 열기 주소"""
         if not mods["lib3d"]:
             return self._send(404, {"success": False, "error": "BookOasis 3D 서재가 꺼져 있습니다 (LIB3D_ENABLED)."})
         from urllib.parse import parse_qs
         q = parse_qs(self.path.partition("?")[2])
         key = (q.get("k") or [""])[0]
+        adult = auth.adult_ok(user)
+        if not adult and any(str(v).startswith("adult:") for v in (key, (q.get("b") or [""])[0])):
+            return self._send(403, {"success": False, "error": "성인 서재는 볼 수 없는 계정입니다."})
         try:
             if path == "/api/lib3d/libraries":   # 설정 화면: 보관함 전부 + 보이는지
                 return self._send(200, dict(lib3d.all_libraries(), success=True))
             if path == "/api/lib3d/data":
-                return self._send(200, dict(lib3d.data(force=bool(q.get("refresh"))), ai=lib3d_ai.flags(),
+                d = lib3d.data(force=bool(q.get("refresh")) and auth.is_admin(user))
+                if not adult:   # 성인 층을 볼 수 없는 관람자에게는 빼고
+                    d = dict(d, libraries=[x for x in d.get("libraries", []) if x.get("db_type") != "adult"])
+                ai = lib3d_ai.flags()
+                if not auth.is_admin(user):
+                    ai = dict(ai, ask=False)   # 질문하기(추가 MCP 도구를 쓸 수 있음)는 관리자만
+                me = {"username": user["username"], "role": auth.role_of(user), "adult": adult} if user else None
+                return self._send(200, dict(d, ai=ai, me=me,
                                             people=lib3d.load_settings().get("people") or {},
                                             outside=lib3d.load_settings().get("outside") or {},
                                             models=lib3d.load_settings().get("models") or "basic",
                                             banner=lib3d.banner_info(), success=True))
             if path == "/api/lib3d/banner_pick":   # 현수막에 띄울 무작위 작품 (보관함 표지 모드)
-                return self._send(200, dict(lib3d.banner_pick(), success=True))
+                pick = lib3d.banner_pick()
+                if not adult and pick.get("db") == "adult":
+                    return self._send(404, {"success": False, "error": "현수막 보관함을 볼 수 없는 계정입니다."})
+                return self._send(200, dict(pick, success=True))
             if path == "/api/lib3d/banner":   # CRARES 건물 현수막 그림 (서버가 받아 둔 것)
                 raw, ctype = lib3d.banner_image(force=bool(q.get("force")))
                 return self._send(200, raw, ctype, extra={"Cache-Control": "private, max-age=600"})
@@ -428,8 +454,11 @@ class Handler(BaseHTTPRequestHandler):
         user = self._user()
         if not user and path not in PUBLIC:
             return self._deny(path)
+        if user and not auth.is_admin(user) and path not in VIEWER_POST:
+            return self._send(403, {"success": False, "error": "관람자 계정은 할 수 없는 일입니다."})
         if not path.startswith(("/api/rpc/", "/api/auth/", "/api/users")) and path not in ("/api/wtm/action", "/api/ui-prefs", "/api/mcp",
-                                                                                          "/api/lib3d/settings", "/api/lib3d/ai/settings", "/api/lib3d/ai/ask"):
+                                                                                          "/api/lib3d/settings", "/api/lib3d/ai/settings", "/api/lib3d/ai/ask",
+                                                                                          "/api/lib3d/presence", "/api/lib3d/say"):
             return self._send(404, {"success": False, "error": "없는 주소입니다."})
         if (self.headers.get("Content-Type") or "").split(";")[0].strip().lower() != "application/json":
             return self._send(415, {"success": False, "error": "Content-Type은 application/json이어야 합니다."})
@@ -447,6 +476,17 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(400, {"success": False, "error": "JSON 객체를 보내세요."})
         if path.startswith(("/api/auth/", "/api/users")):
             return self._auth_post(path, context, user)
+        if path in ("/api/lib3d/presence", "/api/lib3d/say"):   # 3D 서재 함께 보기: 내 위치 보내고 다른 사람·채팅 받기 / 말하기
+            if not modules()["lib3d"]:
+                return self._send(404, {"success": False, "error": "BookOasis 3D 서재가 꺼져 있습니다 (LIB3D_ENABLED)."})
+            if not auth.adult_ok(user) and str(context.get("floor") or "") == "adult":
+                context["floor"] = ""
+            try:
+                if path == "/api/lib3d/presence":
+                    return self._send(200, dict(lib3d_presence.update(user["username"], context), success=True))
+                return self._send(200, {"success": True, "msg": lib3d_presence.say(user["username"], context.get("text"), context.get("floor"))})
+            except ValueError as e:
+                return self._send(400, {"success": False, "error": str(e)})
         if path == "/api/lib3d/settings":  # 3D 서재 설정: 보여 줄 보관함 ({"libraries": [키…] 또는 null=전부})
             if not modules()["lib3d"]:
                 return self._send(404, {"success": False, "error": "BookOasis 3D 서재가 꺼져 있습니다 (LIB3D_ENABLED)."})
@@ -594,6 +634,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, {"success": True, "user": auth.public_user(found)},
                                   extra={"Set-Cookie": self._session_cookie(found, bool(body.get("remember")))})
             if path == "/api/auth/logout":
+                if user:
+                    lib3d_presence.leave(user["username"])
                 return self._send(200, {"success": True},
                                   extra={"Set-Cookie": f"{auth.COOKIE}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax"})
             if path == "/api/auth/password":  # 내 비밀번호 바꾸기: 다른 기기의 로그인은 끊기고 이 기기는 새 쿠키
@@ -602,7 +644,10 @@ class Handler(BaseHTTPRequestHandler):
                 changed = auth.set_password(user["username"], str(body.get("new") or ""))
                 return self._send(200, {"success": True}, extra={"Set-Cookie": self._session_cookie(changed, True)})
             if path == "/api/users":
-                return ok({"user": auth.create_user(body.get("username"), str(body.get("password") or ""))})
+                return ok({"user": auth.create_user(body.get("username"), str(body.get("password") or ""),
+                                                    role=body.get("role") or "admin", adult=bool(body.get("adult")))})
+            if path == "/api/users/role":   # 권한 바꾸기: admin | viewer(3D 서재만), adult(관람자의 성인 층)
+                return ok({"user": auth.set_role(body.get("username"), body.get("role"), bool(body.get("adult")), acting=user["username"])})
             if path == "/api/users/password":
                 auth.set_password(body.get("username"), str(body.get("password") or ""))
                 return ok()
