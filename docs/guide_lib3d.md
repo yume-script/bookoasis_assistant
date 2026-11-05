@@ -74,7 +74,29 @@ cd /mnt/bookoasis_assistant && git pull && systemctl restart bookoasis_assistant
 | API 키 | `LIB3D_AI_API_KEY` | anthropic에서 비우면 `ANTHROPIC_API_KEY` |
 | 모델 | `LIB3D_AI_MODEL` | 게이트웨이에 등록된 이름 그대로 (예 `gemini-free3_1`). anthropic은 비우면 `claude-opus-5-5` |
 | 손님 대화 | `LIB3D_AI_CHAT`, `LIB3D_AI_CHAT_SEC` | 층마다 두 손님이 무작위 책 한 권(제목·작가·장르·줄거리)을 두고 나누는 말을 말풍선으로. 간격(기본 60초)보다 자주 부르지 않고, 가까이 있고 탭이 보일 때만 부름 |
-| 질문하기 | `LIB3D_AI_ASK`, `LIB3D_MCP_COMMAND` | 아래 [질문] 버튼 → LLM이 **BookOasis MCP**의 읽기 전용 도구로 서재 데이터를 찾아 답함 (모델이 도구 호출을 지원해야 함) |
+| 질문하기 | `LIB3D_AI_ASK`, `LIB3D_MCP_COMMAND`, `LIB3D_MCP_SERVERS`, `LIB3D_AI_BUILTIN` | 아래 [질문] 버튼 → LLM이 BookOasis MCP(서재)·기본 도구(시각·날씨·웹 페이지)·추가 MCP로 찾아 답함 (모델이 도구 호출을 지원해야 함) |
+
+### 기본 도구 · 추가 MCP
+
+질문하기는 서재 질문뿐 아니라 일반 질문에도 답합니다. 쓸 수 있는 도구는 세 갈래입니다.
+
+| 도구 | 설정 | 내용 |
+|---|---|---|
+| BookOasis MCP | `LIB3D_MCP_COMMAND` | 서재 데이터 (읽기 전용 도구만) |
+| 기본 도구 | `LIB3D_AI_BUILTIN` (기본 켜짐) | `now` 지금 날짜·시각·요일, `weather` 날씨(Open-Meteo, 키 없음 - 지금·오늘·내일), `fetch_url` 공개 웹 페이지 본문 읽기(사설·내부 주소는 막음) |
+| 추가 MCP | `LIB3D_MCP_SERVERS` | 한 줄에 `이름 = 실행 명령` 또는 `이름 = https://주소`(Streamable HTTP). 도구 이름은 `이름__도구`로 붙고, **모든 도구(쓰기 포함)를 그대로** 씀 - 믿을 수 있는 서버만 |
+
+추가 MCP 예 ([AI 설정]의 '추가 MCP 서버' 칸):
+
+```text
+fetch = uvx mcp-server-fetch
+time = uvx mcp-server-time --local-timezone=Asia/Seoul
+search = https://내-검색-mcp-주소/mcp
+```
+
+- 실행 명령은 이 프로그램이 도는 서버(도커면 컨테이너 안)에서 실행되므로, `uvx`·`npx` 같은 실행기가 거기 깔려 있어야 합니다.
+- [MCP 연결 시험]을 누르면 서버마다 ✓(도구 목록) / ✗(실패 이유)가 나옵니다. 하나가 실패해도 나머지 도구로 답하고, 답 아래에 "연결 못 한 MCP"를 알려 줍니다.
+- LLM 서버가 붐비거나(503) 한도에 걸리면(429) 2초·6초 쉬었다가 두 번 더 시도합니다. 그래도 안 되면 "LLM 서버가 지금 붐벼서 답하지 못했습니다"라고 나옵니다 - 이건 MCP 문제가 아니라 LLM(예: Gemini) 쪽 사정이라 잠시 뒤 다시 묻거나 LiteLLM에 대체 모델(fallback)을 설정하세요.
 
 ### BookOasis MCP 실행 명령
 

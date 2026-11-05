@@ -2455,9 +2455,10 @@
       el('l3d-ai-key').placeholder = d.api_key_set ? '저장됨 - 바꿀 때만 입력' : 'sk-...';
       el('l3d-ai-model').value = d.model; el('l3d-ai-chat').checked = d.chat; el('l3d-ai-sec').value = d.chat_sec;
       el('l3d-ai-ask').checked = d.ask; el('l3d-ai-mcp').value = d.mcp_command || '';
+      el('l3d-ai-builtin').checked = d.builtin; el('l3d-ai-servers').value = d.mcp_servers || '';
       aiProvider();
       var ids = { LIB3D_AI_PROVIDER: 'l3d-ai-provider', LIB3D_AI_BASE_URL: 'l3d-ai-base', LIB3D_AI_API_KEY: 'l3d-ai-key', LIB3D_AI_MODEL: 'l3d-ai-model', LIB3D_AI_CHAT: 'l3d-ai-chat', LIB3D_AI_CHAT_SEC: 'l3d-ai-sec',
-                  LIB3D_AI_ASK: 'l3d-ai-ask', LIB3D_MCP_COMMAND: 'l3d-ai-mcp' };
+                  LIB3D_AI_ASK: 'l3d-ai-ask', LIB3D_MCP_COMMAND: 'l3d-ai-mcp', LIB3D_MCP_SERVERS: 'l3d-ai-servers', LIB3D_AI_BUILTIN: 'l3d-ai-builtin' };
       Object.keys(ids).forEach(function (k) { el(ids[k]).disabled = (d.fixed || []).indexOf(k) >= 0; });
       el('l3d-ai-msg').textContent = (d.fixed || []).length ? '환경변수로 정해진 항목은 바꿀 수 없습니다: ' + d.fixed.join(', ') : '';
     }).catch(function (e) { el('l3d-ai-msg').textContent = e.message; });
@@ -2466,7 +2467,8 @@
   el('l3d-ai-close').addEventListener('click', function () { aiBox.classList.remove('on'); });
   el('l3d-ai-save').addEventListener('click', function () {
     var body = { provider: el('l3d-ai-provider').value, base_url: el('l3d-ai-base').value, model: el('l3d-ai-model').value, chat: el('l3d-ai-chat').checked, chat_sec: +el('l3d-ai-sec').value || 60,
-                 ask: el('l3d-ai-ask').checked, mcp_command: el('l3d-ai-mcp').value };
+                 ask: el('l3d-ai-ask').checked, mcp_command: el('l3d-ai-mcp').value,
+                 builtin: el('l3d-ai-builtin').checked, mcp_servers: el('l3d-ai-servers').value };
     if (el('l3d-ai-key').value) body.api_key = el('l3d-ai-key').value;
     if (el('l3d-ai-clear').checked) body.clear_key = true;
     el('l3d-ai-msg').textContent = '저장 중...';
@@ -2479,9 +2481,12 @@
     }).catch(function (e) { el('l3d-ai-msg').textContent = e.message; });
   });
   el('l3d-ai-test').addEventListener('click', function () {
-    el('l3d-ai-msg').textContent = 'BookOasis MCP에 연결하는 중... (저장한 명령으로 시험)';
+    el('l3d-ai-msg').textContent = 'MCP에 연결하는 중... (저장한 설정으로 시험)';
     api('api/lib3d/ai/test').then(function (d) {
-      el('l3d-ai-msg').textContent = '연결됨 - 쓸 수 있는 도구 ' + d.tools.length + '개: ' + d.tools.join(', ');
+      var lines = (d.servers || []).map(function (sv) { return '✓ ' + sv.name + ' - 도구 ' + sv.tools.length + '개: ' + sv.tools.join(', '); });
+      (d.errors || []).forEach(function (e) { lines.push('✗ ' + e); });
+      el('l3d-ai-msg').textContent = lines.join('\n') || '연결된 MCP·도구가 없습니다.';
+      el('l3d-ai-msg').style.whiteSpace = 'pre-wrap';
     }).catch(function (e) { el('l3d-ai-msg').textContent = e.message; });
   });
 
@@ -2506,6 +2511,7 @@
     var wait = askLine('a', '찾아보는 중...');
     postJSON('api/lib3d/ai/ask', { question: q, history: askHist.slice(-6) }).then(function (d) {
       wait.remove(); askLine('a', d.answer, d.tools);
+      if ((d.warnings || []).length) askLine('a t', '연결 못 한 MCP: ' + d.warnings.join(' / '));
       askHist.push({ q: q, a: d.answer });
     }).catch(function (er) { wait.textContent = '답하지 못했습니다: ' + er.message; })
       .then(function () { asking = false; el('l3d-ask-send').disabled = false; });

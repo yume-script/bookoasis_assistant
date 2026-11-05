@@ -61,7 +61,7 @@
   /* AI: 설정 패널·질문 창·손님 말풍선 */
   .l3d-ai label.f { display: grid; gap: 4px; font-size: 0.82rem; margin: 6px 0; }
   .l3d-ai label.c { display: flex; gap: 6px; align-items: center; font-size: 0.86rem; margin: 6px 0; cursor: pointer; }
-  .l3d-ai input[type=text], .l3d-ai input[type=password], .l3d-ai input[type=number], .l3d-ai select { font: inherit; padding: 7px 9px; border: 1px solid #d9d3c8;
+  .l3d-ai input[type=text], .l3d-ai input[type=password], .l3d-ai input[type=number], .l3d-ai select, .l3d-ai textarea { font: inherit; padding: 7px 9px; border: 1px solid #d9d3c8;
     border-radius: 8px; background: #fff; color: #1d1e20; min-width: 0; }
   .l3d-ai .warn { color: #b3261e; }
   .l3d-ai .body { flex: 1; overflow: auto; }
@@ -196,7 +196,7 @@
     </div>
     <div class="l3d-set l3d-ai" id="l3d-ai" role="dialog" aria-label="3D 서재 AI 설정">
       <h3>AI 손님·질문하기</h3>
-      <p class="sub">LLM이 손님들의 책 대화를 쓰고, BookOasis MCP로 서재에 대한 질문에 답합니다. 유료 API면 호출할 때마다 요금이 듭니다.</p>
+      <p class="sub">LLM이 손님들의 책 대화를 쓰고, 질문에 답합니다(BookOasis MCP로 서재 데이터, 기본 도구로 시각·날씨·웹 페이지, 추가 MCP로 그 밖의 것). 유료 API면 호출할 때마다 요금이 듭니다.</p>
       <div class="body">
         <label class="f">연결 방식
           <select id="l3d-ai-provider">
@@ -212,10 +212,14 @@
         <datalist id="l3d-ai-models"></datalist>
         <label class="c"><input type="checkbox" id="l3d-ai-chat"> 손님 대화 (층마다 두 손님이 책 한 권을 두고 이야기)</label>
         <label class="f">대화 사이 최소 간격(초) <input type="number" id="l3d-ai-sec" min="15" max="3600" step="5"></label>
-        <label class="c"><input type="checkbox" id="l3d-ai-ask"> 질문하기 (BookOasis MCP로 서재 데이터를 찾아 답)</label>
+        <label class="c"><input type="checkbox" id="l3d-ai-ask"> 질문하기 (안내 데스크 [질문] 버튼 - 서재·날씨·일반 질문)</label>
         <label class="f">BookOasis MCP 실행 명령
           <input type="text" id="l3d-ai-mcp" placeholder="docker exec -i bookoasis python3 tools/mcp_server.py"></label>
         <p class="sub">BookOasis가 같은 서버에 직접 설치돼 있으면 <code>python3 /BookOasis경로/tools/mcp_server.py</code>. 읽기 전용 도구만 씁니다.</p>
+        <label class="c"><input type="checkbox" id="l3d-ai-builtin"> 기본 도구 - 지금 시각·날씨(Open-Meteo)·웹 페이지 읽기</label>
+        <label class="f"><span>추가 MCP 서버 - 한 줄에 <code>이름 = 실행 명령</code> 또는 <code>이름 = https://주소</code></span>
+          <textarea id="l3d-ai-servers" rows="4" placeholder="fetch = uvx mcp-server-fetch&#10;time = uvx mcp-server-time --local-timezone=Asia/Seoul&#10;remote = https://example.com/mcp"></textarea></label>
+        <p class="sub">추가 MCP의 도구는 모든 도구(쓰기 포함)를 그대로 씁니다 - 믿을 수 있는 서버만 넣으세요. 실행 명령은 이 서버에서 실행됩니다.</p>
       </div>
       <p class="sub" id="l3d-ai-msg"></p>
       <div class="row">
