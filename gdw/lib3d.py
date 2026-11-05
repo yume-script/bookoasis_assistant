@@ -22,7 +22,7 @@ from urllib.request import Request, urlopen
 
 from . import bookoasis_db, config
 
-VERSION = "2.33.0"
+VERSION = "2.34.0"
 CACHE_SEC = 300
 COVER_WIDTH = 200
 _DATA = {"at": 0.0, "v": None}
@@ -530,6 +530,12 @@ def _natural(s):
     return [int(p) if p.isdigit() else p.lower() for p in _NUM.split(str(s))]
 
 
+def ymplayer_url():
+    """5층 영화관이 여는 YMPlayer 주소 (LIB3D_YMPLAYER_URL, 비우면 영화관 층을 만들지 않음) - 브라우저에서 열리는 주소"""
+    u = str(config.env("LIB3D_YMPLAYER_URL") or "").strip().rstrip("/")
+    return u if u.startswith(("http://", "https://")) else ""
+
+
 def public_url():
     """브라우저가 여는 BookOasis 주소 (열기·BookOasis 뷰어 링크). LIB3D_PUBLIC_URL, 없으면 BOOKOASIS_URL"""
     return (config.env("LIB3D_PUBLIC_URL") or _bookoasis()).rstrip("/")
@@ -569,6 +575,14 @@ def volumes(bkey):
              "format": _kind(str(r.get("file_path") or ""))} for r in rows]
 
 
+AUDIO_EXT = (".mp3", ".m4a", ".m4b", ".aac", ".flac", ".ogg", ".oga", ".opus", ".wav")
+VIDEO_EXT = (".mp4", ".m4v", ".webm", ".mkv", ".mov", ".avi", ".ts")
+MEDIA_MIME = {".mp3": "audio/mpeg", ".m4a": "audio/mp4", ".m4b": "audio/mp4", ".aac": "audio/aac", ".flac": "audio/flac",
+              ".ogg": "audio/ogg", ".oga": "audio/ogg", ".opus": "audio/ogg", ".wav": "audio/wav",
+              ".mp4": "video/mp4", ".m4v": "video/mp4", ".webm": "video/webm", ".mkv": "video/x-matroska",
+              ".mov": "video/quicktime", ".avi": "video/x-msvideo", ".ts": "video/mp2t"}
+
+
 def _kind(path):
     low = path.lower()
     if low.endswith((".zip", ".cbz")):
@@ -577,9 +591,56 @@ def _kind(path):
         return "epub"
     if low.endswith(".pdf"):
         return "pdf"
+    if low.endswith(AUDIO_EXT):
+        return "audio"
+    if low.endswith(VIDEO_EXT):
+        return "video"
     if os.path.isdir(path):
+        tracks = media_tracks(path)   # 오디오북·영상 폴더면 그 파일들을 차례로
+        if tracks:
+            return "audio" if tracks[0].lower().endswith(AUDIO_EXT) else "video"
         return "images"
     return "unsupported"
+
+
+def media_tracks(path):
+    """오디오·영상 파일 목록 (파일 하나면 그것, 폴더면 안의 파일들 - 두 단계까지, 자연 정렬) - 폴더 기준 상대 경로"""
+    if os.path.isfile(path):
+        return [os.path.basename(path)] if path.lower().endswith(AUDIO_EXT + VIDEO_EXT) else []
+    hit = _LIST_CACHE.get(("media", path))
+    try:
+        sig = os.stat(path).st_mtime_ns
+    except OSError:
+        return []
+    if hit and hit[0] == sig:
+        return hit[1]
+    out = []
+    base_depth = path.rstrip(os.sep).count(os.sep)
+    for root, dirs, files in os.walk(path):
+        if root.count(os.sep) - base_depth >= 2:
+            dirs[:] = []
+        dirs.sort(key=_natural)
+        for f in files:
+            if f.lower().endswith(AUDIO_EXT + VIDEO_EXT) and not f.startswith("."):
+                out.append(os.path.relpath(os.path.join(root, f), path))
+    audio = [x for x in out if x.lower().endswith(AUDIO_EXT)]
+    out = sorted(audio or out, key=lambda x: [_natural(p) for p in x.split(os.sep)])
+    _LIST_CACHE[("media", path)] = (sig, out)
+    return out
+
+
+def media_file(bkey, index):
+    """재생할 파일 (전체 경로, MIME)"""
+    _db, row = _book(bkey)
+    path = str(row.get("file_path") or "")
+    tracks = media_tracks(path)
+    i = int(index)
+    if not 0 <= i < len(tracks):
+        raise ValueError("없는 트랙")
+    full = path if os.path.isfile(path) else os.path.join(path, tracks[i])
+    if not os.path.realpath(full).startswith(os.path.realpath(path if os.path.isdir(path) else os.path.dirname(path))):
+        raise ValueError("잘못된 경로")
+    return full, MEDIA_MIME.get(os.path.splitext(full)[1].lower(), "application/octet-stream")
 
 
 def _entries(path):
@@ -649,7 +710,12 @@ def book_info(bkey):
         count = len(_epub_spine(path))
     elif kind == "pdf":
         count = 1
-    return {"key": bkey, "id": int(row["id"]), "db_type": db_type, "kind": kind, "count": count,
+    tracks = []
+    if kind in ("audio", "video"):
+        names = media_tracks(path)
+        count = len(names)
+        tracks = [{"i": i, "name": os.path.splitext(os.path.basename(n))[0], "dir": os.path.dirname(n)} for i, n in enumerate(names)]
+    return {"key": bkey, "tracks": tracks, "id": int(row["id"]), "db_type": db_type, "kind": kind, "count": count,
             "title": row.get("title") or os.path.splitext(os.path.basename(path))[0],
             "series": row.get("series_name") or "",
             "kiosk": "%s/?kiosk=1&book=%s&type=%s" % (public_url(), row["id"], quote(db_type))}

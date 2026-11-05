@@ -894,7 +894,7 @@
     setTimeout(placeBanner, 0);   // 층을 다 지은 뒤
   }
   // ── 1층 출입문 + 바깥 앞마당 (도서관 밖으로 나가 보기) ──
-  var DOOR_W = 3.6, DOOR_H = 2.9, PLAZA_D = 9, autoDoor = null;
+  var DOOR_W = 3.6, DOOR_H = 2.9, PLAZA_D = 9, autoDoor = null, CINE_WALL = null;
   var glassDoorMat = new T.MeshStandardMaterial({ color: 0xcfe3ee, roughness: 0.05, metalness: 0.2, transparent: true, opacity: 0.28, depthWrite: false, side: T.DoubleSide });
   glassDoorMat.userData.keep = true;
   function addDoorAndPlaza(w, back, front) {
@@ -945,7 +945,7 @@
   }
   function isOutside(x, z) { return cur === 0 && layout && z > layout.front + 0.2; }
   function walkable(x, z) {   // 걸어 다닐 수 있는 곳: 서재 안 + (1층이면) 문 + 앞마당 + 양옆 보도
-    if (x >= hall.x0 && x <= hall.x1 && z >= hall.z0 && z <= hall.z1) return true;
+    if (x >= hall.x0 && x <= hall.x1 && z >= hall.z0 && z <= hall.z1) return !(CINE_WALL != null && Math.abs(z - CINE_WALL) < 0.4 && Math.abs(x) > 2.6);   // 영화관 칸막이
     if (cur !== 0 || !layout) return false;
     var L = layout, ax = Math.abs(x), outer = L.w / 2 + 4.6;
     if (ax < DOOR_W / 2 - 0.35 && z > hall.z1 - 0.1 && z < L.front + 1.0) return autoDoor ? autoDoor.open > 0.55 : true;   // 문이 열려야 지나간다
@@ -1008,7 +1008,7 @@
       box(3.7, 0.06, 0.08, M.black, 0, 2.82, front - 0.14); box(0.05, 2.8, 0.08, M.black, 0, 1.4, front - 0.14);
     }
     // 간판 (흰 판, 검은 글씨) - 들어오면 정면 위
-    var title = textTex(['BookOasis', fl.label + '  ·  보관함 ' + fl.libs.length + '  ·  작품 ' + fl.total.toLocaleString()],
+    var title = textTex(fl.cinema ? ['BookOasis 영화관', fl.label + '  ·  YMPlayer  ·  안쪽 상영관'] : ['BookOasis', fl.label + '  ·  보관함 ' + fl.libs.length + '  ·  작품 ' + fl.total.toLocaleString()],
       1600, 300, '#f7f5f1', '#1d1e20', 118);
     var signBoard = new T.Mesh(new T.BoxGeometry(8.4, 1.58, 0.06), [M.black, M.black, M.black, M.black, new T.MeshBasicMaterial({ map: title }), M.black]);
     add(signBoard, 0, 3.55, front - 7.5);
@@ -2144,6 +2144,7 @@
   var reading = false;
   window.addEventListener('keydown', function (e) {
     if (e.target && /input|textarea|select/i.test(e.target.tagName)) return;
+    if (cineBox && cineBox.classList.contains('on')) { if (e.key === 'Escape') closeCinema(); return; }   // 상영관이 열려 있으면 걷지 않는다
     if (reading) { readerKey(e); return; }
     keys[e.key.toLowerCase()] = true;
     if (['arrowup', 'arrowdown', 'arrowleft', 'arrowright', ' '].indexOf(e.key.toLowerCase()) >= 0) e.preventDefault();
@@ -2211,7 +2212,7 @@
   var seatHitMat = new T.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false });
   seatHitMat.userData.keep = true;
   function addSeat(x, z, rot, h, opt) {   // rot: 앉은 사람이 보는 쪽 (사람 모형 rotation.y와 같은 뜻)
-    var st = { x: x, z: z, rot: rot, h: h || 0.46, brunch: !!(opt && opt.brunch) };
+    var st = { x: x, z: z, rot: rot, h: h || 0.46, brunch: !!(opt && opt.brunch), media: !!(opt && opt.media), cinema: !!(opt && opt.cinema) };
     var m = new T.Mesh(unitBox, seatHitMat); m.scale.set(0.62, 0.95, 0.62); m.position.set(x, 0.48, z);
     m.userData.seat = st; st.mesh = m; (parent || floorGroup).add(m);
     seats.push(st);
@@ -2239,6 +2240,8 @@
               ty: st.h + 0.67, fyaw: yaw, tyaw: st.rot + Math.PI, fpitch: pitch, tpitch: 0 };
     sitBtn();
     if (st.brunch && BRUNCH_ON) openBrunch();
+    if (st.media) openMediaPick();
+    if (st.cinema) setTimeout(openCinema, 700);   // 자리에 앉은 뒤 상영관
   }
   function standUp(now) {
     var st = sitting; sitting = null;
@@ -2383,6 +2386,7 @@
     targets = targets.concat(brunchHits, seats.map(function (st) { return st.mesh; }));
     var hit = ray.intersectObjects(targets, false)[0];
     if (hit && hit.object === elevator && hit.distance < 8) { openFloors(); return; }
+    if (hit && hit.object.userData.cinema && hit.distance < 40) { closeCard(); openCinema(); return; }
     if (hit && hit.object.userData.brunch && hit.distance < 14) { closeCard(); openBrunch(); return; }
     if (hit && hit.object.userData.seat) {
       if (hit.distance < 5 && !sitting) sitDown(hit.object.userData.seat);
@@ -2395,6 +2399,7 @@
   function el(id) { return document.getElementById(id); }
   function showCard(b) {
     picked = b; pickedInfo = null;
+    el('l3d-read').textContent = b.db === 'audiobook' ? '여기서 듣기' : b.db === 'video' ? '여기서 보기' : '여기서 읽기';
     el('l3d-card-title').textContent = b.title;
     el('l3d-card-sub').textContent = b.lib + ' · ' + b.count.toLocaleString() + '권';
     el('l3d-card-path').textContent = '';
@@ -2459,9 +2464,9 @@
       loadVolume(start, saved && saved.key ? saved.page || 0 : 0);
     }).catch(function (e) { note(e.message); });
   }
-  function closeReader() { reading = false; wrap.classList.remove('reading'); R.box.classList.remove('on'); R.body.innerHTML = ''; clearPage(pgL); clearPage(pgR); }
+  function closeReader() { mediaOnClose(); medBox.hidden = true; reading = false; wrap.classList.remove('reading'); R.box.classList.remove('on'); R.body.innerHTML = ''; clearPage(pgL); clearPage(pgR); }
   function remember() {
-    if (!R.info) return;
+    if (!R.info || isMedia(R.info)) return;
     var at = R.info.kind === 'epub' ? { c: R.chap || 0, p: R.idx } : R.idx;
     try { localStorage.setItem(ukey('l3d_read_' + R.series), JSON.stringify({ key: R.info.key, page: at })); } catch (e) { /* 무시 */ }
   }
@@ -2472,6 +2477,9 @@
     note('불러오는 중...');
     api('api/lib3d/book?b=' + encodeURIComponent(v.key)).then(function (info) {
       R.info = info; R.vi = i;
+      medBox.hidden = true;
+      if (isMedia(info)) { R.mode.hidden = true; R.dirBtn.hidden = true; showMedia(info, page); return; }
+      if (MED.el && !MED.video && mini.hidden === false) { /* 들으며 다른 책 읽기: 소리는 그대로 */ }
       R.mode.hidden = info.kind !== 'images';
       R.dirBtn.hidden = info.kind !== 'images';
       if (info.kind === 'unsupported') { showStage(false); note('이 형식은 여기서 읽을 수 없습니다. [BookOasis 뷰어]로 읽으세요.'); return; }
@@ -2578,6 +2586,7 @@
   }
   function go(dir) {
     if (!R.info) return;
+    if (isMedia(R.info)) { mediaPlay(MED.track + dir, 0); return; }
     if (R.info.kind === 'images' && R.scroll) { R.body.scrollBy({ top: dir * R.body.clientHeight * 0.85, behavior: 'smooth' }); return; }
     if (R.info.kind === 'pdf') return;
     flip(dir);
@@ -2609,6 +2618,7 @@
   function readerKey(e) {
     var k = e.key;
     if (k === 'Escape') { closeReader(); return; }
+    if (isMedia(R.info) && k === ' ') { e.preventDefault(); if (MED.el) { if (MED.el.paused) MED.el.play(); else MED.el.pause(); } return; }
     var fwd = R.rtl && R.info && R.info.kind === 'images' ? 'ArrowLeft' : 'ArrowRight';
     var bwd = fwd === 'ArrowLeft' ? 'ArrowRight' : 'ArrowLeft';
     if (k === fwd || k === 'PageDown' || k === ' ') { e.preventDefault(); go(1); }
@@ -3124,12 +3134,15 @@
     floorGroup = new T.Group();
     scene.add(floorGroup);
     parent = floorGroup;
-    COLS = Math.max(2, Math.min(4, fl.libs.length));
-    addBuilding(fl, COLS, Math.ceil(fl.libs.length / COLS));
+    CINE_WALL = null;
+    COLS = fl.cinema ? 3 : Math.max(2, Math.min(4, fl.libs.length));
+    addBuilding(fl, COLS, fl.cinema ? 1 : Math.ceil(fl.libs.length / COLS));
     applyOutside.force = true; applyOutside();
     fl.libs.forEach(function (lib, j) { addSection(lib, j); });
     addPosters(fl, i + 1);
     addBrunchCorner(i);
+    addMediaBooth(fl);
+    if (fl.cinema) addCinema();
     spawnPeople(fl, i + 1);
     dimEnv(floorGroup);
     booths.forEach(function (b) { b.floor = i; });
@@ -3159,6 +3172,8 @@
         if (d.banner) { BANNER = d.banner; if (el('l3d-out').classList.contains('on')) openOutside(); }
         if (d.outside) OUTSIDE = Object.assign({ time: 'auto', season: 'auto', weather: 'clear' }, d.outside);
         floors = makeFloors(libs);
+        YMPLAYER = d.ymplayer || '';
+        if (YMPLAYER) floors.push({ key: 'cinema', label: (floors.length + 1) + '층 영화관', libs: [], total: 0, booths: [], cinema: true });
         floors.forEach(function (f, i) {
           var cols = Math.max(2, Math.min(4, f.libs.length));
           f.booths = f.libs.map(function (l, j) {
@@ -3697,6 +3712,233 @@
     if (brLoadVoices.done) return; brLoadVoices.done = true;
     api('api/lib3d/brunch/voices').then(function (d) { brTts.server = d.voices || []; brTts.serverNote = d.available ? '' : (d.reason || ''); brFillVoices(); }).catch(function () {});
   }
+
+  // ── 3층 오디오북·4층 영상: 서재 안에서 듣기·보기 (트랙 목록, 이어 듣기, 속도) + 들으며 걷는 작은 재생 막대 ──
+  var MED = { el: null, info: null, track: 0, series: '', title: '', saveAt: 0, video: false };
+  var medBox = el('l3d-r-media'), mini = el('l3d-mini');
+  function isMedia(info) { return info && (info.kind === 'audio' || info.kind === 'video'); }
+  function mediaSrc(info, i) { return 'api/lib3d/media?b=' + encodeURIComponent(info.key) + '&i=' + i; }
+  function fmtTime(s) { s = Math.max(0, Math.floor(s || 0)); var h = Math.floor(s / 3600), m = Math.floor(s / 60) % 60, x = s % 60; return (h ? h + ':' + ('0' + m).slice(-2) : m) + ':' + ('0' + x).slice(-2); }
+  function mediaStop() {
+    if (MED.el) { MED.el.pause(); MED.el.removeAttribute('src'); try { MED.el.load(); } catch (e) { /* 없어도 됨 */ } if (MED.el.parentNode) MED.el.parentNode.removeChild(MED.el); }
+    MED.el = null; MED.info = null; mini.hidden = true;
+  }
+  function mediaSave() {
+    if (!MED.el || !MED.info) return;
+    try { localStorage.setItem(ukey('l3d_read_' + MED.series), JSON.stringify({ key: MED.info.key, page: { t: MED.track, s: Math.floor(MED.el.currentTime || 0) } })); } catch (e) { /* 무시 */ }
+  }
+  function showMedia(info, at) {
+    showStage(false); R.body.hidden = true; medBox.hidden = false; medBox.textContent = '';
+    R.pos.textContent = ''; note('');
+    var video = info.kind === 'video';
+    if (MED.el && (MED.info && MED.info.key !== info.key || MED.video !== video)) mediaStop();   // 다른 작품이면 앞의 소리를 끈다
+    var same = MED.el && MED.info && MED.info.key === info.key;
+    MED.info = info; MED.series = R.series; MED.title = R.list[R.vi] ? R.list[R.vi].title : info.title; MED.video = video;
+    var wrapM = document.createElement('div'); wrapM.className = 'm-wrap' + (video ? ' v' : '');
+    var left = document.createElement('div'); left.className = 'm-main';
+    if (!video) {
+      var cov = document.createElement('img'); cov.className = 'm-cover'; cov.alt = '';
+      cov.src = 'api/lib3d/cover?k=' + encodeURIComponent(R.series); cov.onerror = function () { cov.style.visibility = 'hidden'; };
+      left.appendChild(cov);
+    }
+    if (!same) {
+      MED.el = document.createElement(video ? 'video' : 'audio');
+      MED.el.controls = true; MED.el.preload = 'metadata'; MED.el.setAttribute('playsinline', '');
+      MED.el.addEventListener('ended', function () { if (MED.info && MED.track + 1 < MED.info.count) mediaPlay(MED.track + 1, 0); else mediaSave(); });
+      MED.el.addEventListener('timeupdate', function () {
+        if (Date.now() - MED.saveAt > 5000) { MED.saveAt = Date.now(); mediaSave(); }
+        if (!mini.hidden) el('l3d-mini-time').textContent = fmtTime(MED.el.currentTime) + ' / ' + fmtTime(MED.el.duration);
+      });
+      MED.el.addEventListener('pause', function () { mediaSave(); el('l3d-mini-pp').textContent = '▶'; });
+      MED.el.addEventListener('play', function () { el('l3d-mini-pp').textContent = '❚❚'; });
+      MED.el.addEventListener('error', function () {
+        note(video ? '이 영상은 브라우저에서 바로 재생할 수 없는 형식일 수 있습니다 (mkv·avi·HEVC 등). [BookOasis 뷰어]나 YMPlayer로 보세요.' : '이 파일을 재생하지 못했습니다.');
+      });
+    }
+    MED.el.className = video ? 'm-video' : 'm-audio';
+    left.appendChild(MED.el);
+    var bar = document.createElement('div'); bar.className = 'm-bar';
+    [['⏮ 이전', function () { mediaPlay(MED.track - 1, 0); }], ['-15초', function () { MED.el.currentTime = Math.max(0, MED.el.currentTime - 15); }],
+     ['+30초', function () { MED.el.currentTime = MED.el.currentTime + 30; }], ['다음 ⏭', function () { mediaPlay(MED.track + 1, 0); }]].forEach(function (x) {
+      var bt = document.createElement('button'); bt.type = 'button'; bt.className = 'l3d-btn'; bt.textContent = x[0]; bt.addEventListener('click', x[1]); bar.appendChild(bt);
+    });
+    var sp = document.createElement('select'); sp.title = '속도';
+    ['0.8', '1', '1.2', '1.5', '1.75', '2'].forEach(function (v) { var o = document.createElement('option'); o.value = v; o.textContent = v + 'x'; sp.appendChild(o); });
+    try { sp.value = localStorage.getItem('l3d_media_rate') || '1'; } catch (e) { sp.value = '1'; }
+    sp.addEventListener('change', function () { MED.el.playbackRate = parseFloat(sp.value) || 1; try { localStorage.setItem('l3d_media_rate', sp.value); } catch (e) { /* 무시 */ } });
+    bar.appendChild(sp);
+    left.appendChild(bar);
+    var list = document.createElement('div'); list.className = 'm-list';
+    (info.tracks || []).forEach(function (t) {
+      var r = document.createElement('button'); r.type = 'button'; r.dataset.i = t.i;
+      r.textContent = (t.i + 1) + '. ' + t.name; if (t.dir) r.title = t.dir;
+      r.addEventListener('click', function () { mediaPlay(t.i, 0); });
+      list.appendChild(r);
+    });
+    wrapM.appendChild(left); wrapM.appendChild(list); medBox.appendChild(wrapM);
+    if (!info.count) { note('재생할 파일이 없습니다.'); return; }
+    MED.el.playbackRate = parseFloat(sp.value) || 1;
+    if (same) { markTrack(); return; }
+    var t0 = at && typeof at === 'object' ? Math.min(at.t || 0, info.count - 1) : 0;
+    mediaPlay(t0, at && typeof at === 'object' ? at.s || 0 : 0, true);
+  }
+  function markTrack() {
+    Array.prototype.forEach.call(medBox.querySelectorAll('.m-list button'), function (b) {
+      var on = Number(b.dataset.i) === MED.track; b.classList.toggle('on', on);
+      if (on) b.scrollIntoView({ block: 'nearest' });
+    });
+    R.pos.textContent = (MED.track + 1) + ' / ' + (MED.info ? MED.info.count : 0);
+    el('l3d-mini-t').textContent = MED.title + ' · ' + (MED.track + 1) + '/' + (MED.info ? MED.info.count : 0);
+  }
+  function mediaPlay(i, seek, first) {
+    if (!MED.info || i < 0 || i >= MED.info.count) return;
+    MED.track = i;
+    MED.el.src = mediaSrc(MED.info, i);
+    var rate = MED.el.playbackRate;
+    MED.el.addEventListener('loadedmetadata', function once() {
+      MED.el.removeEventListener('loadedmetadata', once);
+      if (seek) { try { MED.el.currentTime = seek; } catch (e) { /* 처음부터 */ } }
+      MED.el.playbackRate = rate;
+    });
+    var p = MED.el.play(); if (p && p.catch) p.catch(function () { if (first) note('▶를 누르면 재생합니다.'); });
+    markTrack(); mediaSave();
+  }
+  function mediaOnClose() {   // 읽기 화면을 닫을 때: 영상은 멈추고, 오디오는 듣던 중이면 작은 막대로 계속
+    if (!MED.el) return;
+    if (MED.video || MED.el.paused) { mediaSave(); mediaStop(); return; }
+    el('l3d-mini-hold').appendChild(MED.el);   // 화면에서만 옮겨 두고 소리는 계속 (문서에서 빼면 브라우저가 멈춘다)
+    mini.hidden = false; markTrack();
+  }
+  el('l3d-mini-pp').addEventListener('click', function () { if (!MED.el) return; if (MED.el.paused) MED.el.play(); else MED.el.pause(); });
+  el('l3d-mini-x').addEventListener('click', function () { mediaSave(); mediaStop(); });
+  el('l3d-mini-open').addEventListener('click', function () {
+    if (!MED.info) return;
+    mini.hidden = true;
+    openReader({ key: MED.series, title: MED.title });
+  });
+
+  // 3층·4층 입구 오른쪽: 청음 부스 / 시청 부스 (헤드폰 의자에 앉으면 이 층 작품 고르기)
+  function addMediaBooth(fl) {
+    if (!layout || (fl.key !== 'audiobook' && fl.key !== 'video')) return;
+    var L = layout, cx = Math.min(9.5, L.w / 2 - 6), f = L.front, video = fl.key === 'video';
+    var g = new T.Group(); g.position.set(cx, 0, 0); parent.add(g);
+    var rug = new T.Mesh(new T.CircleGeometry(2.6, 48), new T.MeshStandardMaterial({ color: video ? 0x23324a : 0x3b2e4a, roughness: 0.95 }));
+    rug.rotation.x = -Math.PI / 2; rug.position.set(0, 0.012, f - 3); rug.receiveShadow = true; g.add(rug);
+    var signTex = textTex([video ? '시청 부스' : '청음 부스'], 1024, 200, '#f5f2ec', '#1d1e20', 110);
+    var signMat = new T.MeshBasicMaterial({ map: signTex, toneMapped: false });
+    var sign = new T.Mesh(new T.BoxGeometry(2.6, 0.5, 0.04), [M.black, M.black, M.black, M.black, signMat, signMat]);
+    sign.position.set(0, 3.3, f - 3); g.add(sign);
+    [-1.1, 1.1].forEach(function (sx) { var c = new T.Mesh(new T.CylinderGeometry(0.006, 0.006, CEIL - 3.55, 6), M.black); c.position.set(sx, (CEIL + 3.55) / 2, f - 3); g.add(c); });
+    var seatMat = new T.MeshStandardMaterial({ color: video ? 0x8b2f3a : 0x4d3b6e, roughness: 0.8 });
+    var phoneMat = new T.MeshStandardMaterial({ color: 0x1d1e20, roughness: 0.4, metalness: 0.3 });
+    [[-1.6, 0.35], [-0.55, 0.12], [0.55, -0.12], [1.6, -0.35]].forEach(function (o, i) {
+      var ox = o[0], rot = o[1];
+      var ch = new T.Group(); ch.position.set(ox, 0, f - 3.6); ch.rotation.y = rot; g.add(ch);   // 앞(+z, 입구 쪽 벽)을 보고 앉는다
+      var seat = new T.Mesh(unitBox, seatMat); seat.scale.set(0.72, 0.2, 0.66); seat.position.y = 0.42; ch.add(seat);
+      var back = new T.Mesh(unitBox, seatMat); back.scale.set(0.72, 0.85, 0.16); back.position.set(0, 0.86, -0.3); back.rotation.x = -0.12; ch.add(back);
+      [-0.32, 0.32].forEach(function (ax) { var arm = new T.Mesh(unitBox, seatMat); arm.scale.set(0.1, 0.24, 0.62); arm.position.set(ax, 0.6, 0); ch.add(arm); });
+      var base = new T.Mesh(new T.CylinderGeometry(0.22, 0.28, 0.32, 16), M.black); base.position.y = 0.16; ch.add(base);
+      var band = new T.Mesh(new T.TorusGeometry(0.11, 0.015, 8, 20, Math.PI), phoneMat); band.position.set(0, 1.38, -0.3); ch.add(band);   // 등받이에 걸린 헤드폰
+      [-0.11, 0.11].forEach(function (ex) { var cup = new T.Mesh(new T.CylinderGeometry(0.05, 0.05, 0.04, 14), phoneMat); cup.rotation.z = Math.PI / 2; cup.position.set(ex, 1.36, -0.3); ch.add(cup); });
+      ch.traverse(function (m) { if (m.isMesh) m.castShadow = true; });
+      addSeat(cx + ox + Math.sin(rot) * 0.02, f - 3.6, rot, 0.52, { media: true });
+      if (video) {   // 의자 앞 작은 화면
+        var scr = new T.Mesh(new T.PlaneGeometry(0.62, 0.38), new T.MeshBasicMaterial({ color: [0x2d6a9f, 0x9f2d5a, 0x2d9f6a, 0x9f7a2d][i], toneMapped: false }));
+        var stand = new T.Mesh(unitBox, M.black); stand.scale.set(0.05, 1.1, 0.05); stand.position.set(ox + Math.sin(rot) * 0.9, 0.55, f - 2.7); g.add(stand);
+        scr.position.set(ox + Math.sin(rot) * 0.9, 1.2, f - 2.68); scr.rotation.y = Math.PI + rot; g.add(scr);
+      }
+    });
+  }
+  var mpBox = el('l3d-mpick'), mpLib = 0;
+  function openMediaPick() {
+    var fl = floors[cur]; if (!fl || !fl.libs.length) return;
+    [setBox, aiBox, pplBox, outBox, mdlBox, staffBox, brBox].forEach(function (b) { if (b) b.classList.remove('on'); });
+    el('l3d-mp-h').textContent = fl.key === 'video' ? '시청 부스 - 볼 작품 고르기' : '청음 부스 - 들을 작품 고르기';
+    var tabs = el('l3d-mp-tabs'); tabs.textContent = '';
+    if (mpLib >= fl.libs.length) mpLib = 0;
+    fl.libs.forEach(function (lib, i) {
+      var b = document.createElement('button'); b.type = 'button'; b.className = i === mpLib ? 'on' : ''; b.textContent = lib.name;
+      b.addEventListener('click', function () { mpLib = i; openMediaPick(); });
+      tabs.appendChild(b);
+    });
+    drawMediaPick();
+    mpBox.classList.add('on');
+  }
+  function drawMediaPick() {
+    var fl = floors[cur], lib = fl.libs[mpLib], q = (el('l3d-mp-q').value || '').trim().toLowerCase(), body = el('l3d-mp-body');
+    body.textContent = '';
+    lib.series.filter(function (s) { return s.last && (!q || String(s.title).toLowerCase().indexOf(q) >= 0); }).slice(0, 200).forEach(function (s) {
+      var key = lib.db_type + ':' + s.last;
+      var r = document.createElement('div'); r.className = 'it';
+      var img = document.createElement('img'); img.loading = 'lazy'; img.alt = ''; img.src = 'api/lib3d/cover?k=' + encodeURIComponent(key);
+      img.onerror = function () { img.style.visibility = 'hidden'; };
+      var tx = document.createElement('div'); var b = document.createElement('b'); b.textContent = s.title || '(제목 없음)';
+      var sm = document.createElement('small'); sm.textContent = lib.name + ' · ' + s.count + '개';
+      tx.appendChild(b); tx.appendChild(sm); r.appendChild(img); r.appendChild(tx);
+      r.addEventListener('click', function () { mpBox.classList.remove('on'); openReader({ key: key, title: s.title || '(제목 없음)' }); });
+      body.appendChild(r);
+    });
+    if (!body.firstChild) body.textContent = '작품이 없습니다.';
+  }
+  el('l3d-mp-q').addEventListener('input', drawMediaPick);
+  el('l3d-mp-close').addEventListener('click', function () { mpBox.classList.remove('on'); });
+
+  // ── 영화관 층 (YMPlayer): 큰 스크린 + 좌석 여러 줄, 스크린을 누르거나 앉으면 YMPlayer를 띄운다 ──
+  var YMPLAYER = '', cineBox = el('l3d-cine');
+  function addCinema() {
+    var L = layout, w = L.w, f = L.front, b0 = L.back, tz0 = f - 16; CINE_WALL = tz0;   // 로비 뒤부터 안쪽 벽까지가 상영관
+    var dark = new T.MeshStandardMaterial({ color: 0x1a1416, roughness: 0.95 });
+    var carpet = new T.Mesh(new T.PlaneGeometry(w - 0.4, tz0 - b0), new T.MeshStandardMaterial({ color: 0x3a1418, roughness: 1 }));
+    carpet.rotation.x = -Math.PI / 2; carpet.position.set(0, 0.011, (tz0 + b0) / 2); carpet.receiveShadow = true; parent.add(carpet);
+    [-1, 1].forEach(function (sd) {   // 옆벽 커튼 (창을 가림)
+      var cu = new T.Mesh(unitBox, dark); cu.scale.set(0.3, CEIL, tz0 - b0); cu.position.set(sd * (w / 2 - 0.3), CEIL / 2, (tz0 + b0) / 2); parent.add(cu);
+    });
+    var cub = new T.Mesh(unitBox, dark); cub.scale.set(w, CEIL, 0.3); cub.position.set(0, CEIL / 2, b0 + 0.3); parent.add(cub);
+    // 상영관 입구 칸막이 (가운데 통로만 열림)
+    var gapW = 6, pw = (w - gapW) / 2;
+    [-1, 1].forEach(function (sd) { var pt = new T.Mesh(unitBox, dark); pt.scale.set(pw, CEIL, 0.25); pt.position.set(sd * (gapW / 2 + pw / 2), CEIL / 2, tz0); parent.add(pt); });
+    var lintel = new T.Mesh(unitBox, dark); lintel.scale.set(gapW, CEIL - 3, 0.25); lintel.position.set(0, 3 + (CEIL - 3) / 2, tz0); parent.add(lintel);
+    var inTex = textTex(['상영관 · YMPlayer'], 1024, 160, '#1d1e20', '#ffd166', 90);
+    var inSign = new T.Mesh(new T.PlaneGeometry(4, 0.62), new T.MeshBasicMaterial({ map: inTex, toneMapped: false })); inSign.position.set(0, 3.5, tz0 + 0.14); parent.add(inSign);
+    // 스크린
+    var sw = Math.min(14, w - 6), sh = Math.min(CEIL - 1, sw * 9 / 21);
+    var scrTex = canvasTex(1400, 600, function (g, cw, ch) {
+      var grd = g.createLinearGradient(0, 0, 0, ch); grd.addColorStop(0, '#20263a'); grd.addColorStop(1, '#0c0e16');
+      g.fillStyle = grd; g.fillRect(0, 0, cw, ch);
+      g.fillStyle = '#e5a00d'; g.font = '700 120px ' + FONT; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText('▶ YMPlayer', cw / 2, ch / 2 - 60);
+      g.fillStyle = '#f5f2ec'; g.font = '400 46px ' + FONT; g.fillText('스크린을 누르거나 좌석에 앉으면 상영관이 열립니다', cw / 2, ch / 2 + 70);
+      g.fillStyle = '#9aa0b0'; g.font = '400 34px ' + FONT; g.fillText('Plex · IPTV · 텔레그램 영상', cw / 2, ch / 2 + 140);
+    });
+    var scr = new T.Mesh(new T.PlaneGeometry(sw, sh), new T.MeshBasicMaterial({ map: scrTex, toneMapped: false }));
+    scr.position.set(0, 0.6 + sh / 2, b0 + 0.5); scr.userData.cinema = true; parent.add(scr); brunchHits.push(scr);
+    var frame = new T.Mesh(unitBox, M.black); frame.scale.set(sw + 0.3, sh + 0.3, 0.05); frame.position.set(0, 0.6 + sh / 2, b0 + 0.46); parent.add(frame);
+    // 좌석: 스크린을 보고 여러 줄
+    var seatMat = new T.MeshStandardMaterial({ color: 0x9b1d2a, roughness: 0.75 }), n = Math.max(6, Math.min(12, Math.floor((w - 8) / 0.78)));
+    for (var row = 0; row < 6; row++) {
+      var z = b0 + 7 + row * 1.35;
+      if (z > tz0 - 1.5) break;
+      for (var k = 0; k < n; k++) {
+        var x = (k - (n - 1) / 2) * 0.78 + (k >= n / 2 ? 0.6 : -0.6);   // 가운데 통로
+        var ch = new T.Group(); ch.position.set(x, 0, z); ch.rotation.y = Math.PI; parent.add(ch);
+        var seat = new T.Mesh(unitBox, seatMat); seat.scale.set(0.62, 0.16, 0.58); seat.position.y = 0.44; ch.add(seat);
+        var back = new T.Mesh(unitBox, seatMat); back.scale.set(0.62, 0.72, 0.12); back.position.set(0, 0.84, -0.28); ch.add(back);
+        var leg = new T.Mesh(unitBox, M.black); leg.scale.set(0.5, 0.36, 0.4); leg.position.y = 0.18; ch.add(leg);
+        addSeat(x, z, Math.PI, 0.52, { cinema: true });
+      }
+    }
+  }
+  function openCinema() {
+    if (!YMPLAYER) return;
+    cineBox.classList.add('on'); wrap.classList.add('reading'); keys = {};
+    var fr = el('l3d-cine-frame');
+    if (!fr.getAttribute('src')) fr.setAttribute('src', YMPLAYER + '/');
+    el('l3d-cine-tab').href = YMPLAYER + '/';
+  }
+  function closeCinema() {
+    cineBox.classList.remove('on'); wrap.classList.remove('reading');
+    el('l3d-cine-frame').removeAttribute('src');   // 닫으면 재생도 멈춘다
+  }
+  el('l3d-cine-close').addEventListener('click', closeCinema);
 
   // ── AI 직원 (사서·도슨트 …): 서버의 상태(가려는 곳·말·가리키는 책)대로 걷고 말하고 가리킨다 + 로비 안내판 ──
   var staffNPC = {}, staffData = [], boardMesh = null, boardSig = '', pointer = null, STAFF_ON = false;

@@ -327,6 +327,48 @@ class Handler(BaseHTTPRequestHandler):
             ctype += "; charset=utf-8"
         self._send(200, data, ctype)
 
+    def _send_range(self, full, ctype):
+        """큰 파일을 조각으로 (HTTP Range: 오디오·영상 재생기가 건너뛸 때 그 자리부터)"""
+        import re as _re
+        size = os.path.getsize(full)
+        start, end, code = 0, size - 1, 200
+        m = _re.match(r"bytes=(\d*)-(\d*)$", (self.headers.get("Range") or "").strip())
+        if m and (m.group(1) or m.group(2)):
+            if m.group(1):
+                start = int(m.group(1))
+                end = min(int(m.group(2)), size - 1) if m.group(2) else size - 1
+            else:
+                start = max(0, size - int(m.group(2)))
+            if start > end or start >= size:
+                self.send_response(416)
+                self.send_header("Content-Range", "bytes */%d" % size)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+            code = 206
+        self.send_response(code)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Accept-Ranges", "bytes")
+        self.send_header("Content-Length", str(end - start + 1))
+        if code == 206:
+            self.send_header("Content-Range", "bytes %d-%d/%d" % (start, end, size))
+        self.send_header("Cache-Control", "private, max-age=3600")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.end_headers()
+        left = end - start + 1
+        try:
+            with open(full, "rb") as f:
+                f.seek(start)
+                while left > 0:
+                    chunk = f.read(min(256 * 1024, left))
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
+                    left -= len(chunk)
+        except (BrokenPipeError, ConnectionResetError):   # 재생기가 건너뛰며 연결을 끊는 건 흔한 일
+            pass
+        return None
+
     def _brunch_get(self, path, q):
         if not lib3d_brunch.enabled():
             return self._send(404, {"success": False, "error": "브런치 낭독 코너가 꺼져 있습니다 (LIB3D_BRUNCH)."})
@@ -370,7 +412,7 @@ class Handler(BaseHTTPRequestHandler):
                                             people=lib3d.load_settings().get("people") or {},
                                             outside=lib3d.load_settings().get("outside") or {},
                                             models=lib3d.load_settings().get("models") or "basic",
-                                            banner=lib3d.banner_info(), success=True))
+                                            banner=lib3d.banner_info(), ymplayer=lib3d.ymplayer_url(), success=True))
             if path.startswith("/api/lib3d/brunch/"):   # 1층 브런치 연재 낭독 코너 (브런치 공개 글이라 관람자도)
                 return self._brunch_get(path, {k: v[0] for k, v in q.items() if v})
             if path == "/api/lib3d/banner_pick":   # 현수막에 띄울 무작위 작품 (보관함 표지 모드)
@@ -413,6 +455,9 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/lib3d/res":
                 data, ctype = lib3d.resource(b, (q.get("p") or [""])[0])
                 return self._send(200, data, ctype, extra={"Cache-Control": "private, max-age=3600"})
+            if path == "/api/lib3d/media":   # 오디오북·영상 한 트랙 (Range로 이어 받기·건너뛰기)
+                full, ctype = lib3d.media_file(b, (q.get("i") or ["0"])[0])
+                return self._send_range(full, ctype)
             if path == "/api/lib3d/pdf":
                 with open(lib3d.pdf_path(b), "rb") as handle:
                     return self._send(200, handle.read(), "application/pdf")

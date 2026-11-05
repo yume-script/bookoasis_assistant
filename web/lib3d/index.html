@@ -80,6 +80,33 @@
   .l3d-ai .body { flex: 1; overflow: auto; }
   .l3d-ppl { width: min(560px, calc(100% - 24px)); }
   .l3d-staff { width: min(620px, calc(100% - 24px)); }
+  .l3d-r-media { flex: 1; min-height: 0; overflow: auto; padding: 12px; color: #f5f2ec; }
+  .l3d-r-media .m-wrap { display: grid; grid-template-columns: minmax(0, 1fr) minmax(200px, 300px); gap: 14px; height: 100%; }
+  .l3d-r-media .m-wrap.v { grid-template-columns: minmax(0, 1fr) minmax(180px, 260px); }
+  .l3d-r-media .m-main { display: flex; flex-direction: column; align-items: center; gap: 10px; min-width: 0; justify-content: center; }
+  .l3d-r-media .m-cover { max-width: min(320px, 70%); max-height: 46vh; border-radius: 12px; box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5); }
+  .l3d-r-media .m-audio { width: min(520px, 100%); }
+  .l3d-r-media .m-video { width: 100%; max-height: 70vh; background: #000; border-radius: 10px; }
+  .l3d-r-media .m-bar { display: flex; gap: 6px; flex-wrap: wrap; justify-content: center; }
+  .l3d-r-media .m-bar select { font: inherit; border-radius: 999px; padding: 6px 10px; border: 0; }
+  .l3d-r-media .m-list { overflow: auto; background: rgba(0, 0, 0, 0.35); border-radius: 12px; padding: 6px; display: flex; flex-direction: column; gap: 2px; }
+  .l3d-r-media .m-list button { text-align: left; border: 0; background: none; color: inherit; font: inherit; font-size: 0.82rem; padding: 6px 8px; border-radius: 8px; cursor: pointer; }
+  .l3d-r-media .m-list button:hover { background: rgba(255, 255, 255, 0.08); }
+  .l3d-r-media .m-list button.on { background: #e5a00d; color: #1d1e20; font-weight: 700; }
+  @media (max-width: 700px) { .l3d-r-media .m-wrap, .l3d-r-media .m-wrap.v { grid-template-columns: 1fr; height: auto; } .l3d-r-media .m-list { max-height: 30vh; } }
+  .l3d-mini { position: absolute; left: 50%; top: 12px; transform: translateX(-50%); z-index: 4; display: flex; align-items: center; gap: 8px; max-width: calc(100% - 24px);
+    background: rgba(20, 21, 23, 0.86); color: #f5f2ec; border-radius: 999px; padding: 6px 8px 6px 14px; font-size: 0.82rem; }
+  .l3d-mini[hidden] { display: none; }
+  .l3d-mini b { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 240px; }
+  .l3d-mini span { opacity: 0.7; white-space: nowrap; }
+  .l3d-mini button { border: 0; border-radius: 999px; background: rgba(255, 255, 255, 0.14); color: #fff; padding: 5px 10px; cursor: pointer; font: inherit; }
+  #l3d-mp-q { font: inherit; padding: 7px 10px; border: 1px solid #d9d3c8; border-radius: 10px; margin-bottom: 6px; }
+  .l3d-cine { position: absolute; inset: 0; z-index: 7; display: none; flex-direction: column; background: #0b0b0d; }
+  .l3d-cine.on { display: flex; }
+  .l3d-cine .top { display: flex; align-items: center; gap: 8px; padding: 8px 10px; color: #f5f2ec; }
+  .l3d-cine .top b { flex: 1; }
+  .l3d-cine iframe { flex: 1; width: 100%; border: 0; background: #000; }
+  .l3d-cine .note { margin: 0; padding: 4px 10px 8px; font-size: 0.72rem; color: #9aa0b0; }
   .l3d-brunch { inset: 12px 12px 12px auto; width: min(460px, calc(100% - 24px)); }
   .l3d-brunch .tabs { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 6px; background: none; border: 0; padding: 0; }
   .l3d-brunch .tabs button { font: inherit; font-size: 0.8rem; padding: 4px 10px; min-width: 0; border-radius: 999px; border: 1px solid #d9d3c8; background: #fff; color: #1d1e20; cursor: pointer; }
@@ -369,6 +396,27 @@
         <button type="button" class="l3d-btn" id="l3d-br-close">닫기</button>
       </div>
     </div>
+    <div class="l3d-mini" id="l3d-mini" hidden>
+      <span class="ic">🎧</span><b id="l3d-mini-t"></b><span id="l3d-mini-time"></span>
+      <button type="button" id="l3d-mini-pp" aria-label="재생·일시정지">❚❚</button>
+      <button type="button" id="l3d-mini-open">열기</button>
+      <button type="button" id="l3d-mini-x" aria-label="끄기">✕</button>
+      <span id="l3d-mini-hold" hidden></span>
+    </div>
+    <div class="l3d-set l3d-ai l3d-brunch" id="l3d-mpick" role="dialog" aria-label="작품 고르기">
+      <h3 id="l3d-mp-h">청음 부스</h3>
+      <div class="tabs" id="l3d-mp-tabs"></div>
+      <input type="text" id="l3d-mp-q" placeholder="제목으로 찾기" autocomplete="off">
+      <div class="body" id="l3d-mp-body"></div>
+      <div class="row" style="margin-top:8px"><button type="button" class="l3d-btn" id="l3d-mp-close">닫기</button></div>
+    </div>
+    <div class="l3d-cine" id="l3d-cine" role="dialog" aria-label="영화관 YMPlayer">
+      <div class="top"><b>🎬 영화관 · YMPlayer</b>
+        <a class="l3d-btn" id="l3d-cine-tab" target="_blank" rel="noopener">새 탭으로 ↗</a>
+        <button type="button" class="l3d-btn primary" id="l3d-cine-close">상영관 나가기</button></div>
+      <iframe id="l3d-cine-frame" title="YMPlayer" allow="autoplay; fullscreen; picture-in-picture; encrypted-media" allowfullscreen referrerpolicy="no-referrer"></iframe>
+      <p class="note">화면이 비거나 로그인이 반복되면 [새 탭으로]를 누르세요 (브라우저가 다른 주소의 로그인 쿠키를 막는 경우).</p>
+    </div>
     <div class="l3d-bubble" id="l3d-bubble"></div>
     <div class="l3d-chat" id="l3d-chat">
       <button type="button" class="l3d-chat-toggle" id="l3d-chat-toggle" title="채팅 접기·펴기" aria-label="채팅 접기·펴기">💬</button>
@@ -396,6 +444,7 @@
         </div>
       </div>
       <div class="l3d-r-body" id="l3d-r-body" hidden></div>
+      <div class="l3d-r-media" id="l3d-r-media" hidden></div>
       <div class="l3d-r-msg" id="l3d-r-msg" hidden></div>
     </div>
     <div class="l3d-stick" id="l3d-stick"><i></i></div>
