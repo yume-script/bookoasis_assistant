@@ -757,6 +757,10 @@
       c.g.position.z = z;
     }
   }
+  // 건너편 건물 간판 이름 (오른쪽 서재 옆 건물은 (주)CRARES)
+  var SIGN_NAMES = ['betty2859', 'C-Rhapsody', 'colaiuta', 'daydreamrabbit', 'grandfoxx', 'javara999', 'madnite1', 'venushoon'];
+  var SIGN_COLORS = [['#1d3557', '#f1faee'], ['#7a1f2b', '#fff4e6'], ['#f4f1ea', '#1d1e20'], ['#2d6a4f', '#ffffff'], ['#f2b705', '#1d1e20'],
+                     ['#3a0ca3', '#ffffff'], ['#222222', '#ffd166'], ['#e76f51', '#ffffff']];
   function addOutside(w, back, front, floorIdx) {
     var gy = -floorIdx * 4.5 - 0.05, cz = (front + back) / 2, d = front - back, r = rnd(53 + floorIdx);
     var ground = new T.Mesh(new T.CircleGeometry(SCENE_R - 2, 48), M.grass); ground.rotation.x = -Math.PI / 2; add(ground, 0, gy, cz);
@@ -764,7 +768,8 @@
     add(pano, 0, EYE - 110 * 0.3 + 110 / 2, cz);   // 그림의 지평선(아래에서 30%)을 눈높이에 맞춘다
     pano.rotation.y = floorIdx * 1.3;
     var len = d + 120;
-    [-1, 1].forEach(function (side) {
+    var signed = { crares: false, next: 0 };
+    [1, -1].forEach(function (side) {
       var walkX = side * (w / 2 + 2.5), roadX = side * (w / 2 + 9), farWalkX = side * (w / 2 + 15.5);
       var walk = new T.Mesh(new T.PlaneGeometry(5, len), M.pave); walk.rotation.x = -Math.PI / 2; add(walk, walkX, gy + 0.02, cz);
       var road = new T.Mesh(new T.PlaneGeometry(8, len), M.road); road.rotation.x = -Math.PI / 2; add(road, roadX, gy + 0.01, cz);
@@ -787,7 +792,6 @@
         var bulb = new T.Mesh(unitBox, M.streetLight); bulb.scale.set(0.5, 0.12, 0.28); add(bulb, lx + side * 1.0, gy + 4.85, lz);
         var pool = new T.Mesh(poolGeo, M.lightPool); pool.rotation.x = -Math.PI / 2; add(pool, lx + side * 1.0, gy + 0.04, lz);   // 바닥 불빛
       }
-      var signed = false;
       for (var bz = back - 50; bz < front + 50;) {   // 건너편 건물들
         var bw = 10 + r() * 14, bd = 10 + r() * 10, bh = 9 + Math.pow(r(), 1.6) * 34;
         var mat = M.facade[Math.floor(r() * M.facade.length)];
@@ -798,12 +802,15 @@
         var aw = new T.Mesh(unitBox, M.awning[Math.floor(r() * M.awning.length)]); aw.scale.set(1.4, 0.12, bw * 0.8);   // 차양
         aw.rotation.z = side * 0.25; add(aw, bx - side * (bd / 2 + 0.6), gy + 3.6, bz + bw / 2);
         var cap = new T.Mesh(unitBox, M.parapet); cap.scale.set(bd + 0.3, 0.5, bw + 0.3); add(cap, bx, gy + bh + 0.25, bz + bw / 2);   // 옥상 난간
-        if (side > 0 && !signed && bz + bw / 2 > back && bz + bw / 2 < front) {   // 건너편 건물 하나에 회사 간판 (서재 쪽을 보게, 불 켜진 간판)
-          signed = true;
-          var sw = Math.min(bw * 0.85, 11), sh = sw * 0.22;
-          var sign = new T.Mesh(new T.PlaneGeometry(sw, sh), new T.MeshBasicMaterial({ map: textTex(['(주)CRARES'], 1024, 224, '#14181f', '#ffffff', 150), toneMapped: false }));
-          sign.rotation.y = -Math.PI / 2; add(sign, bx - bd / 2 - 0.2, gy + Math.min(bh - sh, 14), bz + bw / 2);
-          var sbk = new T.Mesh(unitBox, M.pole); sbk.scale.set(0.15, sh + 0.25, sw + 0.25); add(sbk, bx - bd / 2 - 0.05, gy + Math.min(bh - sh, 14), bz + bw / 2);
+        var mid = bz + bw / 2, nm = null;   // 간판: 오른쪽 서재 옆 건물엔 (주)CRARES, 나머지 건물엔 이름 간판을 차례로
+        if (side > 0 && !signed.crares && mid > back && mid < front) { signed.crares = true; nm = '(주)CRARES'; }
+        else if (mid > back - 35 && mid < front + 35 && signed.next < SIGN_NAMES.length) nm = SIGN_NAMES[signed.next++];
+        if (nm) {
+          var sw = Math.min(bw * 0.85, 11), sh = sw * 0.22, sy = gy + Math.min(bh - sh, 14), sx = bx - side * (bd / 2 + 0.2), sc0 = SIGN_COLORS[(signed.next + (side > 0 ? 0 : 3)) % SIGN_COLORS.length];
+          if (nm === '(주)CRARES') sc0 = ['#14181f', '#ffffff'];
+          var sign = new T.Mesh(new T.PlaneGeometry(sw, sh), new T.MeshBasicMaterial({ map: textTex([nm], 1024, 224, sc0[0], sc0[1], nm.length > 10 ? 120 : 150), toneMapped: false }));
+          sign.rotation.y = -side * Math.PI / 2; add(sign, sx, sy, mid);   // 서재 쪽을 보게
+          var sbk = new T.Mesh(unitBox, M.pole); sbk.scale.set(0.15, sh + 0.25, sw + 0.25); add(sbk, bx - side * (bd / 2 + 0.05), sy, mid);
         }
         if (r() < 0.5) { var hut = new T.Mesh(unitBox, M.parapet); hut.scale.set(bd * 0.3, 2.2, bw * 0.25); add(hut, bx + (r() - 0.5) * bd * 0.4, gy + bh + 1.1, bz + bw / 2 + (r() - 0.5) * bw * 0.4); }
         bz += bw + 2 + r() * 6;
