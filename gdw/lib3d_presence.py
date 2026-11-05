@@ -54,13 +54,15 @@ def update(username, body):
     return {"others": others, "online": online, "chat": chat, "chat_id": _SEQ["chat"]}
 
 
-def post(user, text, floor="", to=None):
+def post(user, text, floor="", to=None, books=None):
     """서버가 남기는 메시지 (to가 있으면 그 사람에게만)"""
     with _LOCK:
         _SEQ["chat"] += 1
         msg = {"id": _SEQ["chat"], "user": user, "floor": str(floor or "")[:40], "text": str(text)[:4000], "t": time.time()}
         if to:
             msg["to"] = to
+        if books:
+            msg["books"] = books
         _CHAT.append(msg)
         del _CHAT[:-CHAT_KEEP]
     return msg
@@ -87,17 +89,18 @@ def ask_in_chat(username, question, floor, ask_fn):
         try:
             out = ask_fn(question, _ASK_HIST.get(username, []))
             answer = out.get("answer") or "(답이 비어 있습니다)"
+            books = out.get("books") or None
             if out.get("tools"):
                 answer += "\n(찾아본 도구: " + ", ".join(dict.fromkeys(out["tools"])) + ")"
             if out.get("warnings"):
                 answer += "\n(연결 못 한 MCP: " + " / ".join(out["warnings"]) + ")"
             _ASK_HIST[username] = (_ASK_HIST.get(username, []) + [{"q": question, "a": out.get("answer") or ""}])[-6:]
         except Exception as error:  # noqa: BLE001 - 실패 이유를 채팅으로
-            answer = "답하지 못했습니다: %s" % error
+            answer, books = "답하지 못했습니다: %s" % error, None
         finally:
             with _LOCK:
                 _ASKING.discard(username)
-        post("안내 데스크", answer, floor, to=username)
+        post("안내 데스크", answer, floor, to=username, books=books)
     _t.Thread(target=run, daemon=True).start()
 
 

@@ -739,7 +739,43 @@ def test_mcp():
             "tools": [r[0] for r in rows]}
 
 
-def _run_tool(table, name, args):
+BOOK_LIST_MAX = 12
+
+
+def _collect_books(found, name, args, text):
+    """search_books·get_random_book 결과에서 작품 목록을 뽑아 둔다 (채팅에 목록·링크로 붙임)"""
+    if name not in ("search_books", "get_random_book") or found is None:
+        return
+    try:
+        data = json.loads(text)
+    except ValueError:
+        return
+    db = str((args or {}).get("db_type") or "general")
+    items = data.get("series") if isinstance(data, dict) else None
+    if isinstance(items, dict):
+        items = [items]
+    for it in items or []:
+        if not isinstance(it, dict) or not it.get("representative_book_id"):
+            continue
+        bid, lid = it["representative_book_id"], it.get("library_id") or ""
+        key = "%s:%s" % (db, bid)
+        if any(b["key"] == key for b in found) or len(found) >= BOOK_LIST_MAX:
+            continue
+        series = it.get("series_name") or ""
+        found.append({"key": key, "db": db, "title": it.get("display_name") or series or it.get("representative_title") or "(제목 없음)",
+                      "author": it.get("author") or "", "count": int(it.get("book_count") or 1),
+                      "status": it.get("publication_status_label") if it.get("publication_status") else "",
+                      "url": lib3d.book_url(db, bid, lid, series)})
+
+
+def _run_tool(table, name, args, found=None):
+    text, is_err = _run_tool_raw(table, name, args)
+    if not is_err:
+        _collect_books(found, name, args, text)
+    return text, is_err
+
+
+def _run_tool_raw(table, name, args):
     for shown, t, c, real in table:
         if shown == name:
             try:
@@ -756,7 +792,8 @@ _ASK_SYSTEM = (
     "모호하면 general부터 본다.\n"
     "- 날씨는 weather, 날짜·요일·시각은 now, 주어진 주소의 내용은 fetch_url 도구로 확인한다. 다른 도구가 있으면 알맞게 쓴다.\n"
     "- 도구로 확인하지 못한 것은 추측이라고 밝힌다. 최신 정보가 필요한데 도구가 없으면 모른다고 말한다.\n"
-    "- 답은 한국어로 짧고 분명하게. 목록은 많아야 10개까지 보여 주고 나머지는 개수만 알려 준다.")
+    "- 답은 한국어로 짧고 분명하게. 목록은 많아야 10개까지 보여 주고 나머지는 개수만 알려 준다.\n"
+    "- 책을 찾아 준 경우 화면이 찾은 책 목록과 링크를 답 아래에 따로 붙여 주므로, 답에서는 요약(몇 개·어느 서재·특징)만 말한다.")
 
 
 def ask(question, history=None):
@@ -767,7 +804,10 @@ def ask(question, history=None):
     if not question:
         raise ValueError("질문을 적어 주세요.")
     table, warns = _tool_table()
-    out = (_ask_anthropic if provider() == "anthropic" else _ask_openai)(question, history, table)
+    found = []
+    out = (_ask_anthropic if provider() == "anthropic" else _ask_openai)(question, history, table, found)
+    if found:
+        out["books"] = found
     if warns:
         out["warnings"] = warns
     return out
@@ -781,7 +821,7 @@ def _history(history):
     return msgs
 
 
-def _ask_anthropic(question, history, table):
+def _ask_anthropic(question, history, table, found=None):
     tools = [{"name": shown, "description": (t.get("description") or "")[:1024],
               "input_schema": t.get("inputSchema") or {"type": "object", "properties": {}}} for shown, t, c, real in table]
     messages = _history(history) + [{"role": "user", "content": question}]
@@ -801,13 +841,13 @@ def _ask_anthropic(question, history, table):
             if b.type != "tool_use":
                 continue
             used.append(b.name)
-            text, is_err = _run_tool(table, b.name, b.input)
+            text, is_err = _run_tool(table, b.name, b.input, found)
             results.append({"type": "tool_result", "tool_use_id": b.id, "content": text, "is_error": is_err})
         messages.append({"role": "user", "content": results})
     return {"answer": "도구를 너무 여러 번 써서 멈췄습니다. 질문을 좁혀 다시 물어 주세요.", "tools": used}
 
 
-def _ask_openai(question, history, table):
+def _ask_openai(question, history, table, found=None):
     """OpenAI 호환 도구 호출(tools/tool_calls)"""
     tools = [{"type": "function", "function": {
         "name": shown, "description": (t.get("description") or "")[:1024],
@@ -831,6 +871,6 @@ def _ask_openai(question, history, table):
                 args = json.loads(fn.get("arguments") or "{}") if isinstance(fn.get("arguments"), str) else (fn.get("arguments") or {})
             except ValueError:
                 args = {}
-            text, is_err = _run_tool(table, name, args)
+            text, is_err = _run_tool(table, name, args, found)
             messages.append({"role": "tool", "tool_call_id": c.get("id") or name, "content": ("[오류] " if is_err else "") + text})
     return {"answer": "도구를 너무 여러 번 써서 멈췄습니다. 질문을 좁혀 다시 물어 주세요.", "tools": used}

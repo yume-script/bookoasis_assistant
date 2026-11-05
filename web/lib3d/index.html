@@ -90,7 +90,17 @@
   .l3d-chat-line.priv { background: rgba(58, 42, 92, 0.85); }
   .l3d-chat-line.priv b { color: #c9b6ff; }
   .l3d-chat-line { white-space: pre-wrap; }
-  .l3d-chat.ask .l3d-chat-log { max-height: 260px; }
+  .l3d-chat.ask .l3d-chat-log { max-height: 320px; }
+  .l3d-chat { pointer-events: auto; }
+  .l3d-chat-books { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; }
+  .l3d-chat-book { display: flex; align-items: center; gap: 8px; background: rgba(255, 255, 255, 0.1); border-radius: 8px; padding: 4px 6px; }
+  .l3d-chat-book img { width: 30px; height: 42px; object-fit: cover; border-radius: 3px; background: rgba(0, 0, 0, 0.3); flex: none; }
+  .l3d-chat-book button { flex: 1; min-width: 0; text-align: left; border: 0; background: none; color: inherit; cursor: pointer; padding: 0;
+    display: flex; flex-direction: column; font: inherit; }
+  .l3d-chat-book button b { color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .l3d-chat-book button small { opacity: 0.7; font-size: 0.72rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .l3d-chat-book button:hover b { text-decoration: underline; }
+  .l3d-chat-book a { color: #ffd166; text-decoration: none; font-weight: 700; padding: 2px 6px; flex: none; }
   /* 서재 안에서 읽기 (뷰어) */
   .l3d-reader { position: absolute; inset: 0; z-index: 5; display: none; flex-direction: column; background: rgba(24, 22, 20, 0.62);
     backdrop-filter: blur(7px); -webkit-backdrop-filter: blur(7px); color: #eee; }

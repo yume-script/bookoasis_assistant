@@ -2958,6 +2958,27 @@
     var d = document.createElement('div'); d.className = 'l3d-chat-line' + (m.to ? ' priv' : '');
     var who = document.createElement('b'); who.textContent = m.user + (m.floor && floors[cur] && m.floor !== floors[cur].key ? ' (' + floorLabel(m.floor) + ')' : '');
     d.appendChild(who); d.appendChild(document.createTextNode(' ' + m.text));
+    if (m.books && m.books.length) {   // 안내 데스크가 찾은 책: 누르면 작품 카드(여기서 읽기·BookOasis 뷰어), ↗는 BookOasis 상세
+      var ul = document.createElement('div'); ul.className = 'l3d-chat-books';
+      m.books.forEach(function (bk) {
+        var row = document.createElement('div'); row.className = 'l3d-chat-book';
+        var img = document.createElement('img'); img.loading = 'lazy'; img.alt = ''; img.src = 'api/lib3d/cover?k=' + encodeURIComponent(bk.key);
+        img.onerror = function () { img.style.visibility = 'hidden'; };
+        var btn = document.createElement('button'); btn.type = 'button';
+        var t = document.createElement('b'); t.textContent = bk.title;
+        var sub = document.createElement('small');
+        sub.textContent = [bk.author, bk.count + '권', bk.status, FLOOR_NAMES[bk.db] || bk.db].filter(Boolean).join(' · ');
+        btn.appendChild(t); btn.appendChild(sub);
+        btn.addEventListener('click', function () { showCard({ key: bk.key, title: bk.title, count: bk.count, lib: (FLOOR_NAMES[bk.db] || bk.db) + ' 서재', db: bk.db }); });
+        row.appendChild(img); row.appendChild(btn);
+        if (bk.url) {
+          var a = document.createElement('a'); a.href = bk.url; a.target = '_blank'; a.rel = 'noopener'; a.textContent = '↗'; a.title = 'BookOasis에서 열기';
+          row.appendChild(a);
+        }
+        ul.appendChild(row);
+      });
+      d.appendChild(ul);
+    }
     if (m.user === '안내 데스크' && m.text !== '찾아보는 중...') {   // 답이 오면 '찾아보는 중...'은 지운다
       Array.prototype.forEach.call(chatLog.querySelectorAll('.l3d-chat-line.wait'), function (x) { x.remove(); });
     }
