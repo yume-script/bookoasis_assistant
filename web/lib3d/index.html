@@ -191,6 +191,7 @@
         <button type="button" class="l3d-btn" id="l3d-set-ai">AI 설정</button>
         <button type="button" class="l3d-btn" id="l3d-set-ppl">인물 수</button>
         <button type="button" class="l3d-btn" id="l3d-set-out">창밖 풍경</button>
+        <button type="button" class="l3d-btn" id="l3d-set-mdl">3D 모형</button>
       </div>
     </div>
     <div class="l3d-set l3d-ai" id="l3d-ai" role="dialog" aria-label="3D 서재 AI 설정">
@@ -248,6 +249,22 @@
         <button type="button" class="l3d-btn" id="l3d-out-close">닫기</button>
       </div>
     </div>
+    <div class="l3d-set l3d-ai" id="l3d-mdl" role="dialog" aria-label="3D 모형">
+      <h3>3D 모형</h3>
+      <p class="sub">로비 라운지의 소파·의자, 화분, 바깥 차를 무엇으로 보여 줄지 고릅니다. 책장·건물·나무는 어느 쪽이든 그대로입니다.</p>
+      <div class="body">
+        <label class="c"><input type="radio" name="l3d-mdl" value="basic"> 지금 그대로 - 코드로 그린 가구·차 (추가로 받는 파일 없음, 가벼움)</label>
+        <label class="c"><input type="radio" name="l3d-mdl" value="real"> 3D 모형 파일 - 실제 제품을 본뜬 모형 (처음 한 번 약 14MB를 받음, 그래픽 부담 조금 큼)</label>
+        <p class="sub">모형 파일: 벨벳 소파 <i>GlamVelvetSofa</i>, 단추 장식 의자 <i>ChairDamaskPurplegold</i> (© Wayfair, Eric Chadwick, CC BY 4.0),
+          화분 <i>DiffuseTransmissionPlant</i> (© Darmstadt Graphics Group, CC BY 4.0) - Khronos glTF Sample Assets /
+          자동차 <i>Ferrari 458 Italia</i> (vicent091036, three.js 예제). 받지 못한 모형은 지금 그대로 그린다.</p>
+      </div>
+      <p class="sub" id="l3d-mdl-msg"></p>
+      <div class="row">
+        <button type="button" class="l3d-btn primary" id="l3d-mdl-save">저장</button>
+        <button type="button" class="l3d-btn" id="l3d-mdl-close">닫기</button>
+      </div>
+    </div>
     <div class="l3d-ask" id="l3d-ask" role="dialog" aria-label="안내 데스크에 질문">
       <h3>안내 데스크에 질문</h3>
       <div class="l3d-ask-log" id="l3d-ask-log"><div class="a">BookOasis 서재에 대해 물어보세요. 예: "최근에 들어온 판타지 소설 알려줘", "표지 없는 책이 몇 권이야?"</div></div>
@@ -296,6 +313,7 @@
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/environments/RoomEnvironment.js" crossorigin="anonymous"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/geometries/RoundedBoxGeometry.js" crossorigin="anonymous"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/DRACOLoader.js" crossorigin="anonymous"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/ColladaLoader.js" crossorigin="anonymous"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/utils/SkeletonUtils.js" crossorigin="anonymous"></script>
 <script src="library3d/app.js"></script>

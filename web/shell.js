@@ -72,7 +72,7 @@
     // BookOasis 3D 서재 (.env LIB3D_ENABLED=true): 화면 하나라 탭 막대 없이 #hall
     { id: 'lib3d', title: 'BookOasis 3D 서재', icon: 'cube', href: 'library3d', hashNav: true,
       items: [{ tab: 'hall', label: '둘러보기', icon: 'cube' }, { tab: 'settings', label: '설정', icon: 'gear' },
-               { tab: 'people', label: '인물 수', icon: 'users' }, { tab: 'outside', label: '창밖 풍경', icon: 'image' }, { tab: 'ai', label: 'AI 설정', icon: 'comment' }] }
+               { tab: 'people', label: '인물 수', icon: 'users' }, { tab: 'outside', label: '창밖 풍경', icon: 'image' }, { tab: 'models', label: '3D 모형', icon: 'cube' }, { tab: 'ai', label: 'AI 설정', icon: 'comment' }] }
   ];
   var THEMES = [
     { id: 'dark', label: '다크', colors: ['#141517', '#1d1f22', '#ececec'] },

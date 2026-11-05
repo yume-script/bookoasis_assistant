@@ -616,7 +616,46 @@
     }
     gq.computeVertexNormals(); gq.userData.shared = true; return gq;
   })();
+  // ── 3D 모형 파일 (설정 > 3D 모형에서 '모형 파일' 고르면): 소파·의자·화분(Khronos glTF 예제, CC BY 4.0), 자동차(three.js 예제 Ferrari 458) ──
+  var REAL_BASE = 'https://cdn.jsdelivr.net/gh/KhronosGroup/glTF-Sample-Assets@main/Models/';
+  var REAL_FILES = {
+    sofa: REAL_BASE + 'GlamVelvetSofa/glTF-Binary/GlamVelvetSofa.glb',
+    chair: REAL_BASE + 'ChairDamaskPurplegold/glTF-Binary/ChairDamaskPurplegold.glb',
+    plant: REAL_BASE + 'DiffuseTransmissionPlant/glTF-Binary/DiffuseTransmissionPlant.glb',
+    car: 'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r175/examples/models/gltf/ferrari.glb'
+  };
+  var MODELS = 'basic';   // 설정값: basic(지금 그대로) | real(모형 파일)
+  var REAL = {}, realLoading = false, carPaints = null;
+  function loadReal() {
+    if (realLoading || MODELS !== 'real' || !T.GLTFLoader) return;
+    realLoading = true;
+    var gl = new T.GLTFLoader();
+    if (T.DRACOLoader) { var dr = new T.DRACOLoader(); dr.setDecoderPath('https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/libs/draco/gltf/'); gl.setDRACOLoader(dr); }
+    var left = Object.keys(REAL_FILES).length;
+    Object.keys(REAL_FILES).forEach(function (k) {
+      gl.load(REAL_FILES[k], function (g) {
+        var root = g.scene;
+        root.traverse(function (o) {
+          if (/firefly|light/i.test(o.name) && k === 'plant') o.visible = false;   // 화분 모형의 반딧불이·조명은 뺀다
+          if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; }
+        });
+        keepShared(root); REAL[k] = root;
+        if (--left === 0) rebuildForModels();
+      }, undefined, function (e) { console.warn('3D 서재 모형 파일:', k, e); if (--left === 0) rebuildForModels(); });
+    });
+  }
+  function rebuildForModels() { if (cur >= 0 && floors[cur]) buildFloor(cur); }
+  function useReal(k) { return MODELS === 'real' && REAL[k]; }
+  // 모형을 크기에 맞춰 놓는다 (바닥에 붙이고 가운데 정렬). size: {w: 너비} 또는 {h: 높이} 또는 {l: 길이}
+  function fitClone(k, size, x, y, z, ry) {
+    var src = REAL[k], c = src.clone(), box = new T.Box3().setFromObject(src), sz = new T.Vector3(); box.getSize(sz);
+    var sc = size.w ? size.w / sz.x : size.h ? size.h / sz.y : size.l / sz.z;
+    var inner = new T.Group(); inner.add(c); c.position.set(-(box.min.x + box.max.x) / 2, -box.min.y, -(box.min.z + box.max.z) / 2);
+    var g = new T.Group(); g.add(inner); inner.scale.setScalar(sc); g.position.set(x, y || 0, z); g.rotation.y = ry || 0;
+    parent.add(g); return g;
+  }
   function plant(x, z, scale, seed) {   // 화분 + 줄기마다 잎이 겹겹이
+    if (useReal('plant')) return fitClone('plant', { h: 1.3 * (scale || 1) }, x, 0, z, (seed || 0) * 1.7);
     var g = new T.Group(); g.position.set(x, 0, z); g.scale.setScalar(scale || 1); parent.add(g);
     part(g, new T.CylinderGeometry(0.28, 0.21, 0.55, 28), M.pot, 0, 0.275, 0);
     part(g, new T.CylinderGeometry(0.29, 0.29, 0.03, 28), M.pot, 0, 0.55, 0);
@@ -637,6 +676,15 @@
   // 로비 라운지: 러그 + 소파 + 안락의자 둘 + 탁자 + 스탠드 (양쪽)
   function lounge(cx, cz, flip) {
     rug(cx, cz, 4.2, 3.2);
+    if (useReal('sofa') && useReal('chair')) {   // 모형 파일: 벨벳 소파 + 단추 장식 의자 둘
+      fitClone('sofa', { w: 2.5 }, cx, 0, cz - 1.05, 0);
+      fitClone('chair', { w: 0.95 }, cx - 1.65, 0, cz + 0.35, Math.PI / 2 + 0.25);
+      fitClone('chair', { w: 0.95 }, cx + 1.65, 0, cz + 0.35, -Math.PI / 2 - 0.25);
+      coffeeTable(cx, cz + 0.05, 0);
+      floorLamp(cx + 1.85, cz - 1.25);
+      plant(cx - 2.0, cz - 1.3, 0.8, 11 + (flip ? 3 : 0));
+      return;
+    }
     sofa(cx, cz - 1.15, 0, 3, FURN.sofa[flip ? 2 : 0]);
     sofa(cx - 1.65, cz + 0.35, Math.PI / 2 + 0.25, 1, FURN.leather);
     sofa(cx + 1.65, cz + 0.35, -Math.PI / 2 - 0.25, 1, FURN.sofa[1]);
@@ -663,6 +711,20 @@
   }
   var cars = [];
   function makeCar(r) {
+    if (useReal('car')) {   // 모형 파일 차: 차체 색만 바꾼다 (모형은 앞이 -z라 돌려 세운다)
+      if (!carPaints) {
+        var bodyMat = null; REAL.car.traverse(function (o) { if (o.isMesh && o.name === 'body' && !bodyMat) bodyMat = o.material; });
+        carPaints = [0xe8e6e1, 0x1f2328, 0x8b1e2b, 0x2c4a7a, 0x9aa2a8, 0x3d5a45, 0xd9c79c].map(function (c) {
+          var m = bodyMat ? bodyMat.clone() : new T.MeshStandardMaterial({ roughness: 0.25, metalness: 0.6 }); m.color.setHex(c); m.userData.keep = true; return m;
+        });
+      }
+      var holder = parent, tmpG = new T.Group(); parent = tmpG;
+      var car = fitClone('car', { l: 4.4 }, 0, 0, 0, Math.PI);
+      parent = holder;
+      var paint = carPaints[Math.floor(r() * carPaints.length)];
+      car.traverse(function (o) { if (!o.isMesh) return; o.castShadow = false; if (o.name === 'body') o.material = paint; });   // 바깥이라 그림자 생략(가볍게)
+      return tmpG;
+    }
     var G = carParts(), g = new T.Group();
     var paint = CAR.paint[Math.floor(r() * CAR.paint.length)];
     function p(geo, mat, x, y, z, rz) { var m = new T.Mesh(geo, mat); m.position.set(x, y, z); if (rz) m.rotation.z = rz; m.castShadow = true; g.add(m); return m; }
@@ -679,7 +741,7 @@
     [-1, 1].forEach(function (side) {
       var roadX = side * (w / 2 + 9);
       [-1, 1].forEach(function (dir) {   // 차선 둘 (반대 방향)
-        var laneX = roadX + dir * 1.9, n = 3 + Math.floor(r() * 2);
+        var laneX = roadX + dir * 1.9, n = useReal('car') ? 2 : 3 + Math.floor(r() * 2);   // 모형 차는 무거워 차선마다 2대
         for (var i = 0; i < n; i++) {
           var c = makeCar(r); c.position.set(laneX, gy, span.z0 + r() * (span.z1 - span.z0)); c.rotation.y = dir > 0 ? 0 : Math.PI;
           parent.add(c);
@@ -2509,8 +2571,27 @@
   });
   el('l3d-out-close').addEventListener('click', function () { outBox.classList.remove('on'); });
   el('l3d-set-out').addEventListener('click', openOutside);
+  // 3D 모형: 지금 그대로(코드로 그린 가구) | 모형 파일
+  var mdlBox = el('l3d-mdl');
+  function openModels() {
+    [setBox, aiBox, pplBox, outBox].forEach(function (b) { b.classList.remove('on'); }); mdlBox.classList.add('on');
+    Array.prototype.forEach.call(mdlBox.querySelectorAll('input[name=l3d-mdl]'), function (i) { i.checked = i.value === MODELS; });
+    el('l3d-mdl-msg').textContent = '';
+  }
+  el('l3d-set-mdl').addEventListener('click', openModels);
+  el('l3d-mdl-close').addEventListener('click', function () { mdlBox.classList.remove('on'); });
+  el('l3d-mdl-save').addEventListener('click', function () {
+    var v = (mdlBox.querySelector('input[name=l3d-mdl]:checked') || {}).value || 'basic';
+    el('l3d-mdl-msg').textContent = '저장 중...';
+    postJSON('api/lib3d/settings', { models: v }).then(function (d) {
+      MODELS = d.models;
+      if (MODELS === 'real' && !(REAL.sofa || REAL.car)) { el('l3d-mdl-msg').textContent = '저장했습니다. 모형 파일을 받는 중 (약 14MB) - 다 받으면 바로 바뀝니다.'; loadReal(); }
+      else { el('l3d-mdl-msg').textContent = '저장했습니다.'; rebuildForModels(); }
+    }).catch(function (e) { el('l3d-mdl-msg').textContent = e.message; });
+  });
   function hashNav() {
     if (location.hash === '#outside') openOutside();
+    if (location.hash === '#models') openModels();
     if (location.hash === '#settings') openSettings();
     if (location.hash === '#ai') openAI();
     if (location.hash === '#people') { if (floors.length) openPeople(); else pendingPeople = true; }
@@ -2667,6 +2748,7 @@
         }
         if (d.ai) setAI(d.ai);
         PEOPLE = d.people || {};
+        MODELS = d.models === 'real' ? 'real' : 'basic'; loadReal();
         if (d.outside) OUTSIDE = Object.assign({ time: 'auto', season: 'auto', weather: 'clear' }, d.outside);
         floors = makeFloors(libs);
         floors.forEach(function (f, i) {

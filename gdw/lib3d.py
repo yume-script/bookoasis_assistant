@@ -22,7 +22,7 @@ from urllib.request import Request, urlopen
 
 from . import bookoasis_db, config
 
-VERSION = "2.18.0"
+VERSION = "2.19.0"
 CACHE_SEC = 300
 COVER_WIDTH = 200
 _DATA = {"at": 0.0, "v": None}
@@ -140,6 +140,18 @@ def save_outside(outside):
         value = str((outside or {}).get(key) or "")
         clean[key] = value if value in choices else ("clear" if key == "weather" else "auto")
     data_ = dict(load_settings(), outside=clean)
+    os.makedirs(config.data_dir(), exist_ok=True)
+    tmp = _settings_path() + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data_, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, _settings_path())
+    return clean
+
+
+def save_models(value):
+    """3D 모형: basic(코드로 그린 가구·차) | real(모형 파일)"""
+    clean = "real" if value == "real" else "basic"
+    data_ = dict(load_settings(), models=clean)
     os.makedirs(config.data_dir(), exist_ok=True)
     tmp = _settings_path() + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
