@@ -412,7 +412,7 @@ class Handler(BaseHTTPRequestHandler):
                                             people=lib3d.load_settings().get("people") or {},
                                             outside=lib3d.load_settings().get("outside") or {},
                                             models=lib3d.load_settings().get("models") or "basic",
-                                            banner=lib3d.banner_info(), ymplayer=lib3d.ymplayer_url(), success=True))
+                                            banner=lib3d.banner_info(), ymplayer=lib3d.ymplayer_url(), ymplayer_embed=lib3d.ymplayer_embed(), success=True))
             if path.startswith("/api/lib3d/brunch/"):   # 1층 브런치 연재 낭독 코너 (브런치 공개 글이라 관람자도)
                 return self._brunch_get(path, {k: v[0] for k, v in q.items() if v})
             if path == "/api/lib3d/banner_pick":   # 현수막에 띄울 무작위 작품 (보관함 표지 모드)

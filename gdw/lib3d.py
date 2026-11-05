@@ -22,7 +22,7 @@ from urllib.request import Request, urlopen
 
 from . import bookoasis_db, config
 
-VERSION = "2.34.0"
+VERSION = "2.34.1"
 CACHE_SEC = 300
 COVER_WIDTH = 200
 _DATA = {"at": 0.0, "v": None}
@@ -534,6 +534,12 @@ def ymplayer_url():
     """5층 영화관이 여는 YMPlayer 주소 (LIB3D_YMPLAYER_URL, 비우면 영화관 층을 만들지 않음) - 브라우저에서 열리는 주소"""
     u = str(config.env("LIB3D_YMPLAYER_URL") or "").strip().rstrip("/")
     return u if u.startswith(("http://", "https://")) else ""
+
+
+def ymplayer_embed():
+    """영화관에서 YMPlayer를 띄우는 방법: auto(기본 - 브라우저가 막을 조건이면 새 탭) / tab(늘 새 탭) / frame(늘 서재 안)"""
+    v = str(config.env("LIB3D_YMPLAYER_EMBED") or "auto").strip().lower()
+    return v if v in ("auto", "tab", "frame") else "auto"
 
 
 def public_url():

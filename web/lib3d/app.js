@@ -2386,7 +2386,7 @@
     targets = targets.concat(brunchHits, seats.map(function (st) { return st.mesh; }));
     var hit = ray.intersectObjects(targets, false)[0];
     if (hit && hit.object === elevator && hit.distance < 8) { openFloors(); return; }
-    if (hit && hit.object.userData.cinema && hit.distance < 40) { closeCard(); openCinema(); return; }
+    if (hit && hit.object.userData.cinema && hit.distance < 40) { closeCard(); openCinema(true); return; }
     if (hit && hit.object.userData.brunch && hit.distance < 14) { closeCard(); openBrunch(); return; }
     if (hit && hit.object.userData.seat) {
       if (hit.distance < 5 && !sitting) sitDown(hit.object.userData.seat);
@@ -3172,7 +3172,7 @@
         if (d.banner) { BANNER = d.banner; if (el('l3d-out').classList.contains('on')) openOutside(); }
         if (d.outside) OUTSIDE = Object.assign({ time: 'auto', season: 'auto', weather: 'clear' }, d.outside);
         floors = makeFloors(libs);
-        YMPLAYER = d.ymplayer || '';
+        YMPLAYER = d.ymplayer || ''; YM_EMBED = d.ymplayer_embed || 'auto';
         if (YMPLAYER) floors.push({ key: 'cinema', label: (floors.length + 1) + '층 영화관', libs: [], total: 0, booths: [], cinema: true });
         floors.forEach(function (f, i) {
           var cols = Math.max(2, Math.min(4, f.libs.length));
@@ -3884,7 +3884,22 @@
   el('l3d-mp-close').addEventListener('click', function () { mpBox.classList.remove('on'); });
 
   // ── 영화관 층 (YMPlayer): 큰 스크린 + 좌석 여러 줄, 스크린을 누르거나 앉으면 YMPlayer를 띄운다 ──
-  var YMPLAYER = '', cineBox = el('l3d-cine');
+  var YMPLAYER = '', YM_EMBED = 'auto', cineBox = el('l3d-cine');
+  // 서재 안(iframe)에 띄울 수 있는지: https 화면에 http YMPlayer(혼합 콘텐츠)나, 다른 사이트(로그인 쿠키가 막힘)면 안 된다
+  function siteOf(h) {
+    if (/^[\d.]+$/.test(h) || h.indexOf(':') >= 0 || h.indexOf('.') < 0) return h;   // IP·localhost는 주소 그대로
+    var p = h.split('.'), n = /^(co|or|go|ne|ac|re|pe|com|net|org)$/.test(p[p.length - 2]) && p.length > 2 ? 3 : 2;
+    return p.slice(-n).join('.');
+  }
+  function ymWhyNoFrame() {
+    if (YM_EMBED === 'frame') return '';
+    if (YM_EMBED === 'tab') return '설정(LIB3D_YMPLAYER_EMBED=tab)에 따라 새 탭으로 엽니다.';
+    var u; try { u = new URL(YMPLAYER); } catch (e) { return ''; }
+    if (location.protocol === 'https:' && u.protocol === 'http:') return '이 화면은 https인데 YMPlayer 주소가 http라 브라우저가 서재 안에 띄우는 것을 막습니다.';
+    if (siteOf(u.hostname) !== siteOf(location.hostname)) return '서재(' + location.hostname + ')와 YMPlayer(' + u.hostname + ')가 다른 사이트라 브라우저가 서재 안에서 YMPlayer 로그인을 막습니다.';
+    return '';
+  }
+  function ymNewTab() { var w0 = window.open(YMPLAYER + '/', 'ymplayer'); if (w0) { try { w0.focus(); } catch (e) { /* 무시 */ } } return !!w0; }
   function addCinema() {
     var L = layout, w = L.w, f = L.front, b0 = L.back, tz0 = f - 16; CINE_WALL = tz0;   // 로비 뒤부터 안쪽 벽까지가 상영관
     var dark = new T.MeshStandardMaterial({ color: 0x1a1416, roughness: 0.95 });
@@ -3927,18 +3942,22 @@
       }
     }
   }
-  function openCinema() {
+  function openCinema(gesture) {
     if (!YMPLAYER) return;
-    cineBox.classList.add('on'); wrap.classList.add('reading'); keys = {};
-    var fr = el('l3d-cine-frame');
-    if (!fr.getAttribute('src')) fr.setAttribute('src', YMPLAYER + '/');
+    var why = ymWhyNoFrame(), fr = el('l3d-cine-frame'), gate = el('l3d-cine-gate');
     el('l3d-cine-tab').href = YMPLAYER + '/';
+    if (why && gesture && ymNewTab()) return;   // 스크린을 눌렀으면 바로 새 탭 (팝업 차단에 안 걸림)
+    cineBox.classList.add('on'); wrap.classList.add('reading'); keys = {};
+    fr.hidden = !!why; gate.hidden = !why;
+    if (why) { el('l3d-cine-why').textContent = why; return; }   // 앉아서 연 경우: 큰 [상영 시작] 버튼으로 새 탭
+    if (!fr.getAttribute('src')) fr.setAttribute('src', YMPLAYER + '/');
   }
   function closeCinema() {
     cineBox.classList.remove('on'); wrap.classList.remove('reading');
     el('l3d-cine-frame').removeAttribute('src');   // 닫으면 재생도 멈춘다
   }
   el('l3d-cine-close').addEventListener('click', closeCinema);
+  el('l3d-cine-go').addEventListener('click', function () { if (ymNewTab()) closeCinema(); });
 
   // ── AI 직원 (사서·도슨트 …): 서버의 상태(가려는 곳·말·가리키는 책)대로 걷고 말하고 가리킨다 + 로비 안내판 ──
   var staffNPC = {}, staffData = [], boardMesh = null, boardSig = '', pointer = null, STAFF_ON = false;
