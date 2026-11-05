@@ -28,7 +28,7 @@ import zipfile
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import lib3d, lib3d_agents, lib3d_ai, lib3d_presence, auth, config, mcp, service
+from . import lib3d, lib3d_agents, lib3d_brunch, lib3d_ai, lib3d_presence, auth, config, mcp, service
 
 log = logging.getLogger("gdw.web")
 WEB_DIR = os.path.join(config.ROOT, "web")
@@ -47,7 +47,7 @@ MAX_BODY = 2 * 1024 * 1024
 # 관람자(role=viewer)가 쓸 수 있는 것: 3D 서재 보기·읽기·함께 보기와 자기 비밀번호·로그아웃
 VIEWER_GET = {"/library3d", "/library3d/", "/library3d/app.js", "/theme.css", "/shell.js", "/api/modules", "/api/auth/state"}
 VIEWER_LIB3D_ADMIN_ONLY = {"/api/lib3d/libraries", "/api/lib3d/ai/settings", "/api/lib3d/ai/test", "/api/lib3d/agents"}
-VIEWER_POST = {"/api/auth/logout", "/api/auth/password", "/api/lib3d/presence", "/api/lib3d/say"}
+VIEWER_POST = {"/api/auth/logout", "/api/auth/password", "/api/lib3d/presence", "/api/lib3d/say", "/api/lib3d/brunch/tts"}
 
 
 THEMES = ("dark", "light", "black", "navy", "auto")
@@ -327,6 +327,25 @@ class Handler(BaseHTTPRequestHandler):
             ctype += "; charset=utf-8"
         self._send(200, data, ctype)
 
+    def _brunch_get(self, path, q):
+        if not lib3d_brunch.enabled():
+            return self._send(404, {"success": False, "error": "브런치 낭독 코너가 꺼져 있습니다 (LIB3D_BRUNCH)."})
+        try:
+            if path == "/api/lib3d/brunch/today":
+                return self._send(200, dict(lib3d_brunch.fetch_today(), success=True))
+            if path == "/api/lib3d/brunch/list":
+                return self._send(200, dict(lib3d_brunch.list_day(q.get("day") or lib3d_brunch.today_key(), q.get("sort") or "",
+                                                                  q.get("next") or None), today=lib3d_brunch.today_key(), success=True))
+            if path == "/api/lib3d/brunch/article":
+                return self._send(200, dict(lib3d_brunch.fetch_article(q.get("u"), q.get("n")), success=True))
+            if path == "/api/lib3d/brunch/voices":
+                return self._send(200, dict(lib3d_brunch.tts_voices(), success=True))
+        except ValueError as e:
+            return self._send(400, {"success": False, "error": str(e)})
+        except Exception as e:  # noqa: BLE001 - 브런치 쪽 오류는 화면에 그대로
+            return self._send(502, {"success": False, "error": "브런치에서 가져오지 못했습니다: %s" % e})
+        return self._send(404, {"success": False, "error": "없는 주소입니다."})
+
     def _lib3d(self, path, mods, user=None):
         """BookOasis 3D 서재: 보관함·작품 목록, 표지, 책 열기 주소"""
         if not mods["lib3d"]:
@@ -347,11 +366,13 @@ class Handler(BaseHTTPRequestHandler):
                 ai = lib3d_ai.flags()
                 me = {"username": user["username"], "role": auth.role_of(user), "adult": adult} if user else None
                 staff_on = lib3d_ai.configured() and bool(lib3d_agents.agents())   # 직원이든 손님이든 하나라도 있으면
-                return self._send(200, dict(d, ai=ai, me=me, staff_on=staff_on,
+                return self._send(200, dict(d, ai=ai, me=me, staff_on=staff_on, brunch_on=lib3d_brunch.enabled(),
                                             people=lib3d.load_settings().get("people") or {},
                                             outside=lib3d.load_settings().get("outside") or {},
                                             models=lib3d.load_settings().get("models") or "basic",
                                             banner=lib3d.banner_info(), success=True))
+            if path.startswith("/api/lib3d/brunch/"):   # 1층 브런치 연재 낭독 코너 (브런치 공개 글이라 관람자도)
+                return self._brunch_get(path, {k: v[0] for k, v in q.items() if v})
             if path == "/api/lib3d/banner_pick":   # 현수막에 띄울 무작위 작품 (보관함 표지 모드)
                 pick = lib3d.banner_pick()
                 if not adult and pick.get("db") == "adult":
@@ -459,7 +480,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(403, {"success": False, "error": "관람자 계정은 할 수 없는 일입니다."})
         if not path.startswith(("/api/rpc/", "/api/auth/", "/api/users")) and path not in ("/api/wtm/action", "/api/ui-prefs", "/api/mcp",
                                                                                           "/api/lib3d/settings", "/api/lib3d/ai/settings", "/api/lib3d/ai/ask",
-                                                                                          "/api/lib3d/presence", "/api/lib3d/say", "/api/lib3d/agents"):
+                                                                                          "/api/lib3d/presence", "/api/lib3d/say", "/api/lib3d/agents",
+                                                                                          "/api/lib3d/brunch/tts"):
             return self._send(404, {"success": False, "error": "없는 주소입니다."})
         if (self.headers.get("Content-Type") or "").split(";")[0].strip().lower() != "application/json":
             return self._send(415, {"success": False, "error": "Content-Type은 application/json이어야 합니다."})
@@ -477,6 +499,16 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(400, {"success": False, "error": "JSON 객체를 보내세요."})
         if path.startswith(("/api/auth/", "/api/users")):
             return self._auth_post(path, context, user)
+        if path == "/api/lib3d/brunch/tts":   # 낭독 코너: Edge 음성 한 문장 → mp3
+            if not modules()["lib3d"] or not lib3d_brunch.enabled():
+                return self._send(404, {"success": False, "error": "브런치 낭독 코너가 꺼져 있습니다 (LIB3D_BRUNCH)."})
+            try:
+                return self._send(200, lib3d_brunch.tts_audio(context.get("voice"), context.get("text")), "audio/mpeg",
+                                  extra={"Cache-Control": "private, max-age=3600"})
+            except ValueError as e:
+                return self._send(400, {"success": False, "error": str(e)})
+            except Exception as e:  # noqa: BLE001 - 음성 서버 오류는 화면에 그대로
+                return self._send(502, {"success": False, "error": "음성을 만들지 못했습니다: %s" % e})
         if path in ("/api/lib3d/presence", "/api/lib3d/say"):   # 3D 서재 함께 보기: 내 위치 보내고 다른 사람·채팅 받기 / 말하기
             if not modules()["lib3d"]:
                 return self._send(404, {"success": False, "error": "BookOasis 3D 서재가 꺼져 있습니다 (LIB3D_ENABLED)."})

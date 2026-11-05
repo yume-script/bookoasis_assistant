@@ -2203,8 +2203,10 @@
     ray.setFromCamera(ndc, camera);
     var targets = books.map(function (b) { return b.mesh; });
     if (elevator) targets.push(elevator);
+    targets = targets.concat(brunchHits);
     var hit = ray.intersectObjects(targets, false)[0];
     if (hit && hit.object === elevator && hit.distance < 8) { openFloors(); return; }
+    if (hit && hit.object.userData.brunch && hit.distance < 14) { closeCard(); openBrunch(); return; }
     if (!hit || !hit.object.userData.book || (hit.distance > 12 && hit.object.userData.book.kind !== 'banner')) { closeCard(); return; }
     showCard(hit.object.userData.book);
   }
@@ -2809,6 +2811,7 @@
     if (location.hash === '#outside') openOutside();
     if (location.hash === '#models') openModels();
     if (location.hash === '#staff') openStaff();
+    if (location.hash === '#brunch' && BRUNCH_ON) openBrunch();
     if (location.hash === '#settings') openSettings();
     if (location.hash === '#ai') openAI();
     if (location.hash === '#people') { if (floors.length) openPeople(); else pendingPeople = true; }
@@ -2943,6 +2946,7 @@
     applyOutside.force = true; applyOutside();
     fl.libs.forEach(function (lib, j) { addSection(lib, j); });
     addPosters(fl, i + 1);
+    addBrunchCorner(i);
     spawnPeople(fl, i + 1);
     dimEnv(floorGroup);
     booths.forEach(function (b) { b.floor = i; });
@@ -2965,6 +2969,7 @@
         }
         applyMe(d.me);
         STAFF_ON = !!d.staff_on;
+        BRUNCH_ON = !!d.brunch_on;
         if (d.ai) setAI(d.ai);
         PEOPLE = d.people || {};
         MODELS = d.models === 'real' ? 'real' : 'basic'; loadReal();
@@ -3145,6 +3150,333 @@
     if (viewer) ['l3d-set', 'l3d-ai', 'l3d-ppl', 'l3d-out', 'l3d-mdl', 'l3d-staff'].forEach(function (id) { el(id).classList.remove('on'); });
   }
 
+  // ── 1층 입구 오른쪽: 브런치 연재 낭독 코너 (요일별 브런치북 연재 → 골라서 소리 내어 읽기) ──
+  // 낭독대·낭독가·안내 화면(오늘 새 글)을 두고, 누르면 목록 → 글 → 듣기(브라우저 음성 또는 서버 Edge 음성).
+  // 소리는 고른 사람의 화면에서만 난다. 낭독가 머리 위 말풍선에 지금 읽는 문장이 뜬다.
+  var BRUNCH_ON = false, brunchHits = [], brunchScreen = null, narrator = null, brunchToday = null, brunchTodayAt = 0;
+  var BR_DAYS = [['MONDAY', '월'], ['TUESDAY', '화'], ['WEDNESDAY', '수'], ['THURSDAY', '목'], ['FRIDAY', '금'], ['SATURDAY', '토'], ['SUNDAY', '일'], ['COMPLETE', '완결']];
+  function brDayKo(k) { var d = BR_DAYS.filter(function (x) { return x[0] === k; })[0]; return d ? d[1] : ''; }
+  function addBrunchCorner(floorIdx) {
+    brunchHits = []; brunchScreen = null; narrator = null;
+    if (!BRUNCH_ON || !layout || floorIdx !== 0) return;   // 1층에만
+    var L = layout, cx = Math.min(9.5, L.w / 2 - 6), f = L.front;
+    var g = new T.Group(); g.position.set(cx, 0, 0); parent.add(g);
+    // 둥근 러그 + 낭독대 + 스탠드 조명
+    var rug = new T.Mesh(new T.CircleGeometry(2.3, 48), new T.MeshStandardMaterial({ color: 0x7a4b3a, roughness: 0.95 }));
+    rug.rotation.x = -Math.PI / 2; rug.position.set(0, 0.012, f - 2.6); rug.receiveShadow = true; g.add(rug);
+    var lect = new T.Group(); lect.position.set(0, 0, f - 1.75); g.add(lect);
+    var post = new T.Mesh(unitBox, M.oak); post.scale.set(0.5, 1.05, 0.36); post.position.y = 0.52; lect.add(post);
+    var top = new T.Mesh(unitBox, M.oak); top.scale.set(0.7, 0.05, 0.48); top.position.set(0, 1.12, -0.04); top.rotation.x = -0.32; lect.add(top);
+    var open = new T.Mesh(new T.PlaneGeometry(0.46, 0.3), new T.MeshStandardMaterial({ color: 0xf5f0e6, roughness: 0.9 }));
+    open.position.set(0, 1.155, -0.05); open.rotation.x = -Math.PI / 2 + 0.32 + Math.PI; open.rotation.z = Math.PI; lect.add(open);
+    [post, top].forEach(function (m) { m.castShadow = true; m.userData.brunch = true; brunchHits.push(m); });
+    var lampPole = new T.Mesh(new T.CylinderGeometry(0.02, 0.02, 1.6, 8), M.black); lampPole.position.set(1.0, 0.8, f - 1.3); g.add(lampPole);
+    var lampShade = new T.Mesh(new T.CylinderGeometry(0.12, 0.22, 0.22, 20, 1, true), M.lamp); lampShade.position.set(1.0, 1.65, f - 1.3); g.add(lampShade);
+    // 듣는 의자 두 개 (낭독대를 보게)
+    [-0.9, 0.9].forEach(function (ox) {
+      var ch = new T.Group(); ch.position.set(ox, 0, f - 3.7); ch.rotation.y = ox < 0 ? 0.25 : -0.25; g.add(ch);   // 등받이는 로비 쪽, 앉으면 낭독대를 본다
+      var seat = new T.Mesh(unitBox, new T.MeshStandardMaterial({ color: 0x31574d, roughness: 0.8 })); seat.scale.set(0.7, 0.18, 0.62); seat.position.y = 0.42; ch.add(seat);
+      var back = new T.Mesh(unitBox, seat.material); back.scale.set(0.7, 0.6, 0.14); back.position.set(0, 0.75, -0.28); ch.add(back);
+      [-0.3, 0.3].forEach(function (ax) { var arm = new T.Mesh(unitBox, seat.material); arm.scale.set(0.1, 0.22, 0.6); arm.position.set(ax, 0.58, 0); ch.add(arm); });
+      var leg = new T.Mesh(unitBox, M.black); leg.scale.set(0.6, 0.33, 0.5); leg.position.y = 0.17; ch.add(leg);
+      ch.traverse(function (m) { if (m.isMesh) m.castShadow = true; });
+    });
+    // 천장에 매단 간판 (양면)
+    var signTex = textTex(['브런치 연재 낭독'], 1024, 200, '#f5f2ec', '#1d1e20', 104);
+    var signMat = new T.MeshBasicMaterial({ map: signTex, toneMapped: false });
+    var sign = new T.Mesh(new T.BoxGeometry(3.0, 0.58, 0.04), [M.black, M.black, M.black, M.black, signMat, signMat]);
+    sign.position.set(0, 3.3, f - 2.6); g.add(sign);
+    [-1.3, 1.3].forEach(function (sx) { var c = new T.Mesh(new T.CylinderGeometry(0.006, 0.006, CEIL - 3.59, 6), M.black); c.position.set(sx, (CEIL + 3.59) / 2, f - 2.6); g.add(c); });
+    // 안내 화면 (오늘 새 글) - 로비 쪽을 보게
+    var sx0 = 2.5, sz0 = f - 2.9;
+    var sg = new T.Group(); sg.position.set(sx0, 0, sz0); sg.rotation.y = Math.atan2(2 - (cx + sx0), (f - 7) - sz0); g.add(sg);
+    var leg2 = new T.Mesh(unitBox, M.black); leg2.scale.set(0.08, 0.7, 0.08); leg2.position.y = 0.35; sg.add(leg2);
+    var foot = new T.Mesh(unitBox, M.black); foot.scale.set(0.6, 0.04, 0.36); foot.position.y = 0.02; sg.add(foot);
+    var frame = new T.Mesh(unitBox, M.black); frame.scale.set(1.2, 1.56, 0.06); frame.position.set(0, 1.45, -0.02); sg.add(frame);
+    var scr = new T.Mesh(new T.PlaneGeometry(1.12, 1.48), new T.MeshBasicMaterial({ color: 0xffffff, toneMapped: false }));
+    scr.position.set(0, 1.45, 0.015); sg.add(scr);
+    [scr, frame].forEach(function (m) { m.userData.brunch = true; brunchHits.push(m); });
+    brunchScreen = scr;
+    // 낭독가 (낭독대 뒤에서 앞을 보고)
+    narrator = makePerson(7171);
+    narrator.kind = 'agent'; narrator.walkW = 0; narrator.tag = null;
+    narrator.g.position.set(cx, 0, f - 1.15); narrator.g.rotation.y = Math.PI;
+    narrator.tx = cx; narrator.tz = f - 1.15; narrator.face = Math.PI;
+    parent.add(narrator.g);
+    if (narrator.mixer) setLook(narrator, 'calm');
+    setNarrator('');
+    drawBrunchScreen();
+    loadBrunchToday();
+  }
+  function setNarrator(msg) {
+    if (!narrator) return;
+    if (narrator.tag) { narrator.g.remove(narrator.tag); narrator.tag.material.map.dispose(); narrator.tag.material.dispose(); }
+    narrator.tag = nameTag('낭독가 · 브런치 연재', msg, '#c9a7ff');
+    narrator.tag.position.y = 2.15 + (msg ? 0.2 : 0); narrator.g.add(narrator.tag);
+  }
+  function loadBrunchToday() {
+    if (Date.now() - brunchTodayAt < 10 * 60 * 1000 && brunchToday) { drawBrunchScreen(); return; }
+    brunchTodayAt = Date.now();
+    api('api/lib3d/brunch/today').then(function (d) { brunchToday = d; drawBrunchScreen(); })
+      .catch(function (e) { brunchToday = { error: e.message }; drawBrunchScreen(); });
+  }
+  function drawBrunchScreen() {
+    if (!brunchScreen) return;
+    var d = brunchToday, now = brTts.playing || brTts.idx > 0 ? brArt : null;
+    var tex = canvasTex(560, 740, function (g, w, h) {
+      g.fillStyle = '#fbf8f2'; g.fillRect(0, 0, w, h);
+      g.fillStyle = '#1d1e20'; g.fillRect(0, 0, w, 96);
+      g.fillStyle = '#f5f2ec'; g.font = '700 38px ' + FONT; g.textBaseline = 'middle'; g.fillText('브런치 연재 낭독', 30, 50);
+      g.textBaseline = 'top'; var y = 116;
+      if (now) {
+        g.fillStyle = '#7b4bd1'; g.font = '700 26px ' + FONT; g.fillText('지금 낭독 중', 30, y); y += 38;
+        g.fillStyle = '#1d1e20'; g.font = '700 30px ' + FONT;
+        wrapText(g, now.title || '', 30, y, w - 60, 40, 2).forEach(function () { y += 40; });
+        g.fillStyle = '#6b6862'; g.font = '400 24px ' + FONT; g.fillText((now.book_title || '') + ' · ' + (now.author || ''), 30, y + 4, w - 60); y += 52;
+        g.fillStyle = '#e6e1d8'; g.fillRect(30, y, w - 60, 2); y += 18;
+      }
+      if (!d) { g.fillStyle = '#6b6862'; g.font = '400 26px ' + FONT; g.fillText('오늘의 연재를 불러오는 중...', 30, y); return; }
+      if (d.error) { g.fillStyle = '#b3261e'; g.font = '400 24px ' + FONT; wrapText(g, d.error, 30, y, w - 60, 32, 4); return; }
+      g.fillStyle = '#1d1e20'; g.font = '700 30px ' + FONT;
+      g.fillText('오늘(' + brDayKo(d.day) + ') 새 글 ' + d.fresh + '편', 30, y); y += 50;
+      (d.items || []).slice(0, now ? 3 : 6).forEach(function (it) {
+        var x = 30;
+        if (it.fresh) { g.fillStyle = '#e85d04'; g.fillRect(x, y + 4, 58, 28); g.fillStyle = '#fff'; g.font = '700 20px ' + FONT; g.fillText('NEW', x + 6, y + 7); x += 70; }
+        g.fillStyle = '#1d1e20'; g.font = '700 25px ' + FONT; g.fillText(it.title, x, y + 4, w - x - 30); y += 36;
+        g.fillStyle = '#6b6862'; g.font = '400 21px ' + FONT; g.fillText(it.book_title + ' · ' + it.author, 30, y, w - 60); y += 40;
+      });
+      g.fillStyle = '#7b4bd1'; g.font = '700 24px ' + FONT; g.fillText('눌러서 골라 들어 보세요 ▶', 30, h - 54);
+    });
+    var m = brunchScreen.material; if (m.map) m.map.dispose(); m.map = tex; m.needsUpdate = true;
+  }
+
+  // 패널: 요일 탭 → 목록 → 글 (+ 듣기)
+  var brBox = el('l3d-brunch'), brDay = null, brNext = '', brCounts = {}, brArt = null, brSeq = 0;
+  function openBrunch() {
+    [setBox, aiBox, pplBox, outBox, mdlBox, staffBox].forEach(function (b) { if (b) b.classList.remove('on'); });
+    brBox.classList.add('on');
+    brLoadVoices();
+    if (!brDay) { brDay = brunchToday && brunchToday.day || BR_DAYS[(new Date().getDay() + 6) % 7][0]; brList(); }
+  }
+  function brTabs() {
+    var t = el('l3d-br-days'); t.textContent = '';
+    BR_DAYS.forEach(function (d) {
+      var b = document.createElement('button'); b.type = 'button'; b.className = d[0] === brDay ? 'on' : '';
+      b.textContent = d[1];
+      if (brCounts[d[0]]) { var n = document.createElement('span'); n.className = 'n'; n.textContent = brCounts[d[0]]; b.appendChild(n); }
+      b.addEventListener('click', function () { brDay = d[0]; brList(); });
+      t.appendChild(b);
+    });
+  }
+  function brShow(id, on) { el(id).hidden = false; el(id).style.display = on ? '' : 'none'; }   // 버튼·줄의 CSS display가 hidden을 덮어써서
+  function brShowList(on) {
+    brShow('l3d-br-days', on); brShow('l3d-br-tts', !on);
+    brShow('l3d-br-back', !on); brShow('l3d-br-orig', !on); if (!on) brShow('l3d-br-more', false);
+  }
+  function brList(append) {
+    var seq = ++brSeq, body = el('l3d-br-body');
+    brShowList(true); brTabs();
+    if (!append) { body.textContent = '불러오는 중...'; brNext = ''; }
+    var url = 'api/lib3d/brunch/list?day=' + encodeURIComponent(brDay) + (append && brNext ? '&next=' + encodeURIComponent(brNext) : '');
+    api(url).then(function (d) {
+      if (seq !== brSeq) return;
+      if (!append) { body.textContent = ''; brCounts[brDay] = d.items.filter(function (x) { return x.fresh; }).length; brTabs(); }
+      d.items.forEach(function (it) {
+        var r = document.createElement('div'); r.className = 'it';
+        var img = document.createElement('img'); img.loading = 'lazy'; img.referrerPolicy = 'no-referrer'; img.alt = '';
+        if (it.image) img.src = it.image; else img.style.visibility = 'hidden';
+        var tx = document.createElement('div');
+        var b = document.createElement('b');
+        if (it.fresh) { var nw = document.createElement('span'); nw.className = 'new'; nw.textContent = 'NEW'; b.appendChild(nw); }
+        b.appendChild(document.createTextNode(it.title || '(제목 없음)'));
+        var s1 = document.createElement('small'); s1.textContent = it.book_title + ' · ' + it.author + (it.publish_time ? ' · ' + brWhen(it.publish_time) : '');
+        var s2 = document.createElement('small'); s2.textContent = (it.summary || '').slice(0, 80);
+        tx.appendChild(b); tx.appendChild(s1); if (it.summary) tx.appendChild(s2);
+        r.appendChild(img); r.appendChild(tx);
+        r.addEventListener('click', function () { brOpen(it.user_id, it.article_no); });
+        body.appendChild(r);
+      });
+      if (!d.items.length && !append) body.textContent = '이 요일에는 연재가 없습니다.';
+      brNext = d.more ? d.next_url : '';
+      brShow('l3d-br-more', !!brNext);
+    }).catch(function (e) { if (seq === brSeq) { body.textContent = ''; var p = document.createElement('p'); p.className = 'err'; p.textContent = e.message; body.appendChild(p); } });
+  }
+  function brWhen(ms) {
+    var d = (Date.now() - ms) / 60000;
+    if (d < 60) return Math.max(1, Math.round(d)) + '분 전';
+    if (d < 1440) return Math.round(d / 60) + '시간 전';
+    var t = new Date(ms); return (t.getMonth() + 1) + '.' + t.getDate();
+  }
+  function brOpen(uid, no, autoplay) {
+    var seq = ++brSeq, body = el('l3d-br-body');
+    brStop(); brShowList(false); body.textContent = '글을 불러오는 중...';
+    api('api/lib3d/brunch/article?u=' + encodeURIComponent(uid) + '&n=' + encodeURIComponent(no)).then(function (a) {
+      if (seq !== brSeq) return;
+      brArt = a; body.textContent = ''; body.scrollTop = 0;
+      var art = document.createElement('div'); art.className = 'art';
+      var h = document.createElement('h4'); h.textContent = a.title; art.appendChild(h);
+      var m = document.createElement('div'); m.className = 'meta';
+      m.textContent = [a.book_title, a.author, a.publish_time ? new Date(a.publish_time).toLocaleDateString() : ''].filter(Boolean).join(' · ');
+      art.appendChild(m);
+      if (a.restricted) { var w = document.createElement('p'); w.className = 'err'; w.textContent = '멤버십 글이라 앞부분만 있습니다. 전체는 브런치 원문에서 보세요.'; art.appendChild(w); }
+      var txt = document.createElement('div'); txt.className = 'txt';
+      txt.innerHTML = a.body;   // 서버가 허용한 태그·주소만 남긴 본문 (lib3d_brunch.sanitize)
+      art.appendChild(txt);
+      var eps = a.episodes || [], ci = -1;
+      eps.forEach(function (e, i) { if (e.current || Number(e.article_no) === Number(no)) ci = i; });
+      brArt.prev = ci > 0 && eps[ci - 1].article_no ? eps[ci - 1] : null;
+      brArt.next = ci >= 0 && eps[ci + 1] && eps[ci + 1].article_no ? eps[ci + 1] : null;
+      var nav = document.createElement('div'); nav.className = 'eps';
+      [[brArt.prev, '← 이전 화'], [brArt.next, '다음 화 →']].forEach(function (x) {
+        if (!x[0]) return;
+        var b = document.createElement('button'); b.type = 'button'; b.className = 'l3d-btn'; b.textContent = x[1] + ' ' + (x[0].title || '');
+        b.addEventListener('click', function () { brOpen(x[0].user_id, x[0].article_no); });
+        nav.appendChild(b);
+      });
+      art.appendChild(nav);
+      body.appendChild(art);
+      el('l3d-br-orig').href = a.url;
+      brTtsUi();
+      drawBrunchScreen();
+      if (autoplay) brPlay(0);
+    }).catch(function (e) { if (seq === brSeq) { body.textContent = ''; var p = document.createElement('p'); p.className = 'err'; p.textContent = e.message; body.appendChild(p); } });
+  }
+
+  // 듣기: 문단을 문장 조각(최대 약 180자)으로 나눠 하나씩. 'b:이름' 브라우저 음성 / 'e:ID' 서버 Edge 음성(mp3, 다음 두 문장 미리 받음)
+  var synth = window.speechSynthesis || null, hasSynth = !!(synth && typeof SpeechSynthesisUtterance !== 'undefined');
+  var brTts = { chunks: [], idx: 0, playing: false, gen: 0, cur: null, audio: new Audio(), fetches: {}, server: [], serverNote: '', cfg: {} };
+  try { brTts.cfg = JSON.parse(localStorage.getItem('l3d_brunch_tts') || '{}') || {}; } catch (e) { brTts.cfg = {}; }
+  function brSave() { try { localStorage.setItem('l3d_brunch_tts', JSON.stringify(brTts.cfg)); } catch (e) { /* 저장 못 해도 됨 */ } }
+  function brSplit(text) {
+    var out = [], buf = '';
+    (String(text).replace(/\s+/g, ' ').trim().match(/[^.!?。…~”"’]+[.!?。…~”"’]*/g) || []).map(function (x) { return x.trim(); }).filter(Boolean).forEach(function (s) {
+      while (s.length > 180) { var cut = s.lastIndexOf(' ', 180); if (cut < 60) cut = 180; if (buf) { out.push(buf); buf = ''; } out.push(s.slice(0, cut)); s = s.slice(cut).trim(); }
+      if (buf && (buf + ' ' + s).length > 180) { out.push(buf); buf = ''; }
+      buf = buf ? buf + ' ' + s : s;
+    });
+    if (buf) out.push(buf);
+    return out.filter(function (t) { return /[0-9A-Za-z가-힣]/.test(t); });
+  }
+  function brChunks() {
+    var out = [], art = brBox.querySelector('.art'); if (!art) return out;
+    var h = art.querySelector('h4');
+    brSplit(h.textContent + '.').forEach(function (s) { out.push({ el: h, text: s }); });
+    Array.prototype.forEach.call(art.querySelector('.txt').children, function (e) {
+      brSplit(e.innerText || e.textContent || '').forEach(function (s) { out.push({ el: e, text: s }); });
+    });
+    return out;
+  }
+  function brKoVoices() { var all = hasSynth ? synth.getVoices() : []; var ko = all.filter(function (v) { return /^ko/i.test(v.lang); }); return ko.length ? ko : all; }
+  function brFillVoices() {
+    var sel = el('l3d-br-voice'); sel.textContent = '';
+    function group(label, list) {
+      var og = document.createElement('optgroup'); og.label = label;
+      list.forEach(function (o) { var op = document.createElement('option'); op.value = o[0]; op.textContent = o[1]; op.disabled = !!o[2]; og.appendChild(op); });
+      sel.appendChild(og);
+    }
+    var bv = brKoVoices().map(function (v) { return ['b:' + v.name, String(v.name).replace(/\s*[-–]\s*(Korean|한국어).*$/i, '')]; });
+    if (bv.length) group('브라우저 음성', bv);
+    if (brTts.server.length) group('Edge 음성 (서버)', brTts.server.map(function (v) { return ['e:' + v.id, v.name]; }));
+    else if (brTts.serverNote) group('Edge 음성 (서버)', [['', brTts.serverNote, true]]);
+    var vals = Array.prototype.filter.call(sel.options, function (o) { return !o.disabled; }).map(function (o) { return o.value; });
+    sel.value = brTts.cfg.voice && vals.indexOf(brTts.cfg.voice) >= 0 ? brTts.cfg.voice : (vals.filter(function (v) { return v.indexOf('e:ko-KR-SunHi') === 0; })[0] || vals[0] || '');
+    el('l3d-br-play').disabled = !vals.length;
+  }
+  function brVoice() { return el('l3d-br-voice').value || ''; }
+  function brRate() { return parseFloat(el('l3d-br-rate').value) || 1; }
+  function brMark(e) {
+    if (brTts.cur === e) return;
+    if (brTts.cur) brTts.cur.classList.remove('tts-on');
+    brTts.cur = e; if (!e) return;
+    e.classList.add('tts-on');
+    var box = el('l3d-br-body'), r = e.getBoundingClientRect(), br = box.getBoundingClientRect();
+    if (r.top < br.top + 20 || r.bottom > br.bottom - 20) box.scrollTop += r.top - br.top - box.clientHeight / 3;
+  }
+  function brTtsUi(note) {
+    var paused = !brTts.playing && brTts.chunks.length && brTts.idx > 0;
+    el('l3d-br-play').textContent = brTts.playing ? '❚❚ 일시정지' : paused ? '▶ 이어 듣기' : '▶ 낭독';
+    var pos = el('l3d-br-pos'); pos.className = note ? 'pos err' : 'pos';
+    pos.textContent = note || (brTts.chunks.length && (brTts.playing || paused) ? Math.min(brTts.idx + 1, brTts.chunks.length) + ' / ' + brTts.chunks.length : '');
+  }
+  function brFetch(i) {
+    var c = brTts.chunks[i]; if (!c) return null;
+    var key = brVoice() + '|' + i;
+    if (!brTts.fetches[key]) {
+      brTts.fetches[key] = fetch('api/lib3d/brunch/tts', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ voice: brVoice().slice(2), text: c.text }) }).then(function (r) {
+        if (!r.ok) return r.json().then(function (d) { throw new Error(d.error || '음성을 만들지 못했습니다'); });
+        return r.blob();
+      }).then(function (b) { return URL.createObjectURL(b); });
+      brTts.fetches[key].catch(function () { delete brTts.fetches[key]; });
+    }
+    return brTts.fetches[key];
+  }
+  function brDone(gen) { if (gen !== brTts.gen || !brTts.playing) return; brTts.idx++; brSpeak(); }
+  function brSpeak() {
+    if (brTts.idx >= brTts.chunks.length) {
+      var nx = brTts.cfg.autoNext && brArt && brArt.next;
+      brStop();
+      if (nx) brOpen(nx.user_id, nx.article_no, true);
+      return;
+    }
+    var c = brTts.chunks[brTts.idx], gen = brTts.gen;
+    brMark(c.el); brTtsUi(); setNarrator(c.text);
+    if (brVoice().indexOf('e:') === 0) {
+      brFetch(brTts.idx + 1); brFetch(brTts.idx + 2);
+      brFetch(brTts.idx).then(function (url) {
+        if (gen !== brTts.gen || !brTts.playing) return;
+        var a = brTts.audio; a.onended = function () { brDone(gen); }; a.src = url; a.playbackRate = brRate();
+        var p = a.play(); if (p && p.catch) p.catch(function () { if (gen === brTts.gen) { brTts.playing = false; brTtsUi('재생하지 못했습니다. ▶를 다시 눌러 주세요.'); } });
+      }, function (e) { if (gen === brTts.gen) { brTts.playing = false; brTtsUi(e.message); } });
+    } else if (hasSynth) {
+      var u = new SpeechSynthesisUtterance(c.text), name = brVoice().slice(2);
+      u.lang = 'ko-KR';
+      var v = brKoVoices().filter(function (x) { return x.name === name; })[0]; if (v) { u.voice = v; u.lang = v.lang; }
+      u.rate = brRate();
+      u.onend = function () { brDone(gen); };
+      u.onerror = function (e) { if (e.error !== 'interrupted' && e.error !== 'canceled') brDone(gen); };
+      brTts.utter = u; synth.speak(u);
+    } else { brTts.playing = false; brTtsUi('이 브라우저는 음성 읽기를 지원하지 않습니다.'); }
+  }
+  function brSilence() { if (hasSynth) synth.cancel(); brTts.audio.onended = null; brTts.audio.pause(); }
+  function brPlay(from) {
+    if (!brTts.chunks.length || from === 0) { brTts.chunks = brChunks(); brTts.fetches = {}; }
+    if (!brTts.chunks.length) { brTtsUi('읽을 글이 없습니다'); return; }
+    if (typeof from === 'number') brTts.idx = from;
+    if (brTts.idx >= brTts.chunks.length) brTts.idx = 0;
+    brTts.gen++; brSilence(); brTts.playing = true; brSpeak(); drawBrunchScreen();
+  }
+  function brPause() { brTts.gen++; brTts.playing = false; brSilence(); brTtsUi(); }
+  function brStop() {
+    var was = brTts.playing || brTts.idx > 0;
+    brTts.gen++; brTts.playing = false; brTts.chunks = []; brTts.idx = 0; brTts.fetches = {};
+    brSilence(); brMark(null); brTtsUi(); setNarrator('');
+    if (was) drawBrunchScreen();
+  }
+  el('l3d-br-play').addEventListener('click', function () { if (brTts.playing) brPause(); else brPlay(); });
+  el('l3d-br-stop').addEventListener('click', brStop);
+  el('l3d-br-rate').value = String(brTts.cfg.rate || '1');
+  el('l3d-br-rate').addEventListener('change', function () {
+    brTts.cfg.rate = el('l3d-br-rate').value; brSave();
+    if (brTts.playing) { if (brVoice().indexOf('e:') === 0) brTts.audio.playbackRate = brRate(); else brPlay(brTts.idx); }
+  });
+  el('l3d-br-voice').addEventListener('change', function () { brTts.cfg.voice = brVoice(); brSave(); brTts.fetches = {}; if (brTts.playing) brPlay(brTts.idx); });
+  el('l3d-br-next').checked = !!brTts.cfg.autoNext;
+  el('l3d-br-next').addEventListener('change', function () { brTts.cfg.autoNext = el('l3d-br-next').checked; brSave(); });
+  el('l3d-br-body').addEventListener('click', function (ev) {   // 듣는 중에 문단을 누르면 거기서부터
+    if (!brTts.chunks.length || (ev.target.closest && ev.target.closest('a, button'))) return;
+    for (var i = 0; i < brTts.chunks.length; i++) if (brTts.chunks[i].el === ev.target || brTts.chunks[i].el.contains(ev.target)) { brPlay(i); return; }
+  });
+  el('l3d-br-back').addEventListener('click', function () { brList(); });
+  el('l3d-br-more').addEventListener('click', function () { brList(true); });
+  el('l3d-br-close').addEventListener('click', function () { brBox.classList.remove('on'); });   // 닫아도 듣기는 계속 (■로 멈춤)
+  brFillVoices();
+  if (hasSynth && synth.addEventListener) synth.addEventListener('voiceschanged', brFillVoices);
+  function brLoadVoices() {
+    if (brLoadVoices.done) return; brLoadVoices.done = true;
+    api('api/lib3d/brunch/voices').then(function (d) { brTts.server = d.voices || []; brTts.serverNote = d.available ? '' : (d.reason || ''); brFillVoices(); }).catch(function () {});
+  }
+
   // ── AI 직원 (사서·도슨트 …): 서버의 상태(가려는 곳·말·가리키는 책)대로 걷고 말하고 가리킨다 + 로비 안내판 ──
   var staffNPC = {}, staffData = [], boardMesh = null, boardSig = '', pointer = null, STAFF_ON = false;
   function placePos(name) {
@@ -3301,6 +3633,7 @@
     step(dt);
     if (!reading) { updatePeople(dt, now); updateWeather(dt, now); updateCars(dt); for (var rn in remotes) updateRemote(remotes[rn], dt);
       for (var sn in staffNPC) updateStaff(staffNPC[sn], dt, now);
+      if (narrator) updateStaff(narrator, dt, now);
       if (pointer) pointer.mesh.position.y = pointer.y + Math.abs(Math.sin(now / 300)) * 0.12; }
     acc += dt;
     if (acc > 0.3) { acc = 0; loadNear(); where(); if (now - posSavedAt > 2000) { posSavedAt = now; savePos(); } }

@@ -67,6 +67,31 @@
   .l3d-ai .body { flex: 1; overflow: auto; }
   .l3d-ppl { width: min(560px, calc(100% - 24px)); }
   .l3d-staff { width: min(620px, calc(100% - 24px)); }
+  .l3d-brunch { inset: 12px 12px 12px auto; width: min(460px, calc(100% - 24px)); }
+  .l3d-brunch .tabs { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 6px; background: none; border: 0; padding: 0; }
+  .l3d-brunch .tabs button { font: inherit; font-size: 0.8rem; padding: 4px 10px; min-width: 0; border-radius: 999px; border: 1px solid #d9d3c8; background: #fff; color: #1d1e20; cursor: pointer; }
+  .l3d-brunch .tabs button.on { background: #1d1e20; color: #fff; border-color: #1d1e20; }
+  .l3d-brunch .tabs button .n { color: #e85d04; font-weight: 700; margin-left: 2px; }
+  .l3d-brunch .tabs button.on .n { color: #ffd166; }
+  .l3d-brunch .body { flex: 1; overflow: auto; border-top: 1px solid #e6e1d8; padding-top: 6px; }
+  .l3d-brunch .it { display: grid; grid-template-columns: 64px 1fr; gap: 10px; padding: 8px 4px; border-bottom: 1px solid #f0ece4; cursor: pointer; }
+  .l3d-brunch .it:hover { background: #faf7f1; }
+  .l3d-brunch .it img { width: 64px; height: 64px; object-fit: cover; border-radius: 8px; background: #eee; }
+  .l3d-brunch .it b { display: block; font-size: 0.88rem; line-height: 1.3; }
+  .l3d-brunch .it small { display: block; font-size: 0.74rem; opacity: 0.7; margin-top: 2px; }
+  .l3d-brunch .new { display: inline-block; background: #e85d04; color: #fff; font-size: 0.66rem; font-weight: 700; border-radius: 4px; padding: 0 4px; margin-right: 4px; vertical-align: 1px; }
+  .l3d-brunch .tts { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; font-size: 0.8rem; margin: 6px 0; }
+  .l3d-brunch .tts select { font: inherit; font-size: 0.78rem; padding: 4px 6px; border: 1px solid #d9d3c8; border-radius: 8px; max-width: 170px; }
+  .l3d-brunch .art h4 { margin: 4px 0 2px; font-size: 1.02rem; }
+  .l3d-brunch .art .meta { font-size: 0.76rem; opacity: 0.7; margin-bottom: 8px; }
+  .l3d-brunch .art .txt { font-size: 0.9rem; line-height: 1.7; word-break: keep-all; }
+  .l3d-brunch .art .txt > * { margin: 0 0 10px; border-radius: 6px; transition: background 0.2s; }
+  .l3d-brunch .art .txt img { max-width: 100%; height: auto; border-radius: 8px; }
+  .l3d-brunch .art .txt blockquote { border-left: 3px solid #d9d3c8; padding-left: 10px; opacity: 0.85; }
+  .l3d-brunch .art .txt .tts-on { background: #fff3c4; }
+  .l3d-brunch .eps { display: flex; gap: 6px; flex-wrap: wrap; margin: 10px 0; }
+  .l3d-brunch .pos { opacity: 0.7; }
+  .l3d-brunch .err { color: #b3261e; }
   .l3d-staff fieldset { border: 1px solid #e6e1d8; border-radius: 12px; padding: 8px 12px; margin: 0 0 10px; }
   .l3d-staff legend { font-weight: 700; padding: 0 4px; }
   .l3d-staff .task { display: grid; grid-template-columns: auto 1fr 80px auto; gap: 6px; align-items: center; font-size: 0.82rem; margin: 4px 0; }
@@ -309,6 +334,26 @@
         <button type="button" class="l3d-btn primary" id="l3d-staff-save">저장</button>
         <button type="button" class="l3d-btn" id="l3d-staff-reset">기본값으로</button>
         <button type="button" class="l3d-btn" id="l3d-staff-close">닫기</button>
+      </div>
+    </div>
+    <div class="l3d-set l3d-ai l3d-brunch" id="l3d-brunch" role="dialog" aria-label="브런치 연재 낭독">
+      <h3>브런치 연재 낭독 코너</h3>
+      <p class="sub" id="l3d-br-sub">요일별 브런치북 연재 - 글을 고르면 소리 내어 읽어 드립니다. <span class="new">NEW</span>는 새로 올라온 회차.</p>
+      <div class="tabs" id="l3d-br-days"></div>
+      <div class="tts" id="l3d-br-tts" hidden>
+        <button type="button" class="l3d-btn primary" id="l3d-br-play">▶ 낭독</button>
+        <button type="button" class="l3d-btn" id="l3d-br-stop">■</button>
+        <select id="l3d-br-voice" title="목소리"></select>
+        <select id="l3d-br-rate" title="속도"><option value="0.8">0.8x</option><option value="1" selected>1.0x</option><option value="1.2">1.2x</option><option value="1.4">1.4x</option><option value="1.6">1.6x</option><option value="2">2.0x</option></select>
+        <label class="c" title="이 글을 다 읽으면 같은 브런치북의 다음 화로"><input type="checkbox" id="l3d-br-next"> 다음 화 이어서</label>
+        <span class="pos" id="l3d-br-pos"></span>
+      </div>
+      <div class="body" id="l3d-br-body">불러오는 중...</div>
+      <div class="row" style="margin-top:8px">
+        <button type="button" class="l3d-btn" id="l3d-br-back" hidden>← 목록</button>
+        <button type="button" class="l3d-btn" id="l3d-br-more" hidden>더 보기</button>
+        <a class="l3d-btn" id="l3d-br-orig" target="_blank" rel="noopener noreferrer" hidden>브런치 원문 ↗</a>
+        <button type="button" class="l3d-btn" id="l3d-br-close">닫기</button>
       </div>
     </div>
     <div class="l3d-bubble" id="l3d-bubble"></div>
