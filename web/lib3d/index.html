@@ -117,6 +117,9 @@
   .l3d-cine.on { display: flex; }
   .l3d-cine .top { display: flex; align-items: center; gap: 8px; padding: 8px 10px; color: #f5f2ec; }
   .l3d-cine .top b { flex: 1; }
+  .l3d-arcade { background: #0d0b1e; }
+  .l3d-arcade iframe { background: #141517; }
+  #l3d-arc-sel { font: inherit; font-size: 0.82rem; padding: 6px 8px; border-radius: 8px; border: 0; }
   .l3d-cine .gate { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; color: #f5f2ec; text-align: center; padding: 20px; }
   .l3d-cine .gate[hidden], .l3d-cine iframe[hidden] { display: none; }
   .l3d-cine .gate .big { font-size: 3rem; font-weight: 800; color: #e5a00d; }
@@ -447,6 +450,12 @@
       <button type="button" id="l3d-cb-full">크게 보기</button>
       <button type="button" id="l3d-cb-pick">고르기</button>
       <button type="button" id="l3d-cb-stop">■</button>
+    </div>
+    <div class="l3d-cine l3d-arcade" id="l3d-arcade" role="dialog" aria-label="오락실">
+      <div class="top"><b id="l3d-arc-t">🕹 오락실</b>
+        <select id="l3d-arc-sel" aria-label="다른 게임"></select>
+        <button type="button" class="l3d-btn primary" id="l3d-arc-close">오락실로 (Esc)</button></div>
+      <iframe id="l3d-arc-frame" title="미니게임"></iframe>
     </div>
     <div class="l3d-cine" id="l3d-cine" role="dialog" aria-label="영화관 YMPlayer">
       <div class="top"><b>🎬 영화관 · YMPlayer</b>

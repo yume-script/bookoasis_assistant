@@ -266,3 +266,15 @@ def page():
     with _LOCK:
         _CACHE["page"] = doc
     return doc
+
+
+def arcade_page():
+    """3D 서재 오락실용: 화면 틀(사이드바) 없이 게임 하나만 (#게임id). 같은 게임 스크립트·CSS를 그대로 쓴다"""
+    doc = page()
+    doc = doc.replace("<head>\n", "<head>\n<base href=\"/\">\n", 1)
+    doc = doc.replace('<script src="shell.js"></script>\n', "", 1)
+    doc = doc.replace("</style>\n</head>", "body { margin: 0; padding: 14px; background: var(--bg, #141517); color: var(--text, #f5f2ec); font-family: 'Noto Sans KR', sans-serif; }\n"
+                      ".mini-top-banner { padding: 0.7rem 1rem; } .banner-desc, .mini-select-narrow { display: none !important; }\n</style>\n</head>", 1)
+    doc = doc.replace("</body>", "<script>document.addEventListener('keydown', function (e) {"
+                      " if (e.key === 'Escape' && window.parent !== window) window.parent.postMessage('l3d-arcade-close', location.origin); });</script>\n</body>", 1)
+    return doc.replace('<body data-module="mini">', '<body data-module="mini" data-embed="arcade">', 1)

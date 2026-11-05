@@ -2144,7 +2144,8 @@
   var reading = false;
   window.addEventListener('keydown', function (e) {
     if (e.target && /input|textarea|select/i.test(e.target.tagName)) return;
-    if (cineBox && cineBox.classList.contains('on')) { if (e.key === 'Escape') closeCinema(); return; }   // 상영관이 열려 있으면 걷지 않는다
+    if (cineBox && cineBox.classList.contains('on')) { if (e.key === 'Escape') closeCinema(); return; }
+    if (arcBox && arcBox.classList.contains('on')) { if (e.key === 'Escape') closeArcade(); return; }   // 오락실 창이 열려 있으면 걷지 않는다   // 상영관이 열려 있으면 걷지 않는다
     if (reading) { readerKey(e); return; }
     keys[e.key.toLowerCase()] = true;
     if (['arrowup', 'arrowdown', 'arrowleft', 'arrowright', ' '].indexOf(e.key.toLowerCase()) >= 0) e.preventDefault();
@@ -2212,7 +2213,7 @@
   var seatHitMat = new T.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false });
   seatHitMat.userData.keep = true;
   function addSeat(x, z, rot, h, opt) {   // rot: 앉은 사람이 보는 쪽 (사람 모형 rotation.y와 같은 뜻)
-    var st = { x: x, z: z, rot: rot, h: h || 0.46, brunch: !!(opt && opt.brunch), media: !!(opt && opt.media), cinema: !!(opt && opt.cinema) };
+    var st = { x: x, z: z, rot: rot, h: h || 0.46, brunch: !!(opt && opt.brunch), media: !!(opt && opt.media), cinema: !!(opt && opt.cinema), arcade: opt && opt.arcade || '' };
     var m = new T.Mesh(unitBox, seatHitMat); m.scale.set(0.62, 0.95, 0.62); m.position.set(x, 0.48, z);
     m.userData.seat = st; st.mesh = m; (parent || floorGroup).add(m);
     seats.push(st);
@@ -2241,6 +2242,7 @@
     sitBtn();
     if (st.brunch && BRUNCH_ON) openBrunch();
     if (st.media) openMediaPick();
+    if (st.arcade) setTimeout(function () { openArcade(st.arcade); }, 650);
     if (st.cinema && !(cine.video && !cine.video.paused)) setTimeout(openCinema, 700);   // 자리에 앉은 뒤 상영관 (상영 중이면 그대로)
   }
   function standUp(now) {
@@ -2387,6 +2389,7 @@
     var hit = ray.intersectObjects(targets, false)[0];
     if (hit && hit.object === elevator && hit.distance < 8) { openFloors(); return; }
     if (hit && hit.object.userData.cinema && hit.distance < 40) { closeCard(); openCinema(true); return; }
+    if (hit && hit.object.userData.arcade && hit.distance < 10) { openArcade(hit.object.userData.arcade); return; }
     if (hit && hit.object.userData.brunch && hit.distance < 14) { closeCard(); openBrunch(); return; }
     if (hit && hit.object.userData.seat) {
       if (hit.distance < 5 && !sitting) sitDown(hit.object.userData.seat);
@@ -3115,6 +3118,7 @@
     // 입구 벽 (안쪽을 보게, 문·엘리베이터 앞은 비움)
     for (x = -L.w / 2 + 3.5; x < L.w / 2 - 2; x += step + r() * 0.8) {
       if (Math.abs(x) < 3.2) continue;
+      if (ARC_X && x > ARC_X[0] && x < ARC_X[1]) continue;   // 오락기 뒤 벽은 비운다
       if (r() < 0.85) poster(x, L.front - 0.12, Math.PI);
     }
     // 안쪽 벽
@@ -3134,13 +3138,15 @@
     floorGroup = new T.Group();
     scene.add(floorGroup);
     parent = floorGroup;
-    CINE_WALL = null; if (cine.video) cineStop(); cineScreen = null; if (cine.tex) { cine.tex.dispose(); cine.tex = null; }
+    ARC_X = null; CINE_WALL = null; if (cine.video) cineStop(); cineScreen = null; if (cine.tex) { cine.tex.dispose(); cine.tex = null; }
     COLS = fl.cinema ? 3 : Math.max(2, Math.min(4, fl.libs.length));
     addBuilding(fl, COLS, fl.cinema ? 1 : Math.ceil(fl.libs.length / COLS));
     applyOutside.force = true; applyOutside();
     fl.libs.forEach(function (lib, j) { addSection(lib, j); });
+    if (i === 0 && ARCADE.length && layout) { var sp0 = arcadeSpan(layout); if (sp0.x1 >= -layout.w / 2 + 6) ARC_X = [sp0.x1 - 0.8, sp0.x0 + 0.8]; }   // 포스터보다 먼저 자리를 잡는다
     addPosters(fl, i + 1);
     addBrunchCorner(i);
+    addArcade(i);
     addMediaBooth(fl);
     if (fl.cinema) addCinema();
     spawnPeople(fl, i + 1);
@@ -3172,6 +3178,7 @@
         if (d.banner) { BANNER = d.banner; if (el('l3d-out').classList.contains('on')) openOutside(); }
         if (d.outside) OUTSIDE = Object.assign({ time: 'auto', season: 'auto', weather: 'clear' }, d.outside);
         floors = makeFloors(libs);
+        ARCADE = d.arcade || [];
         YMPLAYER = d.ymplayer || ''; YM_EMBED = d.ymplayer_embed || 'auto'; YMPROXY = !!d.ymproxy;
         if (YMPLAYER || YMPROXY) floors.push({ key: 'cinema', label: (floors.length + 1) + '층 영화관', libs: [], total: 0, booths: [], cinema: true });
         floors.forEach(function (f, i) {
@@ -4176,6 +4183,77 @@
     if (cpState.src.type === 'iptv') { cpState.group = v; cpDraw(); } else { cpState.tgCh = v; cpLoad(); }
   });
   el('l3d-cp-close').addEventListener('click', function () { cpBox.classList.remove('on'); });
+
+  // ── 오락실 (1층 입구 왼쪽): 미니게임마다 오락기 한 대, 누르거나 앞 의자에 앉으면 그 게임 ──
+  var ARCADE = [], arcBox = el('l3d-arcade'), ARC_X = null;   // ARC_X: 오락기가 놓인 앞벽 구간 (포스터를 비움)
+  var ARC_COLORS = [0xd62839, 0x1f6feb, 0xf2b705, 0x2a9d8f, 0x7b2cbf, 0xe76f51, 0x118ab2, 0xef476f, 0x06d6a0, 0x3a86ff, 0xff7f11, 0x8338ec];
+  function arcadeSpan(L) {   // 오락기를 놓을 x 범위 [끝, 시작] (입구 왼쪽 벽을 따라)
+    var n = Math.min(ARCADE.length, 8), x0 = -DOOR_W / 2 - 3.0;
+    return { n: n, x0: x0, x1: x0 - (n - 1) * 1.2, step: 1.2 };
+  }
+  function addArcade(floorIdx) {
+    if (floorIdx !== 0 || !ARCADE.length || !layout) return;
+    var L = layout, f = L.front, sp = arcadeSpan(L);
+    if (sp.x1 < -L.w / 2 + 6) return;   // 너무 좁은 건물
+    var signTex = textTex(['오락실 · 미니게임'], 1024, 180, '#14121c', '#ff4fd8', 96);
+    var signMat = new T.MeshBasicMaterial({ map: signTex, toneMapped: false });
+    var sign = new T.Mesh(new T.BoxGeometry(3.4, 0.6, 0.04), [M.black, M.black, M.black, M.black, signMat, signMat]);
+    sign.position.set((sp.x0 + sp.x1) / 2, 3.35, f - 2.2); parent.add(sign);
+    [-1.5, 1.5].forEach(function (o) { var c = new T.Mesh(new T.CylinderGeometry(0.006, 0.006, CEIL - 3.65, 6), M.black); c.position.set((sp.x0 + sp.x1) / 2 + o, (CEIL + 3.65) / 2, f - 2.2); parent.add(c); });
+    var floorMat = new T.Mesh(new T.PlaneGeometry(sp.x0 - sp.x1 + 2.2, 3.6), new T.MeshStandardMaterial({ color: 0x1b1530, roughness: 0.9 }));
+    floorMat.rotation.x = -Math.PI / 2; floorMat.position.set((sp.x0 + sp.x1) / 2, 0.011, f - 1.9); floorMat.receiveShadow = true; parent.add(floorMat);
+    ARCADE.slice(0, sp.n).forEach(function (gm, i) {
+      var x = sp.x0 - i * sp.step, col = ARC_COLORS[i % ARC_COLORS.length];
+      var g = new T.Group(); g.position.set(x, 0, f - 0.75); g.rotation.y = Math.PI; parent.add(g);   // 로비 쪽(-z)을 보고
+      var body = new T.MeshStandardMaterial({ color: col, roughness: 0.45, metalness: 0.1 });
+      var dark = new T.MeshStandardMaterial({ color: 0x15151a, roughness: 0.6 });
+      var base = new T.Mesh(unitBox, body); base.scale.set(0.82, 0.95, 0.72); base.position.set(0, 0.475, 0); g.add(base);
+      var upper = new T.Mesh(unitBox, body); upper.scale.set(0.82, 0.95, 0.42); upper.position.set(0, 1.4, -0.15); g.add(upper);
+      var panel = new T.Mesh(unitBox, dark); panel.scale.set(0.8, 0.06, 0.34); panel.position.set(0, 1.0, 0.24); panel.rotation.x = 0.25; g.add(panel);
+      var stick = new T.Mesh(new T.CylinderGeometry(0.012, 0.012, 0.12, 8), M.black); stick.position.set(-0.18, 1.08, 0.26); g.add(stick);
+      var ball = new T.Mesh(new T.SphereGeometry(0.035, 12, 10), new T.MeshStandardMaterial({ color: 0xd62839, roughness: 0.3 })); ball.position.set(-0.18, 1.15, 0.26); g.add(ball);
+      [0.05, 0.15, 0.25].forEach(function (bx, k) { var bt = new T.Mesh(new T.CylinderGeometry(0.025, 0.025, 0.02, 12), new T.MeshBasicMaterial({ color: [0xffd166, 0x06d6a0, 0xef476f][k] })); bt.position.set(bx, 1.06, 0.27); bt.rotation.x = 0.25; g.add(bt); });
+      var scrTex = canvasTex(400, 320, function (c, w, h) {
+        var grd = c.createLinearGradient(0, 0, 0, h); grd.addColorStop(0, '#0d0b1e'); grd.addColorStop(1, '#241a4a'); c.fillStyle = grd; c.fillRect(0, 0, w, h);
+        c.fillStyle = 'rgba(255,255,255,0.06)'; for (var yy = 0; yy < h; yy += 4) c.fillRect(0, yy, w, 1);   // 주사선
+        c.textAlign = 'center'; c.textBaseline = 'middle';
+        c.textAlign = 'left'; c.textBaseline = 'top'; c.fillStyle = '#ffd166'; c.font = '700 40px ' + FONT; wrapText(c, gm.name, 22, 90, w - 44, 50, 2);
+        c.textAlign = 'center'; c.textBaseline = 'middle';
+        c.fillStyle = '#7ee0c3'; c.font = '700 26px ' + FONT; c.fillText('PRESS START', w / 2, 262);
+      });
+      var scr = new T.Mesh(new T.PlaneGeometry(0.66, 0.53), new T.MeshBasicMaterial({ map: scrTex, toneMapped: false }));
+      scr.position.set(0, 1.45, 0.075); scr.rotation.x = -0.12; g.add(scr);
+      var mq = canvasTex(400, 90, function (c, w, h) { c.fillStyle = '#ff4fd8'; c.fillRect(0, 0, w, h); c.fillStyle = '#14121c'; c.font = '800 44px ' + FONT; c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillText(gm.name.replace(/\s*\(.*\)$/, ''), w / 2, h / 2 + 2, w - 20); });
+      var marquee = new T.Mesh(new T.PlaneGeometry(0.8, 0.18), new T.MeshBasicMaterial({ map: mq, toneMapped: false })); marquee.position.set(0, 1.97, 0.07); g.add(marquee);
+      var mbox = new T.Mesh(unitBox, dark); mbox.scale.set(0.84, 0.22, 0.5); mbox.position.set(0, 1.97, -0.17); g.add(mbox);
+      g.traverse(function (o) { if (o.isMesh) { o.castShadow = true; o.userData.arcade = gm.id; brunchHits.push(o); } });
+      // 앞 의자 (앉으면 그 게임)
+      var st = new T.Group(); st.position.set(x, 0, f - 1.75); parent.add(st);
+      var seat = new T.Mesh(new T.CylinderGeometry(0.2, 0.2, 0.08, 18), dark); seat.position.y = 0.62; st.add(seat);
+      var leg = new T.Mesh(new T.CylinderGeometry(0.035, 0.035, 0.6, 8), M.pole); leg.position.y = 0.3; st.add(leg);
+      var foot = new T.Mesh(new T.CylinderGeometry(0.2, 0.22, 0.03, 18), M.pole); foot.position.y = 0.015; st.add(foot);
+      addSeat(x, f - 1.75, 0, 0.62, { arcade: gm.id });   // 오락기(+z)를 보고
+    });
+  }
+  function openArcade(id) {
+    var gm = ARCADE.filter(function (g) { return g.id === id; })[0] || ARCADE[0]; if (!gm) return;
+    closeCard();
+    arcBox.classList.add('on'); wrap.classList.add('reading'); keys = {};
+    el('l3d-arc-t').textContent = '🕹 ' + gm.name;
+    var fr = el('l3d-arc-frame');
+    if (fr.dataset.game !== gm.id) { fr.dataset.game = gm.id; fr.setAttribute('src', 'api/lib3d/arcade#' + encodeURIComponent(gm.id)); }
+    setTimeout(function () { try { fr.focus(); fr.contentWindow.focus(); } catch (e) { /* 무시 */ } }, 400);   // 방향키가 게임으로 가게
+    var sel = el('l3d-arc-sel');
+    if (!sel.options.length) ARCADE.forEach(function (g) { var o = document.createElement('option'); o.value = g.id; o.textContent = g.name; sel.appendChild(o); });
+    sel.value = gm.id;
+  }
+  function closeArcade() {
+    arcBox.classList.remove('on'); wrap.classList.remove('reading');
+    var fr = el('l3d-arc-frame'); fr.removeAttribute('src'); fr.dataset.game = '';   // 닫으면 게임도 끝
+  }
+  el('l3d-arc-close').addEventListener('click', closeArcade);
+  window.addEventListener('message', function (e) { if (e.origin === location.origin && e.data === 'l3d-arcade-close' && arcBox.classList.contains('on')) closeArcade(); });   // 게임 안에서 Esc
+  el('l3d-arc-sel').addEventListener('change', function () { openArcade(el('l3d-arc-sel').value); });
 
   // ── AI 직원 (사서·도슨트 …): 서버의 상태(가려는 곳·말·가리키는 책)대로 걷고 말하고 가리킨다 + 로비 안내판 ──
   var staffNPC = {}, staffData = [], boardMesh = null, boardSig = '', pointer = null, STAFF_ON = false;

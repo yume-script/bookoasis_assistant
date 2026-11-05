@@ -184,6 +184,18 @@ def modules():
             "lib3d": lib3d.enabled()}
 
 
+def arcade_menu(mods):
+    """오락실 게임 목록 [{id, name, icon}] (미니게임이 꺼져 있으면 빈 목록)"""
+    if not mods.get("mini"):
+        return []
+    try:
+        from mini import bundle
+        return bundle.menu()
+    except Exception:  # noqa: BLE001
+        log.exception("오락실 게임 목록")
+        return []
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "bookoasis_assistant"
     svc = None  # make_server에서 지정 (드라이브 변경 감시를 끄면 None)
@@ -199,7 +211,8 @@ class Handler(BaseHTTPRequestHandler):
         if "Cache-Control" not in (extra or {}):
             self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
-        self.send_header("X-Frame-Options", "DENY")
+        if "X-Frame-Options" not in (extra or {}):
+            self.send_header("X-Frame-Options", "DENY")
         self.send_header("Referrer-Policy", "no-referrer")
         for key, value in (extra or {}).items():
             self.send_header(key, value)
@@ -257,7 +270,8 @@ class Handler(BaseHTTPRequestHandler):
         if user and not auth.is_admin(user):   # 관람자: 3D 서재만
             if path in ("/", "/index.html") or (path in PAGES and path not in VIEWER_GET):
                 return self._send(302, b"", extra={"Location": "/library3d"})
-            if not (path in VIEWER_GET or (path.startswith("/api/lib3d/") and path not in VIEWER_LIB3D_ADMIN_ONLY)):
+            if not (path in VIEWER_GET or (path.startswith("/api/lib3d/") and path not in VIEWER_LIB3D_ADMIN_ONLY)
+                    or path.startswith("/games/covers/")):   # 오락실의 그림 땅따먹기 표지
                 return self._send(403, {"success": False, "error": "관람자 계정은 3D 서재만 볼 수 있습니다."})
         if path == "/api/users":
             return self._send(200, {"success": True, "users": [auth.public_user(u) for u in auth.load_users()]})
@@ -442,6 +456,11 @@ class Handler(BaseHTTPRequestHandler):
         if not mods["lib3d"]:
             return self._send(404, {"success": False, "error": "BookOasis 3D 서재가 꺼져 있습니다 (LIB3D_ENABLED)."})
         from urllib.parse import parse_qs
+        if path == "/api/lib3d/arcade":   # 오락실: 게임 하나만 띄우는 화면 (3D 서재 안 창에 넣음, #게임id)
+            if not mods["mini"]:
+                return self._send(404, {"success": False, "error": "미니게임이 꺼져 있습니다 (MINI_ENABLED)."})
+            from mini import bundle
+            return self._send(200, bundle.arcade_page().encode("utf-8"), "text/html; charset=utf-8", extra={"X-Frame-Options": "SAMEORIGIN"})
         if path.startswith("/api/lib3d/ym/"):   # 영화관 층: YMPlayer IPTV·텔레그램 중계
             return self._ym(path[len("/api/lib3d/ym/"):], user)
         q = parse_qs(self.path.partition("?")[2])
@@ -463,7 +482,7 @@ class Handler(BaseHTTPRequestHandler):
                                             people=lib3d.load_settings().get("people") or {},
                                             outside=lib3d.load_settings().get("outside") or {},
                                             models=lib3d.load_settings().get("models") or "basic",
-                                            banner=lib3d.banner_info(), ymplayer=lib3d.ymplayer_url(), ymproxy=lib3d_ymp.configured(), ymplayer_embed=lib3d.ymplayer_embed(), success=True))
+                                            banner=lib3d.banner_info(), ymplayer=lib3d.ymplayer_url(), ymproxy=lib3d_ymp.configured(), arcade=arcade_menu(mods), ymplayer_embed=lib3d.ymplayer_embed(), success=True))
             if path.startswith("/api/lib3d/brunch/"):   # 1층 브런치 연재 낭독 코너 (브런치 공개 글이라 관람자도)
                 return self._brunch_get(path, {k: v[0] for k, v in q.items() if v})
             if path == "/api/lib3d/banner_pick":   # 현수막에 띄울 무작위 작품 (보관함 표지 모드)
