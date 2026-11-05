@@ -37,7 +37,8 @@ def update(username, body):
     reading = body.get("reading")
     with _LOCK:
         _STATE[username] = {"floor": floor, "x": _num(body.get("x")), "z": _num(body.get("z")), "yaw": _num(body.get("yaw"), -100, 100),
-                            "moving": bool(body.get("moving")), "reading": str(reading)[:80] if reading else "", "t": now}
+                            "moving": bool(body.get("moving")), "reading": str(reading)[:80] if reading else "",
+                            "sit": bool(body.get("sit")), "t": now}
         _clean(now)
         others = [dict(v, user=k) for k, v in _STATE.items() if k != username and v["floor"] == floor]
         online = [{"user": k, "floor": v["floor"], "reading": v["reading"]} for k, v in sorted(_STATE.items())]

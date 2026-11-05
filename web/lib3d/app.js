@@ -684,6 +684,9 @@
   // 로비 라운지: 러그 + 소파 + 안락의자 둘 + 탁자 + 스탠드 (양쪽)
   function lounge(cx, cz, flip) {
     rug(cx, cz, 4.2, 3.2);
+    [-0.8, 0, 0.8].forEach(function (ox) { addSeat(cx + ox, cz - 1.0, 0, 0.47); });   // 소파 세 자리 + 양옆 의자
+    addSeat(cx - 1.55, cz + 0.35, Math.PI / 2 + 0.25, 0.47);
+    addSeat(cx + 1.55, cz + 0.35, -Math.PI / 2 - 0.25, 0.47);
     if (useReal('sofa') && useReal('chair')) {   // 모형 파일: 벨벳 소파 + 단추 장식 의자 둘
       fitClone('sofa', { w: 2.5 }, cx, 0, cz - 1.05, 0);
       fitClone('chair', { w: 0.95 }, cx - 1.65, 0, cz + 0.35, Math.PI / 2 + 0.25);
@@ -948,6 +951,7 @@
     var deskSign = new T.Mesh(new T.PlaneGeometry(1.4, 0.28), new T.MeshBasicMaterial({ map: textTex(['INFORMATION · 안내'], 512, 100, '#f7f5f1', '#1d1e20', 46) }));
     add(deskSign, w / 2 - 5.5, 0.72, front - 5.04);
     box(2.4, 0.06, 0.5, M.oak, -2.8, 0.45, front - 3.2, true);
+    [-0.75, 0, 0.75].forEach(function (ox) { addSeat(-2.8 + ox, front - 3.2, Math.PI, 0.48); });   // 입구 벤치 (로비 쪽을 보고)
     [-1.05, 1.05].forEach(function (o) { box(0.05, 0.42, 0.42, M.black, -2.8 + o, 0.21, front - 3.2); });
     [[w / 2 - 1.2, front - 1.2], [-w / 2 + 1.2, front - 1.2], [w / 2 - 1.2, back + 1.2], [-w / 2 + 1.2, back + 1.2]].forEach(function (p, i) {
       plant(p[0], p[1], 1.25, 3 + i);
@@ -2134,9 +2138,88 @@
   renderer.domElement.addEventListener('pointerup', endDrag);
   renderer.domElement.addEventListener('pointercancel', endDrag);
 
+  // ── 앉기 (1인칭): 의자·소파·벤치를 누르거나 가까이서 [앉기] → 눈높이를 낮추고 의자가 보는 쪽으로. 걷기 키를 누르면 일어난다 ──
+  var seats = [], sitting = null, glide = null, SIT_EYE = 1.15;
+  var seatHitMat = new T.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false });
+  seatHitMat.userData.keep = true;
+  function addSeat(x, z, rot, h, opt) {   // rot: 앉은 사람이 보는 쪽 (사람 모형 rotation.y와 같은 뜻)
+    var st = { x: x, z: z, rot: rot, h: h || 0.46, brunch: !!(opt && opt.brunch) };
+    var m = new T.Mesh(unitBox, seatHitMat); m.scale.set(0.62, 0.95, 0.62); m.position.set(x, 0.48, z);
+    m.userData.seat = st; st.mesh = m; (parent || floorGroup).add(m);
+    seats.push(st);
+    return st;
+  }
+  function seatTaken(st) {
+    var near = function (x, z) { return Math.hypot(x - st.x, z - st.z) < 0.45; };
+    if (people.some(function (q) { return (q.kind === 'sit' || q.kind === 'read' || q.kind === 'statue') && q.g && near(q.g.position.x, q.g.position.z); })) return '다른 손님이 앉아 있어요';
+    for (var n in remotes) if (remotes[n].sit && near(remotes[n].tx, remotes[n].tz)) return n + '님이 앉아 있어요';
+    return '';
+  }
+  function nearestSeat(maxD) {
+    var best = null, bd = maxD;
+    seats.forEach(function (st) {
+      var d = Math.hypot(camera.position.x - st.x, camera.position.z - st.z);
+      if (d < bd && !seatTaken(st)) { bd = d; best = st; }
+    });
+    return best;
+  }
+  function sitDown(st) {
+    var why = seatTaken(st); if (why) { flashHelp(why); return; }
+    closeCard();
+    sitting = st; vel.set(0, 0); keys = {};
+    glide = { t: 0, dur: 0.7, fx: camera.position.x, fz: camera.position.z, fy: camera.position.y, tx: st.x + Math.sin(st.rot) * 0.05, tz: st.z + Math.cos(st.rot) * 0.05,
+              ty: st.h + 0.67, fyaw: yaw, tyaw: st.rot + Math.PI, fpitch: pitch, tpitch: 0 };
+    sitBtn();
+    if (st.brunch && BRUNCH_ON) openBrunch();
+  }
+  function standUp(now) {
+    var st = sitting; sitting = null;
+    if (!st) return;
+    var ox = st.x + Math.sin(st.rot) * 0.75, oz = st.z + Math.cos(st.rot) * 0.75;
+    if (now) { glide = null; camera.position.y = EYE; }
+    else glide = { t: 0, dur: 0.45, fx: camera.position.x, fz: camera.position.z, fy: camera.position.y, tx: ox, tz: oz, ty: EYE };
+    sitBtn();
+  }
+  function flashHelp(t) {
+    var h = el('l3d-help'); if (!h) return;
+    var old = h.dataset.base || h.textContent; h.dataset.base = old; h.textContent = t;
+    clearTimeout(flashHelp.tm); flashHelp.tm = setTimeout(function () { h.textContent = h.dataset.base; }, 2500);
+  }
+  var sitBtnEl = el('l3d-sit');
+  sitBtnEl.addEventListener('click', function () {
+    if (sitting) { standUp(); return; }
+    var st = nearestSeat(2.3); if (st) sitDown(st);
+  });
+  function sitBtn() {   // 아래 버튼 줄: 가까운 빈자리가 있으면 [앉기], 앉아 있으면 [일어나기]
+    if (!sitBtnEl) return;
+    var show = !!sitting || !!nearestSeat(2.3);
+    sitBtnEl.style.display = show && !reading ? '' : 'none';
+    sitBtnEl.textContent = sitting ? '일어나기' : '앉기';
+  }
   var vel = new T.Vector2();
   function step(dt) {
     var f = 0, s = 0;
+    if (glide) {   // 앉기·일어나기 움직임
+      glide.t = Math.min(1, glide.t + dt / glide.dur);
+      var e = glide.t < 0.5 ? 2 * glide.t * glide.t : 1 - Math.pow(-2 * glide.t + 2, 2) / 2;
+      camera.position.x = glide.fx + (glide.tx - glide.fx) * e;
+      camera.position.z = glide.fz + (glide.tz - glide.fz) * e;
+      camera.position.y = glide.fy + (glide.ty - glide.fy) * e;
+      if (glide.tyaw != null) yaw = glide.fyaw + Math.atan2(Math.sin(glide.tyaw - glide.fyaw), Math.cos(glide.tyaw - glide.fyaw)) * e;
+      if (glide.tpitch != null) pitch = glide.fpitch + (glide.tpitch - glide.fpitch) * e;
+      if (glide.t >= 1) glide = null;
+      camera.rotation.set(pitch, yaw, 0, 'YXZ');
+      return;
+    }
+    if (sitting) {   // 앉아 있는 동안: 둘러보기·돌기만, 걷기 키를 누르면 일어난다
+      if (!reading && (keys.w || keys.s || keys.a || keys.d || keys.arrowup || keys.arrowdown || moveStick.x || moveStick.y)) { standUp(); return; }
+      if (Math.hypot(camera.position.x - sitting.x, camera.position.z - sitting.z) > 1.2) { standUp(true); }   // 지도·입구로 등으로 옮겨졌으면
+      else {
+        if (!reading) { if (keys.arrowleft) yaw += dt * 1.6; if (keys.arrowright) yaw -= dt * 1.6; }
+        camera.rotation.set(pitch, yaw, 0, 'YXZ');
+        return;
+      }
+    }
     if (!reading) {
       if (keys.w || keys.arrowup) f += 1;
       if (keys.s || keys.arrowdown) f -= 1;
@@ -2223,10 +2306,15 @@
     ray.setFromCamera(ndc, camera);
     var targets = books.map(function (b) { return b.mesh; });
     if (elevator) targets.push(elevator);
-    targets = targets.concat(brunchHits);
+    targets = targets.concat(brunchHits, seats.map(function (st) { return st.mesh; }));
     var hit = ray.intersectObjects(targets, false)[0];
     if (hit && hit.object === elevator && hit.distance < 8) { openFloors(); return; }
     if (hit && hit.object.userData.brunch && hit.distance < 14) { closeCard(); openBrunch(); return; }
+    if (hit && hit.object.userData.seat) {
+      if (hit.distance < 5 && !sitting) sitDown(hit.object.userData.seat);
+      else if (!sitting) flashHelp('조금 더 가까이 가서 누르면 앉아요');
+      return;
+    }
     if (!hit || !hit.object.userData.book || (hit.distance > 12 && hit.object.userData.book.kind !== 'banner')) { closeCard(); return; }
     showCard(hit.object.userData.book);
   }
@@ -2955,7 +3043,7 @@
   }
   function buildFloor(i) {
     if (floorGroup) { scene.remove(floorGroup); disposeGroup(floorGroup); }
-    books = []; booths = [];
+    books = []; booths = []; seats = []; if (sitting) standUp(true);
     cur = i;
     var fl = floors[i];
     floorGroup = new T.Group();
@@ -3060,8 +3148,22 @@
       if (p.acts.idle) p.acts.idle.setEffectiveWeight(1 - p.walkW);
       p.mixer.update(dt);
     }
+    sitPose(p, dt);
     if (p.msgUntil && performance.now() > p.msgUntil) { p.msgUntil = 0; setTag(p, p.remote, ''); }
     p.g.visible = Math.hypot(camera.position.x - p.g.position.x, camera.position.z - p.g.position.z) > 0.9;   // 내 자리와 겹치면 숨김
+  }
+  function sitPose(p, dt) {   // 함께 보는 사람이 앉았으면: 엉덩이를 내리고 허벅지·무릎을 굽힌다 (걷기·서 있기 동작 위에 덧씌움)
+    p.sitW = (p.sitW || 0) + ((p.sit ? 1 : 0) - (p.sitW || 0)) * Math.min(1, dt * 5);
+    var w = p.sitW;
+    p.g.position.y = -0.47 * w;
+    if (w < 0.01) return;
+    if (p.mixer) {
+      if (!p.sb) p.sb = { ul: findBone(p.model, 'LeftUpLeg'), ur: findBone(p.model, 'RightUpLeg'), ll: findBone(p.model, 'LeftLeg'), lr: findBone(p.model, 'RightLeg') };
+      if (p.sb.ul) p.sb.ul.rotateX(-1.5 * w);
+      if (p.sb.ur) p.sb.ur.rotateX(-1.5 * w);
+      if (p.sb.ll) p.sb.ll.rotateX(1.55 * w);
+      if (p.sb.lr) p.sb.lr.rotateX(1.55 * w);
+    } else if (p.legL) { p.legL.rotation.x = -1.5 * w; p.legR.rotation.x = -1.5 * w; }
   }
   function dropRemote(name) {
     var p = remotes[name]; if (!p) return;
@@ -3080,7 +3182,7 @@
         floorGroup.add(p.g);
         dimEnv(p.g);
       }
-      p.tx = o.x; p.tz = o.z; p.tyaw = o.yaw; p.moving = o.moving; p.readingTitle = o.reading;
+      p.tx = o.x; p.tz = o.z; p.tyaw = o.yaw; p.moving = o.moving && !o.sit; p.readingTitle = o.reading; p.sit = !!o.sit;
     });
     Object.keys(remotes).forEach(function (n) { if (!seen[n]) dropRemote(n); });
   }
@@ -3136,7 +3238,8 @@
   function presenceTick() {
     if (presBusy || !floors.length || cur < 0 || !floors[cur] || document.visibilityState !== 'visible') return;
     presBusy = true;
-    var body = { floor: floors[cur].key, x: +camera.position.x.toFixed(2), z: +camera.position.z.toFixed(2), yaw: +(yaw + Math.PI).toFixed(3),
+    var body = { floor: floors[cur].key, x: +(sitting ? sitting.x : camera.position.x).toFixed(2), z: +(sitting ? sitting.z : camera.position.z).toFixed(2),
+                 yaw: +(sitting ? sitting.rot : yaw + Math.PI).toFixed(3), sit: !!sitting,
                  moving: !!(keys.w || keys.s || keys.a || keys.d || keys.arrowup || keys.arrowdown || moveStick.x || moveStick.y),
                  reading: reading ? el('l3d-r-title').textContent : null, since: chatSince };
     fetch('api/lib3d/presence', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
@@ -3200,6 +3303,7 @@
       [-0.3, 0.3].forEach(function (ax) { var arm = new T.Mesh(unitBox, seat.material); arm.scale.set(0.1, 0.22, 0.6); arm.position.set(ax, 0.58, 0); ch.add(arm); });
       var leg = new T.Mesh(unitBox, M.black); leg.scale.set(0.6, 0.33, 0.5); leg.position.y = 0.17; ch.add(leg);
       ch.traverse(function (m) { if (m.isMesh) m.castShadow = true; });
+      addSeat(cx + ox, f - 3.7, ox < 0 ? 0.25 : -0.25, 0.51, { brunch: true });   // 앉으면 낭독 패널을 연다
     });
     // 천장에 매단 간판 (양면)
     var signTex = textTex(['브런치 연재 낭독'], 1024, 200, '#f5f2ec', '#1d1e20', 104);
@@ -3678,7 +3782,7 @@
       if (narrator) updateStaff(narrator, dt, now);
       if (pointer) pointer.mesh.position.y = pointer.y + Math.abs(Math.sin(now / 300)) * 0.12; }
     acc += dt;
-    if (acc > 0.3) { acc = 0; loadNear(); where(); if (now - posSavedAt > 2000) { posSavedAt = now; savePos(); } }
+    if (acc > 0.3) { acc = 0; loadNear(); where(); sitBtn(); if (now - posSavedAt > 2000) { posSavedAt = now; savePos(); } }
     if (!reading) renderer.render(scene, camera);
     placeBubble();
     requestAnimationFrame(frame);
