@@ -1061,6 +1061,7 @@
     parent = floorGroup; spawnPeople(floors[cur], cur + 1); parent = scene; dimEnv(floorGroup);
     if (remotes) Object.keys(remotes).forEach(dropRemote);   // 함께 보는 사람도 새 모형으로 다시
     if (staffNPC) dropStaff();
+    if (brunchSpot) placeNarrator();   // 낭독가도 새 모형(엘프)으로
   }
   // three.js 예제의 Collada 모형: 걷는 스톰트루퍼(뼈대·동작 포함)와 받침대 위 엘프 피규어(정지 모형)
   var COLLADA_BASE = 'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r175/examples/models/collada/';
@@ -3176,7 +3177,7 @@
   var BR_DAYS = [['MONDAY', '월'], ['TUESDAY', '화'], ['WEDNESDAY', '수'], ['THURSDAY', '목'], ['FRIDAY', '금'], ['SATURDAY', '토'], ['SUNDAY', '일'], ['COMPLETE', '완결']];
   function brDayKo(k) { var d = BR_DAYS.filter(function (x) { return x[0] === k; })[0]; return d ? d[1] : ''; }
   function addBrunchCorner(floorIdx) {
-    brunchHits = []; brunchScreen = null; narrator = null;
+    brunchHits = []; brunchScreen = null; narrator = null; brunchSpot = null;
     if (!BRUNCH_ON || !layout || floorIdx !== 0) return;   // 1층에만
     var L = layout, cx = Math.min(9.5, L.w / 2 - 6), f = L.front;
     var g = new T.Group(); g.position.set(cx, 0, 0); parent.add(g);
@@ -3216,22 +3217,33 @@
     scr.position.set(0, 1.45, 0.015); sg.add(scr);
     [scr, frame].forEach(function (m) { m.userData.brunch = true; brunchHits.push(m); });
     brunchScreen = scr;
-    // 낭독가 (낭독대 뒤에서 앞을 보고)
-    narrator = makePerson(7171);
-    narrator.kind = 'agent'; narrator.walkW = 0; narrator.tag = null;
-    narrator.g.position.set(cx, 0, f - 1.15); narrator.g.rotation.y = Math.PI;
-    narrator.tx = cx; narrator.tz = f - 1.15; narrator.face = Math.PI;
-    parent.add(narrator.g);
-    if (narrator.mixer) setLook(narrator, 'calm');
-    setNarrator('');
+    // 낭독가 (낭독대 뒤에서 앞을 보고) - 여자 엘프
+    brunchSpot = { x: cx, z: f - 1.15, group: parent };
+    placeNarrator();
     drawBrunchScreen();
     loadBrunchToday();
+  }
+  var brunchSpot = null;
+  function placeNarrator() {   // 엘프 모형(뼈대 → 걷기·서 있기 동작)이 늦게 받아지면 respawn에서 다시 세운다
+    if (!brunchSpot || !brunchSpot.group || brunchSpot.group !== floorGroup) return;
+    var say = narrator && narrator.lastSay || '';
+    if (narrator) { if (narrator.g.parent) narrator.g.parent.remove(narrator.g); disposeGroup(narrator.g); narrator = null; }
+    if (HUMAN.elfRig && HUMAN.gltf) narrator = elfWalker(rnd(7171));
+    else if (HUMAN.elf) narrator = elfStatue();
+    else narrator = makePerson(7171);   // 엘프를 아직 못 받았으면 잠시 사람 모형으로
+    narrator.kind = 'agent'; narrator.walkW = 0; narrator.tag = null;
+    narrator.g.position.set(brunchSpot.x, 0, brunchSpot.z); narrator.g.rotation.y = Math.PI;
+    narrator.tx = brunchSpot.x; narrator.tz = brunchSpot.z; narrator.face = Math.PI;
+    brunchSpot.group.add(narrator.g); dimEnv(narrator.g);
+    if (narrator.mixer) setLook(narrator, 'calm');
+    setNarrator(say);
   }
   function setNarrator(msg) {
     if (!narrator) return;
     if (narrator.tag) { narrator.g.remove(narrator.tag); narrator.tag.material.map.dispose(); narrator.tag.material.dispose(); }
-    narrator.tag = nameTag('낭독가 · 브런치 연재', msg, '#c9a7ff');
-    narrator.tag.position.y = 2.15 + (msg ? 0.2 : 0); narrator.g.add(narrator.tag);
+    narrator.lastSay = msg;
+    narrator.tag = nameTag('엘프 낭독가 · 브런치 연재', msg, '#c9a7ff');
+    narrator.tag.position.y = (narrator.isElf ? 1.95 : 2.15) + (msg ? 0.2 : 0); narrator.g.add(narrator.tag);
   }
   function loadBrunchToday() {
     if (Date.now() - brunchTodayAt < 10 * 60 * 1000 && brunchToday) { drawBrunchScreen(); return; }

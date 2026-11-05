@@ -324,7 +324,7 @@ _audio_lock = threading.Lock()
 def tts_voices():
     if edge_tts is None:
         return {"available": False, "voices": [],
-                "reason": "서버에 edge-tts가 없습니다: pip install edge-tts 후 재시작 (3D 서재 가이드 참고)"}
+                "reason": "서버에 edge-tts가 없습니다 - 서비스가 쓰는 파이썬(venv)에 설치 후 재시작 (3D 서재 가이드 7장)"}
     return {"available": True, "voices": [{"id": i, "name": n} for i, n in EDGE_VOICES]}
 
 

@@ -166,7 +166,7 @@ AI 설정(연결 방식·주소·모델)을 마치면 각 층 로비에 **AI 직
 
 ## 7. 브런치 연재 낭독 코너 (1층 입구 오른쪽)
 
-1층에 들어서면 입구 오른쪽에 **"브런치 연재 낭독"** 간판, 낭독대와 낭독가, 듣는 의자 두 개, 안내 화면이 있습니다.
+1층에 들어서면 입구 오른쪽에 **"브런치 연재 낭독"** 간판, 낭독대와 엘프 낭독가, 듣는 의자 두 개, 안내 화면이 있습니다.
 브런치(brunch.co.kr)의 요일별 브런치북 연재를 골라 소리 내어 읽어 줍니다. ([ym_brunch](https://github.com/yume-script/ym_brunch) 플러그인과 같은 방식)
 
 - **안내 화면**: 오늘 요일 연재 중 새로 올라온 회차 수와 제목(**NEW**). 10분마다 새로 받습니다. 낭독 중에는 "지금 낭독 중" 글이 위에 나옵니다.
@@ -175,11 +175,17 @@ AI 설정(연결 방식·주소·모델)을 마치면 각 층 로비에 **AI 직
   - 글을 누르면 본문(사진·인용 포함)과 이전 화/다음 화, [브런치 원문 ↗].
 - **낭독**: [▶ 낭독] / [❚❚ 일시정지] / [■]. 읽는 문단이 노랗게 표시되며 따라 내려가고, 문단을 누르면 거기서부터 읽습니다.
   - 속도 0.8~2.0x, 목소리, **다음 화 이어서**(이 글을 다 읽으면 같은 브런치북 다음 화를 자동으로). 고른 값은 이 브라우저에 기억됩니다.
-  - 읽는 문장은 **낭독가 머리 위 말풍선**에도 뜹니다. 패널을 닫아도 낭독은 계속되니, 서재를 걸어 다니며 들을 수 있습니다(■로 멈춤).
+  - 읽는 문장은 **엘프 낭독가 머리 위 말풍선**에도 뜹니다. 패널을 닫아도 낭독은 계속되니, 서재를 걸어 다니며 들을 수 있습니다(■로 멈춤).
   - 소리는 **고른 사람의 브라우저에서만** 납니다(다른 사람에게는 들리지 않음). 관람자 계정도 쓸 수 있습니다.
 - **목소리**
   - 브라우저 음성: 기기에 깔린 한국어 음성(보통 1~2개). 따로 설치할 것 없음.
-  - Edge 음성(서버, 선택): 이 프로그램을 돌리는 파이썬에 `pip install edge-tts` 후 재시작하면 선히·인준·현수 등 14개가 목록에 생깁니다(키·요금 없음, 마이크로소프트 Edge "소리 내어 읽기"의 비공식 경로, 서버에서 `speech.platform.bing.com`으로 나가는 인터넷 필요). 있으면 선히가 기본입니다.
+  - Edge 음성(서버, 선택): 이 프로그램을 돌리는 파이썬에 `edge-tts`를 설치하고 재시작하면 선히·인준·현수 등 14개가 목록에 생깁니다(키·요금 없음, 마이크로소프트 Edge "소리 내어 읽기"의 비공식 경로, 서버에서 `speech.platform.bing.com`으로 나가는 인터넷 필요). 있으면 선히가 기본입니다.
+- **edge-tts 설치** - 서비스가 쓰는 파이썬에 넣어야 합니다. 먼저 `systemctl cat bookoasis_assistant | grep ExecStart`로 확인:
+  - `…/venv/bin/python …`이면 그 venv에: `/mnt/bookoasis_assistant/venv/bin/pip install edge-tts` 후 `systemctl restart bookoasis_assistant`
+  - `/usr/bin/python3 …`(시스템 파이썬)이면 우분투 24.04·데비안 12는 `pip install`이 `externally-managed-environment`로 막힙니다. 둘 중 하나:
+    - (권장) venv 만들기: `cd /mnt/bookoasis_assistant && python3 -m venv venv && venv/bin/pip install -r requirements.txt edge-tts` (venv가 없다는 오류면 `apt install python3-venv`), 서비스의 `ExecStart=`를 `/mnt/bookoasis_assistant/venv/bin/python /mnt/bookoasis_assistant/app.py`로 바꾸고 `systemctl daemon-reload && systemctl restart bookoasis_assistant`
+    - 간단히: `pip install --break-system-packages edge-tts` 후 재시작 (시스템 파이썬에 직접 넣음)
+  - 확인: 낭독 패널 목소리 목록에 "Edge 음성 (서버)" 묶음(선히·인준·현수 …)이 보이면 성공. "서버에 edge-tts가 없습니다"가 보이면 다른 파이썬에 설치된 것입니다.
 - 끄기: `.env`에 `LIB3D_BRUNCH=false` 후 재시작하면 코너를 짓지 않습니다.
 - 브런치 화면용 비공식 API를 쓰므로 브런치가 바뀌면 목록·본문이 안 나올 수 있습니다. 멤버십(유료) 글은 앞부분만 나옵니다.
 - 서버는 `api.brunch.co.kr`·`brunch.co.kr`에 접속할 수 있어야 합니다. 목록은 5분, 글은 10분, Edge 음성은 30MB까지 메모리에 보관합니다.
