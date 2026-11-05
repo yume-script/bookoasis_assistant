@@ -23,7 +23,8 @@
   .l3d-chip { pointer-events: auto; background: rgba(255, 255, 255, 0.86); color: #1d1e20; box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08); border-radius: 999px; padding: 6px 12px;
     font-size: 0.8rem; line-height: 1.35; backdrop-filter: blur(4px); width: max-content; max-width: 70vw; }
   .l3d-chip b { color: var(--accent, #e5a00d); }
-  .l3d-bar { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); display: flex; gap: 8px; }
+  .l3d-bar { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); display: flex; gap: 8px; width: max-content; max-width: calc(100% - 24px); flex-wrap: wrap; justify-content: center; }
+  .l3d-bar .l3d-btn { white-space: nowrap; }
   .l3d-btn { border: 0; border-radius: 999px; background: rgba(29, 30, 32, 0.86); color: #f5f2ec; padding: 9px 16px;
     font: 600 0.82rem/1.2 inherit; cursor: pointer; min-width: 64px; }
   .l3d-btn:hover { background: rgba(40, 42, 46, 0.92); }

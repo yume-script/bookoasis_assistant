@@ -893,6 +893,66 @@
     addCars(w, back, front, gy);
     setTimeout(placeBanner, 0);   // 층을 다 지은 뒤
   }
+  // ── 1층 출입문 + 바깥 앞마당 (도서관 밖으로 나가 보기) ──
+  var DOOR_W = 3.6, DOOR_H = 2.9, PLAZA_D = 9, autoDoor = null;
+  var glassDoorMat = new T.MeshStandardMaterial({ color: 0xcfe3ee, roughness: 0.05, metalness: 0.2, transparent: true, opacity: 0.28, depthWrite: false, side: T.DoubleSide });
+  glassDoorMat.userData.keep = true;
+  function addDoorAndPlaza(w, back, front) {
+    // 문틀 + 좌우로 열리는 유리 자동문 두 짝
+    box(DOOR_W + 0.1, 0.1, 0.26, M.black, 0, DOOR_H + 0.05, front);
+    [-1, 1].forEach(function (sd) { box(0.08, DOOR_H, 0.26, M.black, sd * (DOOR_W / 2), DOOR_H / 2, front); });
+    var leaves = [-1, 1].map(function (sd) {
+      var g = new T.Group(); g.position.set(sd * DOOR_W / 4, 0, front); parent.add(g);
+      var gl = new T.Mesh(new T.PlaneGeometry(DOOR_W / 2 - 0.04, DOOR_H - 0.06), glassDoorMat); gl.position.y = DOOR_H / 2; g.add(gl);
+      var fr = new T.Mesh(unitBox, M.black); fr.scale.set(0.05, DOOR_H - 0.06, 0.05); fr.position.set(-sd * (DOOR_W / 4 - 0.03), DOOR_H / 2, 0); g.add(fr);
+      var hd = new T.Mesh(unitBox, M.pole); hd.scale.set(0.03, 0.6, 0.04); hd.position.set(-sd * (DOOR_W / 4 - 0.15), 1.05, 0.05); g.add(hd);
+      return { g: g, sd: sd };
+    });
+    autoDoor = { leaves: leaves, open: 0, front: front };
+    // 바깥에서 본 건물: 층 수만큼 위층 (흰 벽 + 층마다 띠창) - 천장 위라 안에서는 보이지 않는다
+    var d = front - back, cz = (front + back) / 2, up = Math.max(1, floors.length) - 1, fh = 4.5;
+    for (var k = 1; k <= up; k++) {
+      var y0 = CEIL + 0.03 + (k - 1) * fh;   // 천장과 겹쳐 깜빡이지 않게 살짝 위
+      add(new T.Mesh(new T.BoxGeometry(w + 0.2, fh, d + 0.2), M.wall), 0, y0 + fh / 2, cz);
+      add(new T.Mesh(new T.BoxGeometry(w + 0.24, 2.0, d + 0.24), CAR.glass), 0, y0 + 2.2, cz);
+    }
+    var roof = new T.Mesh(new T.BoxGeometry(w + 0.5, 0.5, d + 0.5), M.parapet); add(roof, 0, CEIL + up * fh + 0.25, cz);
+    // 안쪽·바깥 매트
+    [front - 1.1, front + 1.1].forEach(function (mz) { var mat = new T.Mesh(new T.PlaneGeometry(3.2, 1.6), new T.MeshStandardMaterial({ color: 0x2b2d30, roughness: 1 })); mat.rotation.x = -Math.PI / 2; add(mat, 0, 0.015, mz); });
+    // 앞마당 (보도블록) - 양옆 보도와 이어진다
+    var pw = w + 10, plaza = new T.Mesh(new T.PlaneGeometry(pw, PLAZA_D), M.pave); plaza.rotation.x = -Math.PI / 2; plaza.receiveShadow = true;
+    add(plaza, 0, 0.02, front + PLAZA_D / 2 + 0.1);
+    var curb = new T.Mesh(unitBox, M.pole); curb.scale.set(pw, 0.12, 0.25); add(curb, 0, 0.06, front + PLAZA_D + 0.2);
+    // 바깥 간판 (문 위, 바깥을 보게)
+    var outTex = textTex(['BookOasis 3D 서재'], 1400, 220, '#1d1e20', '#f5f2ec', 120);
+    var outSign = new T.Mesh(new T.PlaneGeometry(7, 1.1), new T.MeshBasicMaterial({ map: outTex, toneMapped: false }));
+    add(outSign, 0, DOOR_H + 1.15, front + 0.12);
+    // 문 옆 화분 + 바깥 벤치 (앉을 수 있음)
+    [-1, 1].forEach(function (sd) { plant(sd * (DOOR_W / 2 + 1.1), front + 0.9, 1.1, 21 + (sd > 0 ? 1 : 0)); });
+    [-1, 1].forEach(function (sd) {
+      var bx = sd * 7.5, bz = front + 3.2;
+      box(2.2, 0.06, 0.5, M.oak, bx, 0.45, bz, true);
+      [-0.95, 0.95].forEach(function (o) { box(0.05, 0.42, 0.42, M.black, bx + o, 0.21, bz); });
+      [-0.6, 0.6].forEach(function (o) { addSeat(bx + o, bz, 0, 0.48); });   // 바깥을 보고 (길·건너편 건물)
+    });
+  }
+  function updateDoor(dt) {   // 가까이 가면 열리고 멀어지면 닫힌다
+    if (!autoDoor) return;
+    var near = Math.abs(camera.position.x) < 3.2 && Math.abs(camera.position.z - autoDoor.front) < 3.4;
+    for (var n in remotes) { var q = remotes[n]; if (Math.abs(q.g.position.x) < 3 && Math.abs(q.g.position.z - autoDoor.front) < 3) near = true; }
+    autoDoor.open += ((near ? 1 : 0) - autoDoor.open) * Math.min(1, dt * 3.5);
+    autoDoor.leaves.forEach(function (l) { l.g.position.x = l.sd * (DOOR_W / 4 + (DOOR_W / 2 - 0.1) * autoDoor.open); });
+  }
+  function isOutside(x, z) { return cur === 0 && layout && z > layout.front + 0.2; }
+  function walkable(x, z) {   // 걸어 다닐 수 있는 곳: 서재 안 + (1층이면) 문 + 앞마당 + 양옆 보도
+    if (x >= hall.x0 && x <= hall.x1 && z >= hall.z0 && z <= hall.z1) return true;
+    if (cur !== 0 || !layout) return false;
+    var L = layout, ax = Math.abs(x), outer = L.w / 2 + 4.6;
+    if (ax < DOOR_W / 2 - 0.35 && z > hall.z1 - 0.1 && z < L.front + 1.0) return autoDoor ? autoDoor.open > 0.55 : true;   // 문이 열려야 지나간다
+    if (ax <= outer && z >= L.front + 0.45 && z <= L.front + PLAZA_D) return true;    // 앞마당
+    if (ax >= L.w / 2 + 0.45 && ax <= outer && z >= L.back - 25 && z <= L.front + PLAZA_D) return true;   // 양옆 보도 (차도는 안 됨)
+    return false;
+  }
   function addBuilding(fl, cols, rows) {
     var w = cols * BOOTH_W + (cols - 1) * GAP + 12, back = -LOBBY - rows * (BOOTH_D + GAP) - 2, front = 10;
     var d = front - back, cz = (front + back) / 2;
@@ -913,7 +973,11 @@
     var wins = [];
     for (var wz0 = front - 6; wz0 > back + 3; wz0 -= 7) wins.push(wz0);
     [[0, front, w, 0], [0, back, w, 0], [-w / 2, cz, d, Math.PI / 2], [w / 2, cz, d, Math.PI / 2]].forEach(function (s, si) {
-      if (si < 2) {
+      if (si === 0 && cur === 0) {   // 1층 앞벽: 문 자리를 비워 밖으로 나갈 수 있게 (자동문)
+        var sw0 = (w - DOOR_W) / 2;
+        [-1, 1].forEach(function (sd) { var wp = new T.Mesh(new T.BoxGeometry(sw0, CEIL, 0.2), M.wall); wp.receiveShadow = true; add(wp, sd * (DOOR_W / 2 + sw0 / 2), CEIL / 2, front); });
+        add(new T.Mesh(new T.BoxGeometry(DOOR_W, CEIL - DOOR_H, 0.2), M.wall), 0, (CEIL + DOOR_H) / 2, front);
+      } else if (si < 2) {
         var wall = new T.Mesh(new T.BoxGeometry(s[2], CEIL, 0.2), M.wall);
         wall.rotation.y = s[3]; wall.receiveShadow = true; add(wall, s[0], CEIL / 2, s[1]);
       } else sideWall(s[0], back, front, wins);
@@ -937,8 +1001,12 @@
     var sc = sun.shadow.camera, ext = Math.max(w, d) / 2 + 4;
     sc.left = -ext; sc.right = ext; sc.top = ext; sc.bottom = -ext; sc.near = 1; sc.far = 80; sc.updateProjectionMatrix();
     // 입구 유리문
-    var door = new T.Mesh(new T.PlaneGeometry(3.6, 2.8), M.sky); door.rotation.y = Math.PI; add(door, 0, 1.4, front - 0.11);
-    box(3.7, 0.06, 0.08, M.black, 0, 2.82, front - 0.14); box(0.05, 2.8, 0.08, M.black, 0, 1.4, front - 0.14);
+    autoDoor = null;
+    if (cur === 0) { addDoorAndPlaza(w, back, front); }
+    else {
+      var door = new T.Mesh(new T.PlaneGeometry(3.6, 2.8), M.sky); door.rotation.y = Math.PI; add(door, 0, 1.4, front - 0.11);
+      box(3.7, 0.06, 0.08, M.black, 0, 2.82, front - 0.14); box(0.05, 2.8, 0.08, M.black, 0, 1.4, front - 0.14);
+    }
     // 간판 (흰 판, 검은 글씨) - 들어오면 정면 위
     var title = textTex(['BookOasis', fl.label + '  ·  보관함 ' + fl.libs.length + '  ·  작품 ' + fl.total.toLocaleString()],
       1600, 300, '#f7f5f1', '#1d1e20', 118);
@@ -2063,7 +2131,7 @@
     var idx = floors.map(function (f) { return f.key; }).indexOf(p.floor);
     if (idx < 0) return false;
     buildFloor(idx);
-    if (p.x < hall.x0 || p.x > hall.x1 || p.z < hall.z0 || p.z > hall.z1) { home(); return true; }   // 서가 배치가 바뀌어 밖이면 입구로
+    if (!walkable(p.x, p.z) && !(cur === 0 && Math.abs(p.x) < DOOR_W / 2 && Math.abs(p.z - layout.front) < 1.2)) { home(); return true; }   // 서가 배치가 바뀌어 밖이면 입구로
     camera.position.set(p.x, EYE, p.z); yaw = p.yaw || 0; pitch = p.pitch || 0;
     return true;
   }
@@ -2234,8 +2302,14 @@
     var tx = (-sin * f + cos * s) * speed, tz = (-cos * f - sin * s) * speed;
     vel.x += (tx - vel.x) * Math.min(1, dt * 8);     // 부드럽게 출발·멈춤
     vel.y += (tz - vel.y) * Math.min(1, dt * 8);
-    camera.position.x = Math.max(hall.x0, Math.min(hall.x1, camera.position.x + vel.x * dt));
-    camera.position.z = Math.max(hall.z0, Math.min(hall.z1, camera.position.z + vel.y * dt));
+    var cx0 = camera.position.x, cz0 = camera.position.z, nx = cx0 + vel.x * dt, nz = cz0 + vel.y * dt;
+    if (walkable(nx, nz)) { camera.position.x = nx; camera.position.z = nz; }
+    else if (walkable(nx, cz0)) { camera.position.x = nx; vel.y = 0; }   // 벽을 따라 미끄러지듯
+    else if (walkable(cx0, nz)) { camera.position.z = nz; vel.x = 0; }
+    else if (!walkable(cx0, cz0)) {   // 지금 자리가 갈 수 없는 곳이면(설정이 바뀌는 등) 안쪽으로 되돌림
+      camera.position.x = Math.max(hall.x0, Math.min(hall.x1, cx0)); camera.position.z = Math.max(hall.z0, Math.min(hall.z1, cz0));
+    } else vel.set(0, 0);
+    updateDoor(dt);
     var moving = Math.hypot(vel.x, vel.y);
     camera.position.y = EYE + Math.sin(performance.now() / 160) * 0.012 * Math.min(1, moving / 3);   // 걸음 흔들림
     camera.rotation.set(pitch, yaw, 0, 'YXZ');
@@ -2972,6 +3046,7 @@
       if (d < bd) { bd = d; best = b; }
     });
     var fl = floors[cur] ? floors[cur].label + ' · ' : '';
+    if (isOutside(camera.position.x, camera.position.z)) { whereEl.textContent = '도서관 밖 · 유리문으로 들어오면 ' + fl.replace(/ · $/, ''); return; }
     whereEl.textContent = fl + (best && bd < 9 ? best.name + ' · ' + best.count + '작품' : '로비 · 엘리베이터나 [층]으로 다른 층');
   }
 
