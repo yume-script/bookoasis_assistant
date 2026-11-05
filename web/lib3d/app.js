@@ -787,6 +787,7 @@
         var bulb = new T.Mesh(unitBox, M.streetLight); bulb.scale.set(0.5, 0.12, 0.28); add(bulb, lx + side * 1.0, gy + 4.85, lz);
         var pool = new T.Mesh(poolGeo, M.lightPool); pool.rotation.x = -Math.PI / 2; add(pool, lx + side * 1.0, gy + 0.04, lz);   // 바닥 불빛
       }
+      var signed = false;
       for (var bz = back - 50; bz < front + 50;) {   // 건너편 건물들
         var bw = 10 + r() * 14, bd = 10 + r() * 10, bh = 9 + Math.pow(r(), 1.6) * 34;
         var mat = M.facade[Math.floor(r() * M.facade.length)];
@@ -797,6 +798,13 @@
         var aw = new T.Mesh(unitBox, M.awning[Math.floor(r() * M.awning.length)]); aw.scale.set(1.4, 0.12, bw * 0.8);   // 차양
         aw.rotation.z = side * 0.25; add(aw, bx - side * (bd / 2 + 0.6), gy + 3.6, bz + bw / 2);
         var cap = new T.Mesh(unitBox, M.parapet); cap.scale.set(bd + 0.3, 0.5, bw + 0.3); add(cap, bx, gy + bh + 0.25, bz + bw / 2);   // 옥상 난간
+        if (side > 0 && !signed && bz + bw / 2 > back && bz + bw / 2 < front) {   // 건너편 건물 하나에 회사 간판 (서재 쪽을 보게, 불 켜진 간판)
+          signed = true;
+          var sw = Math.min(bw * 0.85, 11), sh = sw * 0.22;
+          var sign = new T.Mesh(new T.PlaneGeometry(sw, sh), new T.MeshBasicMaterial({ map: textTex(['(주)CRARES'], 1024, 224, '#14181f', '#ffffff', 150), toneMapped: false }));
+          sign.rotation.y = -Math.PI / 2; add(sign, bx - bd / 2 - 0.2, gy + Math.min(bh - sh, 14), bz + bw / 2);
+          var sbk = new T.Mesh(unitBox, M.pole); sbk.scale.set(0.15, sh + 0.25, sw + 0.25); add(sbk, bx - bd / 2 - 0.05, gy + Math.min(bh - sh, 14), bz + bw / 2);
+        }
         if (r() < 0.5) { var hut = new T.Mesh(unitBox, M.parapet); hut.scale.set(bd * 0.3, 2.2, bw * 0.25); add(hut, bx + (r() - 0.5) * bd * 0.4, gy + bh + 1.1, bz + bw / 2 + (r() - 0.5) * bw * 0.4); }
         bz += bw + 2 + r() * 6;
       }
