@@ -56,6 +56,9 @@
   .l3d-pad button.turn { background: rgba(20, 21, 23, 0.38); font-size: 1.15rem; }
   .l3d-pad button.on { background: rgba(232, 93, 4, 0.9); }
   .l3d-wrap.touch .l3d-chat { width: min(340px, calc(100% - 210px)); }
+  /* 터치 화면: 작품 카드(오른쪽 위)가 이동 버튼(오른쪽 아래)까지 내려오지 않게 - 넘치면 카드 안에서 스크롤 */
+  .l3d-wrap.touch .l3d-card { max-height: calc(100% - 256px); overflow-y: auto; -webkit-overflow-scrolling: touch; }
+  .l3d-wrap.touch .l3d-card img { max-height: min(220px, 26vh); }
   @media (max-width: 640px) { .l3d-pad { grid-template-columns: repeat(3, 46px); grid-auto-rows: 46px; gap: 5px; } }
   .l3d-stick { position: absolute; width: 96px; height: 96px; border-radius: 50%; border: 2px solid rgba(255, 255, 255, 0.55);
     background: rgba(20, 21, 23, 0.25); display: none; pointer-events: none; }
