@@ -1969,6 +1969,28 @@
   // ── 이동·시점 ──
   var yaw = 0, pitch = 0, keys = {}, moveStick = { x: 0, y: 0 };
   function home() { camera.position.set(0, EYE, 9); yaw = 0; pitch = 0.1; }
+  // 나갔던 자리 기억 (이 브라우저에): 층·위치·시선. 다음에 들어오면 그 자리에서 시작
+  var POS_KEY = 'l3d_pos', posRestored = false, posSavedAt = 0;
+  function savePos() {
+    if (cur < 0 || !floors[cur]) return;
+    try {
+      localStorage.setItem(POS_KEY, JSON.stringify({ floor: floors[cur].key, x: +camera.position.x.toFixed(2), z: +camera.position.z.toFixed(2),
+                                                     yaw: +yaw.toFixed(3), pitch: +pitch.toFixed(3) }));
+    } catch (e) { /* 저장 못 하면 다음에 입구에서 시작 */ }
+  }
+  function restorePos() {   // 처음 지을 때 한 번: 저장한 층을 짓고 그 자리로. 못 하면 false
+    var p = null;
+    try { p = JSON.parse(localStorage.getItem(POS_KEY) || 'null'); } catch (e) { p = null; }
+    if (!p || typeof p.x !== 'number') return false;
+    var idx = floors.map(function (f) { return f.key; }).indexOf(p.floor);
+    if (idx < 0) return false;
+    buildFloor(idx);
+    if (p.x < hall.x0 || p.x > hall.x1 || p.z < hall.z0 || p.z > hall.z1) { home(); return true; }   // 서가 배치가 바뀌어 밖이면 입구로
+    camera.position.set(p.x, EYE, p.z); yaw = p.yaw || 0; pitch = p.pitch || 0;
+    return true;
+  }
+  window.addEventListener('pagehide', savePos);
+  document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'hidden') savePos(); });
   function teleport(b) {
     if (b.floor !== cur) buildFloor(b.floor);
     camera.position.set(b.x, EYE, b.z + BOOTH_D / 2 + 3.8); yaw = 0; pitch = -0.05; closeMap();
@@ -2773,8 +2795,8 @@
                      x: (j % cols - (cols - 1) / 2) * (BOOTH_W + GAP), z: -LOBBY - BOOTH_D / 2 - Math.floor(j / cols) * (BOOTH_D + GAP) };
           });
         });
-        buildFloor(Math.max(0, Math.min(cur, floors.length - 1)));
-        home();
+        var first = !posRestored; posRestored = true;
+        if (!(first && restorePos())) { buildFloor(Math.max(0, Math.min(cur, floors.length - 1))); home(); }
         msg.style.display = 'none';
         if (pendingPeople) { pendingPeople = false; openPeople(); }
       })
@@ -2789,7 +2811,7 @@
     step(dt);
     if (!reading) { updatePeople(dt, now); updateWeather(dt, now); updateCars(dt); }
     acc += dt;
-    if (acc > 0.3) { acc = 0; loadNear(); where(); }
+    if (acc > 0.3) { acc = 0; loadNear(); where(); if (now - posSavedAt > 2000) { posSavedAt = now; savePos(); } }
     if (!reading) renderer.render(scene, camera);
     placeBubble();
     requestAnimationFrame(frame);
