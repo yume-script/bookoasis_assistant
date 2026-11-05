@@ -23,11 +23,14 @@
   renderer.shadowMap.type = T.PCFSoftShadowMap;
   wrap.insertBefore(renderer.domElement, wrap.firstChild);
   var scene = new T.Scene();
+  if (T.RoomEnvironment) {   // 실내 반사광(환경 조명): 나무·금속·유리에 은은한 반사가 생긴다
+    try { scene.environment = new T.PMREMGenerator(renderer).fromScene(new T.RoomEnvironment(), 0.04).texture; } catch (e) { /* 없으면 예전대로 */ }
+  }
   scene.background = new T.Color(0xf3efe8);
   scene.fog = new T.Fog(0xf3efe8, 40, 120);
   var camera = new T.PerspectiveCamera(60, 1, 0.05, 200);
   var EYE = 1.62, CEIL = 5.4;
-  var hemi = new T.HemisphereLight(0xffffff, 0xcbb89c, 0.6); scene.add(hemi);
+  var hemi = new T.HemisphereLight(0xffffff, 0xcbb89c, scene.environment ? 0.3 : 0.6); scene.add(hemi);
   scene.add(new T.AmbientLight(0xffffff, 0.12));
   var sun = new T.DirectionalLight(0xfff4e2, 0.85);   // 창으로 들어오는 빛
   sun.castShadow = true;
@@ -326,6 +329,9 @@
     trunk: new T.MeshStandardMaterial({ color: 0x6b4f3a, roughness: 0.9 }),
     leaf: [0x5d8a4e, 0x6f9a55, 0x4f7a44, 0x83a862].map(function (c) { return new T.MeshStandardMaterial({ color: c, roughness: 0.9, flatShading: true }); }),
     facade: [0xd9d2c4, 0xb8c2cc, 0xe7e1d6, 0xa9b3ab, 0xcfc4b8].map(function (c) { return new T.MeshStandardMaterial({ map: facadeTex, color: c, roughness: 0.85 }); }),
+    shopGlass: new T.MeshStandardMaterial({ color: 0x2a3540, roughness: 0.1, metalness: 0.5, emissive: 0x000000, emissiveIntensity: 0.9 }),
+    parapet: new T.MeshStandardMaterial({ color: 0x8d9094, roughness: 0.8 }),
+    awning: [0x7a2f2f, 0x2f4f6a, 0x3f5f3a, 0xc9a24a].map(function (c) { return new T.MeshStandardMaterial({ color: c, roughness: 0.8 }); }),
     glassPane: new T.MeshStandardMaterial({ color: 0xdfeaf2, roughness: 0.05, metalness: 0.1, transparent: true, opacity: 0.12, depthWrite: false })
   });
   var poolGeo = new T.PlaneGeometry(7, 7); poolGeo.userData.shared = true;
@@ -496,13 +502,21 @@
     });
     M.streetLight.emissive.setHex(night || dusk || grey ? 0xffe2a8 : 0x000000);
     M.lightPool.opacity = night ? 1 : dusk ? 0.5 : 0;
+    // 바깥 재질은 실내 반사광을 시간에 맞춰 줄인다 (밤에 실내 빛이 바깥 유리·벽에 비치지 않게)
+    var envOut = night ? 0.02 : dusk ? 0.12 : 0.25;
+    [].concat(M.leaf, M.facade, M.awning, CAR.paint, [M.grass, M.pave, M.road, M.trunk, M.pole, M.shopGlass, M.parapet, CAR.glass, CAR.tire])
+      .forEach(function (m) { m.envMapIntensity = envOut; m.userData.envSet = true; });
+    M.shopGlass.emissive.setHex(night ? 0x1c1208 : dusk ? 0x120c05 : 0x000000);   // 빛 세기는 선형값이라 아주 어둡게 줘야 은은하다
+    CAR.head.emissive.setHex(night || dusk || grey ? 0xfff6dd : 0x000000); CAR.tail.emissive.setHex(night || dusk || grey ? 0xff2a1a : 0x000000);
+    tint(M.parapet, 0x8d9094); M.awning.forEach(function (m, i) { tint(m, [0x7a2f2f, 0x2f4f6a, 0x3f5f3a, 0xc9a24a][i]); });
+    CAR.paint.forEach(function (m, i) { tint(m, [0xe8e6e1, 0x1f2328, 0x8b1e2b, 0x2c4a7a, 0x9aa2a8, 0x3d5a45, 0xd9c79c][i]); });
     // 빛: 낮은 지금 그대로, 노을은 따뜻하게 낮게, 밤은 달빛 + 실내 조명
     var bg = night ? 0x1a2030 : dusk ? 0xe9cdb5 : grey ? 0xd9dcde : 0xf3efe8;
     scene.background.setHex(bg); scene.fog.color.setHex(bg);
     scene.fog.near = night ? 70 : 40; scene.fog.far = night ? 170 : 120;
     sun.color.setHex(night ? 0x9fb4e0 : dusk ? 0xffb27a : 0xfff4e2);
     sun.intensity = night ? 0.18 : dusk ? 0.6 : grey ? 0.45 : 0.85;
-    if (hemi) { hemi.intensity = night ? 0.5 : grey ? 0.7 : 0.6; hemi.color.setHex(night ? 0xfff1dc : 0xffffff); }
+    if (hemi) { hemi.intensity = (night ? 0.5 : grey ? 0.7 : 0.6) * (scene.environment ? 0.5 : 1); hemi.color.setHex(night ? 0xfff1dc : 0xffffff); }
     if (weatherFx) { weatherFx.rain.visible = o.weather === 'rain'; weatherFx.snow.visible = o.weather === 'snow'; }
     M.glassPane.opacity = o.weather === 'rain' ? 0.22 : night ? 0.08 : 0.12;
   }
@@ -523,6 +537,164 @@
     }
   }
   // 바깥: 층이 높을수록 땅이 내려간다(위층에서 내려다보는 경치)
+  // ── 가구 (모서리를 둥글린 상자로 만든 소파·의자·탁자·스탠드, 잎이 여러 겹인 화분) ──
+  function rbox(w, h, d, r) {   // 둥근 모서리 상자 (없으면 보통 상자)
+    return T.RoundedBoxGeometry ? new T.RoundedBoxGeometry(w, h, d, 3, Math.min(r || 0.04, w / 2, h / 2, d / 2)) : new T.BoxGeometry(w, h, d);
+  }
+  var fabricTex = canvasTex(128, 128, function (g, w, h) {   // 직물 결
+    var r = rnd(61); g.fillStyle = '#ffffff'; g.fillRect(0, 0, w, h);
+    for (var i = 0; i < 1800; i++) { g.fillStyle = 'rgba(0,0,0,' + r() * 0.07 + ')'; g.fillRect(r() * w, r() * h, 1, 1 + r() * 2); }
+    for (var y = 0; y < h; y += 2) { g.fillStyle = 'rgba(0,0,0,0.025)'; g.fillRect(0, y, w, 1); }
+  }, [3, 3]);
+  var rugTex = canvasTex(512, 512, function (g, w, h) {   // 러그 (테두리 + 잔무늬)
+    var r = rnd(67); g.fillStyle = '#b9a58a'; g.fillRect(0, 0, w, h);
+    g.strokeStyle = '#6f5a44'; g.lineWidth = 14; g.strokeRect(22, 22, w - 44, h - 44);
+    g.strokeStyle = '#e8dcc6'; g.lineWidth = 4; g.strokeRect(44, 44, w - 88, h - 88);
+    for (var i = 0; i < 9000; i++) { g.fillStyle = 'rgba(' + (r() < 0.5 ? '70,55,40' : '240,230,210') + ',' + r() * 0.12 + ')'; g.fillRect(r() * w, r() * h, 2, 2); }
+    g.strokeStyle = 'rgba(111,90,68,0.35)'; g.lineWidth = 3;
+    for (var k = 0; k < 6; k++) { g.beginPath(); g.ellipse(w / 2, h / 2, 60 + k * 26, 40 + k * 18, 0, 0, Math.PI * 2); g.stroke(); }
+  });
+  var FURN = {
+    sofa: [0x5b6b5e, 0x8a6f5a, 0x3f4a5a, 0xb9ab97].map(function (c) { return new T.MeshStandardMaterial({ color: c, map: fabricTex, roughness: 0.95 }); }),
+    leather: new T.MeshStandardMaterial({ color: 0x7a4a2c, roughness: 0.45, metalness: 0.05 }),
+    rug: new T.MeshStandardMaterial({ map: rugTex, roughness: 1 }),
+    walnut: new T.MeshStandardMaterial({ map: oakTex, color: 0x8a6a50, roughness: 0.45 }),
+    brass: new T.MeshStandardMaterial({ color: 0xb8924a, roughness: 0.3, metalness: 0.9 }),
+    shadeOn: new T.MeshStandardMaterial({ color: 0xf6ead2, emissive: 0xffdca0, emissiveIntensity: 0.55, roughness: 0.9, side: T.DoubleSide }),
+    soil: new T.MeshStandardMaterial({ color: 0x3b2c22, roughness: 1 }),
+    leaves: [0x3f6b3a, 0x4f7d44, 0x5f8f4e, 0x355c33].map(function (c) { return new T.MeshStandardMaterial({ color: c, roughness: 0.7, side: T.DoubleSide }); })
+  };
+  Object.keys(FURN).forEach(function (k) { [].concat(FURN[k]).forEach(function (m) { m.userData.keep = true; }); });   // 층을 바꿔도 지우지 않음
+  function part(g, geo, mat, x, y, z, rx, ry, rz) {
+    var m = new T.Mesh(geo, mat); m.position.set(x, y, z); if (rx || ry || rz) m.rotation.set(rx || 0, ry || 0, rz || 0);
+    m.castShadow = true; m.receiveShadow = true; g.add(m); return m;
+  }
+  function sofa(x, z, ry, seats, mat) {   // 소파 (seats=1이면 안락의자)
+    var g = new T.Group(); g.position.set(x, 0, z); g.rotation.y = ry; parent.add(g);
+    var W = 0.78 * seats + 0.36;
+    part(g, rbox(W, 0.22, 0.9, 0.05), mat, 0, 0.21, 0);                                          // 받침
+    for (var i = 0; i < seats; i++) part(g, rbox(0.76, 0.16, 0.72, 0.06), mat, (i - (seats - 1) / 2) * 0.78, 0.4, 0.06);   // 방석
+    part(g, rbox(W, 0.52, 0.2, 0.07), mat, 0, 0.56, -0.36, -0.12);                                // 등받이
+    [-1, 1].forEach(function (s) { part(g, rbox(0.18, 0.5, 0.9, 0.07), mat, s * (W / 2 - 0.09), 0.38, 0); });   // 팔걸이
+    [-1, 1].forEach(function (s) { [-1, 1].forEach(function (t) {                                   // 다리
+      part(g, new T.CylinderGeometry(0.025, 0.018, 0.12, 10), FURN.walnut, s * (W / 2 - 0.08), 0.06, t * 0.36);
+    }); });
+    if (seats > 1) part(g, rbox(0.42, 0.36, 0.12, 0.05), FURN.sofa[3], -W / 2 + 0.45, 0.62, -0.18, -0.25, 0.2);   // 쿠션
+    return g;
+  }
+  function coffeeTable(x, z, ry) {
+    var g = new T.Group(); g.position.set(x, 0, z); g.rotation.y = ry; parent.add(g);
+    part(g, rbox(1.2, 0.05, 0.62, 0.02), FURN.walnut, 0, 0.42, 0);
+    part(g, rbox(1.1, 0.03, 0.54, 0.01), FURN.walnut, 0, 0.12, 0);
+    [-1, 1].forEach(function (s) { [-1, 1].forEach(function (t) { part(g, new T.CylinderGeometry(0.018, 0.018, 0.4, 8), M.black, s * 0.54, 0.2, t * 0.26); }); });
+    var r = rnd(Math.floor(x * 13 + z * 7) + 99);
+    for (var i = 0; i < 3; i++) {   // 쌓인 책 + 머그잔
+      part(g, new T.BoxGeometry(0.24 + r() * 0.06, 0.035, 0.17), new T.MeshStandardMaterial({ color: PALETTE[Math.floor(r() * PALETTE.length)], roughness: 0.6 }),
+        -0.3, 0.465 + i * 0.036, 0, 0, r() * 0.4 - 0.2, 0);
+    }
+    part(g, new T.CylinderGeometry(0.045, 0.04, 0.1, 16), M.white, 0.32, 0.495, 0.08);
+    return g;
+  }
+  function floorLamp(x, z) {
+    var g = new T.Group(); g.position.set(x, 0, z); parent.add(g);
+    part(g, new T.CylinderGeometry(0.17, 0.19, 0.03, 24), M.black, 0, 0.015, 0);
+    part(g, new T.CylinderGeometry(0.014, 0.014, 1.55, 8), FURN.brass, 0, 0.79, 0);
+    part(g, new T.CylinderGeometry(0.17, 0.25, 0.3, 24, 1, true), FURN.shadeOn, 0, 1.66, 0).castShadow = false;
+    return g;
+  }
+  function rug(x, z, w, d, ry) {
+    var m = new T.Mesh(new T.PlaneGeometry(w, d), FURN.rug); m.rotation.set(-Math.PI / 2, 0, ry || 0); m.receiveShadow = true;
+    add(m, x, 0.006, z); return m;
+  }
+  var leafGeo = (function () {   // 끝이 뾰족한 잎 한 장 (평면을 휘어서)
+    var gq = new T.PlaneGeometry(0.16, 0.62, 2, 6), p = gq.attributes.position;
+    for (var i = 0; i < p.count; i++) {
+      var y = p.getY(i) + 0.31, t = y / 0.62;
+      p.setX(i, p.getX(i) * Math.sin(Math.PI * Math.min(1, t * 1.1)) * 1.1);
+      p.setZ(i, -Math.pow(t, 2) * 0.22 + Math.abs(p.getX(i)) * 0.3);
+      p.setY(i, y);
+    }
+    gq.computeVertexNormals(); gq.userData.shared = true; return gq;
+  })();
+  function plant(x, z, scale, seed) {   // 화분 + 줄기마다 잎이 겹겹이
+    var g = new T.Group(); g.position.set(x, 0, z); g.scale.setScalar(scale || 1); parent.add(g);
+    part(g, new T.CylinderGeometry(0.28, 0.21, 0.55, 28), M.pot, 0, 0.275, 0);
+    part(g, new T.CylinderGeometry(0.29, 0.29, 0.03, 28), M.pot, 0, 0.55, 0);
+    part(g, new T.CircleGeometry(0.26, 24), FURN.soil, 0, 0.545, 0, -Math.PI / 2);
+    var r = rnd(seed || 7);
+    for (var s = 0; s < 14; s++) {
+      var a = r() * Math.PI * 2, tilt = 0.15 + r() * 0.5, len = 0.55 + r() * 0.75;
+      var stem = new T.Group(); stem.position.set(Math.cos(a) * 0.05, 0.55, Math.sin(a) * 0.05); stem.rotation.set(0, -a, 0); g.add(stem);
+      var arm = new T.Group(); arm.rotation.z = tilt; stem.add(arm);
+      part(arm, new T.CylinderGeometry(0.008, 0.012, len, 5), FURN.leaves[3], 0, len / 2, 0).castShadow = false;
+      for (var l = 0; l < 3; l++) {
+        var lf = part(arm, leafGeo, FURN.leaves[Math.floor(r() * 3)], 0, len * (0.55 + l * 0.2), 0, -0.6 - r() * 0.5, r() * Math.PI * 2, 0.3);
+        lf.scale.setScalar(0.8 + r() * 0.5);
+      }
+    }
+    return g;
+  }
+  // 로비 라운지: 러그 + 소파 + 안락의자 둘 + 탁자 + 스탠드 (양쪽)
+  function lounge(cx, cz, flip) {
+    rug(cx, cz, 4.2, 3.2);
+    sofa(cx, cz - 1.15, 0, 3, FURN.sofa[flip ? 2 : 0]);
+    sofa(cx - 1.65, cz + 0.35, Math.PI / 2 + 0.25, 1, FURN.leather);
+    sofa(cx + 1.65, cz + 0.35, -Math.PI / 2 - 0.25, 1, FURN.sofa[1]);
+    coffeeTable(cx, cz + 0.05, 0);
+    floorLamp(cx + 1.85, cz - 1.25);
+    plant(cx - 2.0, cz - 1.3, 0.8, 11 + (flip ? 3 : 0));
+  }
+  // ── 바깥 차 (차도를 오가며 달린다, 밤엔 전조등·후미등) ──
+  var CAR = {
+    paint: [0xe8e6e1, 0x1f2328, 0x8b1e2b, 0x2c4a7a, 0x9aa2a8, 0x3d5a45, 0xd9c79c].map(function (c) { return new T.MeshStandardMaterial({ color: c, roughness: 0.25, metalness: 0.6 }); }),
+    glass: new T.MeshStandardMaterial({ color: 0x1b232c, roughness: 0.08, metalness: 0.4 }),
+    tire: new T.MeshStandardMaterial({ color: 0x151515, roughness: 0.9 }),
+    head: new T.MeshStandardMaterial({ color: 0xf2f2ea, emissive: 0x000000, emissiveIntensity: 1.5 }),
+    tail: new T.MeshStandardMaterial({ color: 0x7a1010, emissive: 0x000000, emissiveIntensity: 1.5 })
+  };
+  Object.keys(CAR).forEach(function (k) { [].concat(CAR[k]).forEach(function (m) { m.userData.keep = true; }); });
+  var carGeo = null;
+  function carParts() {
+    if (carGeo) return carGeo;
+    carGeo = { body: rbox(1.8, 0.62, 4.3, 0.18), cabin: rbox(1.6, 0.55, 2.3, 0.2), wheel: new T.CylinderGeometry(0.33, 0.33, 0.24, 18),
+               lamp: new T.BoxGeometry(0.42, 0.12, 0.05) };
+    Object.keys(carGeo).forEach(function (k) { carGeo[k].userData.shared = true; });
+    return carGeo;
+  }
+  var cars = [];
+  function makeCar(r) {
+    var G = carParts(), g = new T.Group();
+    var paint = CAR.paint[Math.floor(r() * CAR.paint.length)];
+    function p(geo, mat, x, y, z, rz) { var m = new T.Mesh(geo, mat); m.position.set(x, y, z); if (rz) m.rotation.z = rz; m.castShadow = true; g.add(m); return m; }
+    p(G.body, paint, 0, 0.6, 0);
+    var cab = p(G.cabin, CAR.glass, 0, 1.12, -0.25); cab.scale.set(1, 1, 1);
+    p(G.cabin, paint, 0, 1.34, -0.25).scale.set(1.01, 0.12, 0.92);   // 지붕
+    [-1, 1].forEach(function (s) { [-1.35, 1.35].forEach(function (z) { p(G.wheel, CAR.tire, s * 0.82, 0.33, z, Math.PI / 2); }); });
+    [-0.6, 0.6].forEach(function (x) { p(G.lamp, CAR.head, x, 0.7, 2.15); p(G.lamp, CAR.tail, x, 0.72, -2.15); });
+    return g;
+  }
+  function addCars(w, back, front, gy) {
+    cars = [];
+    var r = rnd(83), span = { z0: back - 60, z1: front + 60 };
+    [-1, 1].forEach(function (side) {
+      var roadX = side * (w / 2 + 9);
+      [-1, 1].forEach(function (dir) {   // 차선 둘 (반대 방향)
+        var laneX = roadX + dir * 1.9, n = 3 + Math.floor(r() * 2);
+        for (var i = 0; i < n; i++) {
+          var c = makeCar(r); c.position.set(laneX, gy, span.z0 + r() * (span.z1 - span.z0)); c.rotation.y = dir > 0 ? 0 : Math.PI;
+          parent.add(c);
+          cars.push({ g: c, dir: dir, speed: 7 + r() * 6, span: span });
+        }
+      });
+    });
+  }
+  function updateCars(dt) {
+    for (var i = 0; i < cars.length; i++) {
+      var c = cars[i], z = c.g.position.z + c.dir * c.speed * dt;
+      if (z > c.span.z1) z = c.span.z0; else if (z < c.span.z0) z = c.span.z1;
+      c.g.position.z = z;
+    }
+  }
   function addOutside(w, back, front, floorIdx) {
     var gy = -floorIdx * 4.5 - 0.05, cz = (front + back) / 2, d = front - back, r = rnd(53 + floorIdx);
     var ground = new T.Mesh(new T.CircleGeometry(SCENE_R - 2, 48), M.grass); ground.rotation.x = -Math.PI / 2; add(ground, 0, gy, cz);
@@ -538,8 +710,12 @@
       for (var tz = back - 40; tz < front + 40; tz += 7 + r() * 3) {   // 가로수 (양쪽 보도)
         [walkX + side * 1.4, farWalkX - side * 1.4].forEach(function (tx) {
           var trunk = new T.Mesh(trunkGeo, M.trunk); add(trunk, tx, gy + 1.3, tz);
-          var crown = new T.Mesh(crownGeo, M.leaf[Math.floor(r() * M.leaf.length)]);
-          crown.scale.set(1 + r() * 0.4, 1.1 + r() * 0.5, 1 + r() * 0.4); crown.rotation.y = r() * 3; add(crown, tx, gy + 3.4 + r() * 0.5, tz);
+          var ch = gy + 3.4 + r() * 0.5;
+          for (var cc = 0; cc < 5; cc++) {   // 잎 덩어리 여러 개를 겹쳐 나무 윤곽을 울퉁불퉁하게
+            var crown = new T.Mesh(crownGeo, M.leaf[Math.floor(r() * M.leaf.length)]), sz = cc ? 0.5 + r() * 0.25 : 0.85;
+            crown.scale.set(sz * (1 + r() * 0.3), sz * (1 + r() * 0.4), sz * (1 + r() * 0.3)); crown.rotation.set(r() * 3, r() * 3, 0);
+            add(crown, tx + (cc ? (r() - 0.5) * 1.8 : 0), ch + (cc ? (r() - 0.3) * 1.4 : 0), tz + (cc ? (r() - 0.5) * 1.8 : 0));
+          }
         });
       }
       for (var lz = back - 30; lz < front + 30; lz += 14) {   // 가로등 (밤·흐린 날 켜짐)
@@ -553,11 +729,18 @@
         var bw = 10 + r() * 14, bd = 10 + r() * 10, bh = 9 + Math.pow(r(), 1.6) * 34;
         var mat = M.facade[Math.floor(r() * M.facade.length)];
         var bld = new T.Mesh(unitBox, mat); bld.scale.set(bd, bh, bw);
-        add(bld, side * (w / 2 + 18 + bd / 2 + r() * 6), gy + bh / 2, bz + bw / 2);
+        var bx = side * (w / 2 + 18 + bd / 2 + r() * 6);
+        add(bld, bx, gy + bh / 2, bz + bw / 2);
+        var shop = new T.Mesh(unitBox, M.shopGlass); shop.scale.set(bd + 0.2, 3.4, bw + 0.2); add(shop, bx, gy + 1.7, bz + bw / 2);   // 1층 상점 유리
+        var aw = new T.Mesh(unitBox, M.awning[Math.floor(r() * M.awning.length)]); aw.scale.set(1.4, 0.12, bw * 0.8);   // 차양
+        aw.rotation.z = side * 0.25; add(aw, bx - side * (bd / 2 + 0.6), gy + 3.6, bz + bw / 2);
+        var cap = new T.Mesh(unitBox, M.parapet); cap.scale.set(bd + 0.3, 0.5, bw + 0.3); add(cap, bx, gy + bh + 0.25, bz + bw / 2);   // 옥상 난간
+        if (r() < 0.5) { var hut = new T.Mesh(unitBox, M.parapet); hut.scale.set(bd * 0.3, 2.2, bw * 0.25); add(hut, bx + (r() - 0.5) * bd * 0.4, gy + bh + 1.1, bz + bw / 2 + (r() - 0.5) * bw * 0.4); }
         bz += bw + 2 + r() * 6;
       }
     });
     addWeather(w, back, front, gy);
+    addCars(w, back, front, gy);
   }
   function addBuilding(fl, cols, rows) {
     var w = cols * BOOTH_W + (cols - 1) * GAP + 12, back = -LOBBY - rows * (BOOTH_D + GAP) - 2, front = 10;
@@ -618,10 +801,13 @@
     add(deskSign, w / 2 - 5.5, 0.72, front - 5.04);
     box(2.4, 0.06, 0.5, M.oak, -2.8, 0.45, front - 3.2, true);
     [-1.05, 1.05].forEach(function (o) { box(0.05, 0.42, 0.42, M.black, -2.8 + o, 0.21, front - 3.2); });
-    [[w / 2 - 1.2, front - 1.2], [-w / 2 + 1.2, front - 1.2], [w / 2 - 1.2, back + 1.2], [-w / 2 + 1.2, back + 1.2]].forEach(function (p) {
-      add(new T.Mesh(new T.CylinderGeometry(0.28, 0.22, 0.55, 28), M.pot), p[0], 0.275, p[1], true);
-      var leaf = new T.Mesh(new T.SphereGeometry(0.55, 20, 14), M.green); leaf.scale.set(1, 1.35, 1); add(leaf, p[0], 1.2, p[1], true);
+    [[w / 2 - 1.2, front - 1.2], [-w / 2 + 1.2, front - 1.2], [w / 2 - 1.2, back + 1.2], [-w / 2 + 1.2, back + 1.2]].forEach(function (p, i) {
+      plant(p[0], p[1], 1.25, 3 + i);
     });
+    // 라운지 (로비 양쪽, 통로를 피해서)
+    var lx = Math.max(w / 2 - 6.5, 8);
+    lounge(-lx, front - 13, false);
+    lounge(lx, front - 13, true);
     // 층 안내판 (왼쪽, 이 층의 서가 목록)
     var lines = [fl.label].concat(fl.libs.slice(0, 15).map(function (l) { return l.name; }));
     if (fl.libs.length > 15) lines.push('… 외 ' + (fl.libs.length - 15) + '개');
@@ -724,7 +910,7 @@
   function respawn() {   // 지금 층의 사람들을 새 모형으로 다시 세운다
     if (cur < 0 || !floorGroup) return;
     people.forEach(function (q) { floorGroup.remove(q.g); disposeGroup(q.g); });
-    parent = floorGroup; spawnPeople(floors[cur], cur + 1); parent = scene;
+    parent = floorGroup; spawnPeople(floors[cur], cur + 1); parent = scene; dimEnv(floorGroup);
   }
   // three.js 예제의 Collada 모형: 걷는 스톰트루퍼(뼈대·동작 포함)와 받침대 위 엘프 피규어(정지 모형)
   var COLLADA_BASE = 'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r175/examples/models/collada/';
@@ -2440,6 +2626,12 @@
     // 안쪽 벽
     for (x = -L.w / 2 + 2.5; x < L.w / 2 - 2; x += step + r() * 0.8) if (r() < 0.85) poster(x, L.back + 0.12, 0);
   }
+  function dimEnv(root) {   // 환경 반사광은 은은하게 (재질마다 한 번)
+    if (!scene.environment) return;
+    root.traverse(function (o) {
+      [].concat(o.material || []).forEach(function (m) { if (m && m.isMeshStandardMaterial && !m.userData.envSet) { m.envMapIntensity = m === M.floor ? 0.12 : 0.3; m.userData.envSet = true; } });
+    });
+  }
   function buildFloor(i) {
     if (floorGroup) { scene.remove(floorGroup); disposeGroup(floorGroup); }
     books = []; booths = [];
@@ -2454,6 +2646,7 @@
     fl.libs.forEach(function (lib, j) { addSection(lib, j); });
     addPosters(fl, i + 1);
     spawnPeople(fl, i + 1);
+    dimEnv(floorGroup);
     booths.forEach(function (b) { b.floor = i; });
     fl.booths = booths.slice();
     parent = scene;
@@ -2497,7 +2690,7 @@
     var dt = Math.min(0.05, (now - last) / 1000);
     last = now;
     step(dt);
-    if (!reading) { updatePeople(dt, now); updateWeather(dt, now); }
+    if (!reading) { updatePeople(dt, now); updateWeather(dt, now); updateCars(dt); }
     acc += dt;
     if (acc > 0.3) { acc = 0; loadNear(); where(); }
     if (!reading) renderer.render(scene, camera);
