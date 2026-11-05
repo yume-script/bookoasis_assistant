@@ -330,6 +330,8 @@ class Handler(BaseHTTPRequestHandler):
                                             outside=lib3d.load_settings().get("outside") or {},
                                             models=lib3d.load_settings().get("models") or "basic",
                                             banner=lib3d.banner_info(), success=True))
+            if path == "/api/lib3d/banner_pick":   # 현수막에 띄울 무작위 작품 (보관함 표지 모드)
+                return self._send(200, dict(lib3d.banner_pick(), success=True))
             if path == "/api/lib3d/banner":   # CRARES 건물 현수막 그림 (서버가 받아 둔 것)
                 raw, ctype = lib3d.banner_image(force=bool(q.get("force")))
                 return self._send(200, raw, ctype, extra={"Cache-Control": "private, max-age=600"})
@@ -448,6 +450,16 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/lib3d/settings":  # 3D 서재 설정: 보여 줄 보관함 ({"libraries": [키…] 또는 null=전부})
             if not modules()["lib3d"]:
                 return self._send(404, {"success": False, "error": "BookOasis 3D 서재가 꺼져 있습니다 (LIB3D_ENABLED)."})
+            if "banner_lib" in context and "libraries" not in context:   # 현수막: 보관함 표지 무작위 (비우면 끔)
+                try:
+                    lib3d.save_banner_library(context.get("banner_lib"), context.get("banner_sec"))
+                    if context.get("banner_lib"):
+                        lib3d.banner_pick()   # 바로 뽑아 보고 안 되면 알린다
+                    return self._send(200, {"success": True, "banner": lib3d.banner_info()})
+                except ValueError as e:
+                    return self._send(400, {"success": False, "error": str(e), "banner": lib3d.banner_info()})
+                except Exception as e:  # noqa: BLE001 - DB 접속 실패 등
+                    return self._send(400, {"success": False, "error": "보관함을 읽지 못했습니다: %s" % e, "banner": lib3d.banner_info()})
             if "banner" in context and "libraries" not in context:   # CRARES 현수막 그림 주소만 저장
                 try:
                     url = lib3d.save_banner(context.get("banner"))

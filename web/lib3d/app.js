@@ -759,24 +759,60 @@
   }
   // CRARES 건물 현수막: 설정에 그림 주소가 있으면 간판 아래 벽에 건다 (그림은 서버가 받아 둔 것을 쓴다)
   var CRARES = null, bannerMesh = null, BANNER = { url: '', v: '' };
-  function placeBanner() {
-    if (bannerMesh && bannerMesh.parent) { bannerMesh.parent.remove(bannerMesh); disposeGroup(bannerMesh); }
+  var bannerTimer = null;
+  function clearBanner() {
+    if (bannerMesh && bannerMesh.parent) {
+      bannerMesh.parent.remove(bannerMesh);
+      if (bannerMesh.userData.book) books = books.filter(function (q) { return q !== bannerMesh.userData.book; });
+      disposeGroup(bannerMesh);
+    }
     bannerMesh = null;
-    if (!CRARES || !BANNER.url || !floorGroup) return;
+  }
+  function hangBanner(tex, book) {   // 그림을 비율대로 간판 아래 벽에 (위아래 봉)
+    clearBanner();
+    var spot = CRARES;
+    tex.encoding = T.sRGBEncoding; tex.anisotropy = 8;
+    var iw = tex.image.width || 1, ih = tex.image.height || 1, maxH = Math.max(2, spot.top - spot.bottom);
+    var w = spot.maxW, h = w * ih / iw;
+    if (h > maxH) { h = maxH; w = h * iw / ih; }
+    var g = new T.Group(); g.position.set(spot.face - spot.side * 0.25, spot.top - h / 2, spot.z); g.rotation.y = -spot.side * Math.PI / 2;
+    var mat = new T.MeshBasicMaterial({ map: tex, toneMapped: false, side: T.DoubleSide });
+    var pic = new T.Mesh(new T.PlaneGeometry(w, h), mat);
+    g.add(pic);
+    [h / 2 + 0.06, -h / 2 - 0.06].forEach(function (y) {
+      var bar = new T.Mesh(new T.CylinderGeometry(0.05, 0.05, w + 0.3, 10), M.pole); bar.rotation.z = Math.PI / 2; bar.position.set(0, y, 0.02); g.add(bar);
+    });
+    if (book) {   // 보관함 표지: 누르면 작품 카드 (멀리 있어도 누를 수 있게 거리 제한 없이 고르게 함)
+      book.front = mat; book.mesh = pic; book.state = 2; book.kind = 'banner'; pic.userData.book = book; g.userData.book = book; books.push(book);
+    }
+    floorGroup.add(g); bannerMesh = g;
+  }
+  function placeBanner() {
+    clearTimeout(bannerTimer); bannerTimer = null;
+    clearBanner();
+    if (!CRARES || !floorGroup) return;
     var spot = CRARES, holder = floorGroup;
+    function stale() { return spot !== CRARES || holder !== floorGroup; }   // 그새 층이 바뀜
+    if (BANNER.mode === 'library') {
+      var next = function () {
+        if (stale()) return;
+        if (reading || document.visibilityState !== 'visible') { bannerTimer = setTimeout(next, 5000); return; }
+        api('api/lib3d/banner_pick').then(function (d) {
+          if (stale()) return;
+          loader.load('api/lib3d/cover?k=' + encodeURIComponent(d.key), function (tex) {
+            if (stale()) { tex.dispose(); return; }
+            hangBanner(tex, { key: d.key, title: d.title || '(제목 없음)', count: d.count, lib: d.lib_name || '현수막', db: d.db, base: 0x333333 });
+          });
+        }).catch(function (e) { console.warn('3D 서재 현수막:', e.message); })
+          .then(function () { if (!stale()) bannerTimer = setTimeout(next, Math.max(5, BANNER.sec || 30) * 1000); });
+      };
+      next();
+      return;
+    }
+    if (!BANNER.url) return;
     loader.load('api/lib3d/banner?v=' + encodeURIComponent(BANNER.v), function (tex) {
-      if (spot !== CRARES || holder !== floorGroup) { tex.dispose(); return; }   // 그새 층이 바뀜
-      tex.encoding = T.sRGBEncoding; tex.anisotropy = 8;
-      var iw = tex.image.width || 1, ih = tex.image.height || 1, maxH = Math.max(2, spot.top - spot.bottom);
-      var w = spot.maxW, h = w * ih / iw;
-      if (h > maxH) { h = maxH; w = h * iw / ih; }
-      var g = new T.Group(); g.position.set(spot.face - spot.side * 0.25, spot.top - h / 2, spot.z); g.rotation.y = -spot.side * Math.PI / 2;
-      var pic = new T.Mesh(new T.PlaneGeometry(w, h), new T.MeshBasicMaterial({ map: tex, toneMapped: false, side: T.DoubleSide }));
-      g.add(pic);
-      [h / 2 + 0.06, -h / 2 - 0.06].forEach(function (y) {   // 현수막 위아래 봉
-        var bar = new T.Mesh(new T.CylinderGeometry(0.05, 0.05, w + 0.3, 10), M.pole); bar.rotation.z = Math.PI / 2; bar.position.set(0, y, 0.02); g.add(bar);
-      });
-      holder.add(g); bannerMesh = g;
+      if (stale()) { tex.dispose(); return; }
+      hangBanner(tex, null);
     }, undefined, function () { console.warn('3D 서재 현수막 그림을 불러오지 못했습니다.'); });
   }
   // 건너편 건물 간판 이름 (오른쪽 서재 옆 건물은 (주)CRARES)
@@ -2159,7 +2195,7 @@
     if (elevator) targets.push(elevator);
     var hit = ray.intersectObjects(targets, false)[0];
     if (hit && hit.object === elevator && hit.distance < 8) { openFloors(); return; }
-    if (!hit || hit.distance > 12 || !hit.object.userData.book) { closeCard(); return; }
+    if (!hit || !hit.object.userData.book || (hit.distance > 12 && hit.object.userData.book.kind !== 'banner')) { closeCard(); return; }
     showCard(hit.object.userData.book);
   }
   function el(id) { return document.getElementById(id); }
@@ -2628,6 +2664,7 @@
   function openOutside() {
     setBox.classList.remove('on'); aiBox.classList.remove('on'); pplBox.classList.remove('on'); outBox.classList.add('on');
     el('l3d-out-banner').value = BANNER.url || '';
+    el('l3d-out-bmode').value = BANNER.mode || ''; el('l3d-out-banner-sec').value = BANNER.sec || 30; bannerModeUI(); bannerLibs();
     el('l3d-out-time').value = OUTSIDE.time; el('l3d-out-season').value = OUTSIDE.season; el('l3d-out-weather').value = OUTSIDE.weather;
     el('l3d-out-msg').textContent = '';
   }
@@ -2641,12 +2678,34 @@
     }).catch(function (e) { el('l3d-out-msg').textContent = e.message; });
   });
   el('l3d-out-close').addEventListener('click', function () { outBox.classList.remove('on'); });
+  function bannerModeUI() {
+    var m = el('l3d-out-bmode').value;
+    el('l3d-out-burl').hidden = m !== 'url'; el('l3d-out-blib').hidden = m !== 'library';
+  }
+  el('l3d-out-bmode').addEventListener('change', bannerModeUI);
+  function bannerLibs() {   // 보관함 목록 (숨긴 보관함도 고를 수 있게 전부)
+    var sel = el('l3d-out-banner-lib');
+    if (sel.options.length > 1) { sel.value = BANNER.lib || ''; return; }
+    api('api/lib3d/libraries').then(function (d) {
+      d.libraries.forEach(function (l) {
+        var o = document.createElement('option'); o.value = l.key; o.textContent = (FLOOR_NAMES[l.db_type] || l.db_type) + ' · ' + l.name; sel.appendChild(o);
+      });
+      sel.value = BANNER.lib || '';
+    }).catch(function () { /* 목록 실패 - 저장할 때 다시 */ });
+  }
   el('l3d-out-banner-save').addEventListener('click', function () {
-    el('l3d-out-msg').textContent = '그림을 받아 보는 중...';
-    postJSON('api/lib3d/settings', { banner: el('l3d-out-banner').value.trim() }).then(function (d) {
-      BANNER = d.banner; placeBanner();
-      el('l3d-out-msg').textContent = BANNER.url ? '저장했습니다. 오른쪽 창밖 CRARES 건물에 걸었습니다.' : '현수막을 내렸습니다.';
-    }).catch(function (e) { el('l3d-out-msg').textContent = e.message; });
+    var m = el('l3d-out-bmode').value, url = el('l3d-out-banner').value.trim(), lib = el('l3d-out-banner-lib').value;
+    if (m === 'library' && !lib) { el('l3d-out-msg').textContent = '보관함을 골라 주세요.'; return; }
+    el('l3d-out-msg').textContent = m === 'url' ? '그림을 받아 보는 중...' : '저장 중...';
+    var steps = m === 'library' ? [{ banner_lib: lib, banner_sec: +el('l3d-out-banner-sec').value || 30 }]
+      : [{ banner_lib: '' }, { banner: m === 'url' ? url : '' }];
+    steps.reduce(function (pr, body) { return pr.then(function () { return postJSON('api/lib3d/settings', body); }); }, Promise.resolve())
+      .then(function () { return api('api/lib3d/data'); })
+      .then(function (d) {
+        BANNER = d.banner || BANNER; placeBanner();
+        el('l3d-out-msg').textContent = BANNER.mode === 'library' ? '저장했습니다. CRARES 건물 현수막에 그 보관함 표지가 ' + BANNER.sec + '초마다 바뀌어 걸립니다.'
+          : BANNER.mode === 'url' ? '저장했습니다. 오른쪽 창밖 CRARES 건물에 걸었습니다.' : '현수막을 내렸습니다.';
+      }).catch(function (e) { el('l3d-out-msg').textContent = e.message; });
   });
   el('l3d-set-out').addEventListener('click', openOutside);
   // 3D 모형: 지금 그대로(코드로 그린 가구) | 모형 파일
@@ -2827,7 +2886,7 @@
         if (d.ai) setAI(d.ai);
         PEOPLE = d.people || {};
         MODELS = d.models === 'real' ? 'real' : 'basic'; loadReal();
-        if (d.banner) { BANNER = d.banner; if (el('l3d-out').classList.contains('on')) el('l3d-out-banner').value = BANNER.url || ''; }
+        if (d.banner) { BANNER = d.banner; if (el('l3d-out').classList.contains('on')) openOutside(); }
         if (d.outside) OUTSIDE = Object.assign({ time: 'auto', season: 'auto', weather: 'clear' }, d.outside);
         floors = makeFloors(libs);
         floors.forEach(function (f, i) {

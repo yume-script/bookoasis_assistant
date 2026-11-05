@@ -22,7 +22,7 @@ from urllib.request import Request, urlopen
 
 from . import bookoasis_db, config
 
-VERSION = "2.23.0"
+VERSION = "2.24.0"
 CACHE_SEC = 300
 COVER_WIDTH = 200
 _DATA = {"at": 0.0, "v": None}
@@ -178,9 +178,57 @@ def save_banner(url):
     return url
 
 
+def save_banner_library(lib_key, sec):
+    """현수막을 보관함 표지 무작위로 (lib_key '세션:보관함번호', 비우면 끔), sec초마다 바꿈"""
+    lib_key = str(lib_key or "").strip()
+    if lib_key and not re.match(r"^[A-Za-z0-9_]+:\d+$", lib_key):
+        raise ValueError("보관함을 골라 주세요.")
+    try:
+        sec = max(5, min(3600, int(sec or 30)))
+    except (TypeError, ValueError):
+        sec = 30
+    data_ = dict(load_settings(), banner_lib=lib_key, banner_sec=sec)
+    os.makedirs(config.data_dir(), exist_ok=True)
+    tmp = _settings_path() + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data_, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, _settings_path())
+
+
 def banner_info():
-    url = load_settings().get("banner") or ""
-    return {"url": url, "v": hashlib.md5(url.encode("utf-8")).hexdigest()[:10] if url else ""}
+    st = load_settings()
+    url = st.get("banner") or ""
+    lib_key = st.get("banner_lib") or ""
+    return {"url": url, "v": hashlib.md5(url.encode("utf-8")).hexdigest()[:10] if url else "",
+            "lib": lib_key, "sec": int(st.get("banner_sec") or 30),
+            "mode": "library" if lib_key else ("url" if url else "")}
+
+
+_PICK = {}   # 보관함 → (읽은 시각, 작품 목록)
+
+
+def banner_pick():
+    """현수막에 띄울 무작위 작품 {key, title, lib}: 설정한 보관함의 최근 작품 중 하나 (목록은 5분 캐시)"""
+    import random
+    lib_key = load_settings().get("banner_lib") or ""
+    m = re.match(r"^([A-Za-z0-9_]+):(\d+)$", lib_key)
+    if not m or m.group(1) not in config.db_types():
+        raise ValueError("현수막 보관함이 설정돼 있지 않습니다.")
+    db_type, lib_id = m.group(1), int(m.group(2))
+    at, series, name = _PICK.get(lib_key, (0, None, ""))
+    if series is None or time.time() - at > CACHE_SEC:
+        gw = bookoasis_db.gateway(db_type)
+        series = [x for x in _series(gw, lib_id, per_library()) if x.get("last")]
+        try:
+            row = gw.fetch_all("SELECT name FROM libraries WHERE id = %s", (lib_id,))
+            name = (row[0].get("name") if row else "") or ""
+        except Exception:  # noqa: BLE001
+            name = ""
+        _PICK[lib_key] = (time.time(), series, name)
+    if not series:
+        raise ValueError("그 보관함에 작품이 없습니다.")
+    s = random.choice(series)
+    return {"key": "%s:%s" % (db_type, s["last"]), "title": s["title"], "count": s.get("count"), "lib": lib_key, "lib_name": name, "db": db_type}
 
 
 def banner_image(force=False):
