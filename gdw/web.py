@@ -346,7 +346,7 @@ class Handler(BaseHTTPRequestHandler):
                     d = dict(d, libraries=[x for x in d.get("libraries", []) if x.get("db_type") != "adult"])
                 ai = lib3d_ai.flags()
                 me = {"username": user["username"], "role": auth.role_of(user), "adult": adult} if user else None
-                staff_on = lib3d_ai.configured() and bool(lib3d_agents.agents())
+                staff_on = lib3d_ai.configured() and bool(lib3d_agents.agents())   # 직원이든 손님이든 하나라도 있으면
                 return self._send(200, dict(d, ai=ai, me=me, staff_on=staff_on,
                                             people=lib3d.load_settings().get("people") or {},
                                             outside=lib3d.load_settings().get("outside") or {},

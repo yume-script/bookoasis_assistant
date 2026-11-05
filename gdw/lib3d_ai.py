@@ -194,8 +194,8 @@ def _spend():
 
 
 def _create(**kw):
-    _spend()
     """모델이 받으면 거절 시 다른 모델로 이어 받기(fallbacks="default")를 켠다"""
+    _spend()
     client = _client()   # 패키지가 없으면 여기서 안내 문구로 멈춘다
     import anthropic
     m = model()
@@ -868,12 +868,13 @@ def ask(question, history=None, system=None, extra=None, allow=None, check=None,
         table = [row for row in table if allow(row[0], row[3], row[2])]
     if found is None:   # 찾은 책 목록 (월드 도구가 같은 목록을 보도록 넘겨받을 수 있다)
         found = []
+    prev = (getattr(_CTX, "system", None), getattr(_CTX, "check", None))   # 도구 안에서 다시 ask를 부를 수 있다 (손님 → 직원)
     _CTX.system = system or _ASK_SYSTEM
     _CTX.check = check
     try:
         out = (_ask_anthropic if provider() == "anthropic" else _ask_openai)(question, history, table, found)
     finally:
-        _CTX.system, _CTX.check = None, None
+        _CTX.system, _CTX.check = prev
     if found:
         out["books"] = found
     if warns:
