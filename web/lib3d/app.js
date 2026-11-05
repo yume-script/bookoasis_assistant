@@ -1052,6 +1052,7 @@
     people.forEach(function (q) { floorGroup.remove(q.g); disposeGroup(q.g); });
     parent = floorGroup; spawnPeople(floors[cur], cur + 1); parent = scene; dimEnv(floorGroup);
     if (remotes) Object.keys(remotes).forEach(dropRemote);   // 함께 보는 사람도 새 모형으로 다시
+    if (staffNPC) dropStaff();
   }
   // three.js 예제의 Collada 모형: 걷는 스톰트루퍼(뼈대·동작 포함)와 받침대 위 엘프 피규어(정지 모형)
   var COLLADA_BASE = 'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r175/examples/models/collada/';
@@ -1945,7 +1946,7 @@
       else if (HUMAN.elf) place(elfStatue(), 4 + i * 1.6, L.front - 8.5, -0.3);
     }
     // 안내 데스크 직원
-    var staffs = cnt('staff', 1);
+    var staffs = cnt('staff', STAFF_ON ? 0 : 1);   // AI 직원이 있으면 사서가 안내 데스크를 맡는다
     for (i = 0; i < staffs; i++) {
       var staff = makePerson(seed * 13 + 7 + i * 29);
       staff.kind = 'staff'; place(staff, L.w / 2 - 5.5 - i * 1.1, L.front - 6.35, 0);
@@ -2489,7 +2490,7 @@
   // ── AI: 설정 / 질문하기 / 손님 대화 ──
   function setAI(a) {
     AI = { chat: !!a.chat, ask: !!a.ask, chat_sec: a.chat_sec || 60 };
-    chatIn.placeholder = AI.ask && ME && ME.role !== 'viewer' ? '채팅 (Enter) · @안내 질문 → 안내 데스크가 답함' : '채팅 (Enter로 보내기)';
+    chatIn.placeholder = AI.ask ? '채팅 (Enter) · @사서 / @도슨트 + 할 말 → AI 직원이 답하고 움직여요' : '채팅 (Enter로 보내기)';
   }
   function postJSON(url, body) {
     return fetch(url, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
@@ -2519,9 +2520,11 @@
       el('l3d-ai-model').value = d.model; el('l3d-ai-chat').checked = d.chat; el('l3d-ai-sec').value = d.chat_sec;
       el('l3d-ai-ask').checked = d.ask; el('l3d-ai-mcp').value = d.mcp_command || '';
       el('l3d-ai-builtin').checked = d.builtin; el('l3d-ai-servers').value = d.mcp_servers || '';
+      el('l3d-ai-daily').value = d.daily;
+      el('l3d-ai-budget').textContent = d.budget ? '오늘 ' + d.budget.used + ' / ' + (d.budget.limit || '무제한') + '회 썼습니다.' : '';
       aiProvider();
       var ids = { LIB3D_AI_PROVIDER: 'l3d-ai-provider', LIB3D_AI_BASE_URL: 'l3d-ai-base', LIB3D_AI_API_KEY: 'l3d-ai-key', LIB3D_AI_MODEL: 'l3d-ai-model', LIB3D_AI_CHAT: 'l3d-ai-chat', LIB3D_AI_CHAT_SEC: 'l3d-ai-sec',
-                  LIB3D_AI_ASK: 'l3d-ai-ask', LIB3D_MCP_COMMAND: 'l3d-ai-mcp', LIB3D_MCP_SERVERS: 'l3d-ai-servers', LIB3D_AI_BUILTIN: 'l3d-ai-builtin' };
+                  LIB3D_AI_ASK: 'l3d-ai-ask', LIB3D_MCP_COMMAND: 'l3d-ai-mcp', LIB3D_MCP_SERVERS: 'l3d-ai-servers', LIB3D_AI_BUILTIN: 'l3d-ai-builtin', LIB3D_AI_DAILY: 'l3d-ai-daily' };
       Object.keys(ids).forEach(function (k) { el(ids[k]).disabled = (d.fixed || []).indexOf(k) >= 0; });
       el('l3d-ai-msg').textContent = (d.fixed || []).length ? '환경변수로 정해진 항목은 바꿀 수 없습니다: ' + d.fixed.join(', ') : '';
     }).catch(function (e) { el('l3d-ai-msg').textContent = e.message; });
@@ -2531,7 +2534,7 @@
   el('l3d-ai-save').addEventListener('click', function () {
     var body = { provider: el('l3d-ai-provider').value, base_url: el('l3d-ai-base').value, model: el('l3d-ai-model').value, chat: el('l3d-ai-chat').checked, chat_sec: +el('l3d-ai-sec').value || 60,
                  ask: el('l3d-ai-ask').checked, mcp_command: el('l3d-ai-mcp').value,
-                 builtin: el('l3d-ai-builtin').checked, mcp_servers: el('l3d-ai-servers').value };
+                 builtin: el('l3d-ai-builtin').checked, mcp_servers: el('l3d-ai-servers').value, daily: el('l3d-ai-daily').value };
     if (el('l3d-ai-key').value) body.api_key = el('l3d-ai-key').value;
     if (el('l3d-ai-clear').checked) body.clear_key = true;
     el('l3d-ai-msg').textContent = '저장 중...';
@@ -2699,10 +2702,95 @@
       else { el('l3d-mdl-msg').textContent = '저장했습니다.'; rebuildForModels(); }
     }).catch(function (e) { el('l3d-mdl-msg').textContent = e.message; });
   });
+
+  // AI 직원 설정 (관리자): 직업·목표·성격·부르는 말·자율 업무, 기억과 활동 기록 보기
+  var staffBox = el('l3d-staff'), STAFF_CFG = null;
+  function staffInput(tag, val, attrs) {
+    var e = document.createElement(tag); if (tag === 'textarea') e.rows = 2;
+    Object.keys(attrs || {}).forEach(function (k) { e.setAttribute(k, attrs[k]); });
+    if (attrs && attrs.type === 'checkbox') e.checked = !!val; else e.value = val == null ? '' : val;
+    return e;
+  }
+  function labeled(text, input) { var l = document.createElement('label'); l.className = input.type === 'checkbox' ? 'c' : 'f'; if (input.type === 'checkbox') { l.appendChild(input); l.appendChild(document.createTextNode(' ' + text)); } else { l.appendChild(document.createTextNode(text)); l.appendChild(input); } return l; }
+  function drawStaff(d) {
+    STAFF_CFG = d.config;
+    var body = el('l3d-staff-body'); body.textContent = '';
+    var info = document.createElement('p'); info.className = 'sub';
+    info.textContent = (d.configured ? '' : '⚠ AI 설정(연결 방식·주소·모델)을 먼저 해야 직원이 일합니다. ') +
+      '오늘 AI 호출 ' + d.budget.used + ' / ' + (d.budget.limit || '무제한') + '회 (AI 설정에서 한도 변경).';
+    body.appendChild(info);
+    var auto = staffInput('input', d.config.autonomous, { type: 'checkbox', 'data-k': 'autonomous' });
+    body.appendChild(labeled('자율 업무 - 이용자가 없어도 정해진 주기로 혼자 일하기', auto));
+    d.config.agents.forEach(function (a) {
+      var fs = document.createElement('fieldset'); fs.dataset.agent = a.id;
+      var lg = document.createElement('legend'); lg.textContent = a.name + ' · ' + a.job; fs.appendChild(lg);
+      fs.appendChild(labeled('일하기', staffInput('input', a.enabled !== false, { type: 'checkbox', 'data-f': 'enabled' })));
+      [['name', '이름'], ['job', '직업'], ['goal', '목표'], ['personality', '성격']].forEach(function (f) {
+        fs.appendChild(labeled(f[1], staffInput(f[0] === 'goal' || f[0] === 'personality' ? 'textarea' : 'input', a[f[0]], { type: 'text', 'data-f': f[0] })));
+      });
+      fs.appendChild(labeled('부르는 말 (쉼표로)', staffInput('input', (a.call || []).join(', '), { type: 'text', 'data-f': 'call' })));
+      (a.tasks || []).forEach(function (t) {
+        var row = document.createElement('div'); row.className = 'task'; row.dataset.task = t.id;
+        row.appendChild(staffInput('input', t.enabled !== false, { type: 'checkbox', 'data-t': 'enabled', title: '이 업무 켜기' }));
+        var nm = document.createElement('b'); var lr = d.last_run[a.id + '/' + t.id];
+        nm.textContent = t.title + (lr ? ' (마지막 ' + new Date(lr * 1000).toLocaleString() + ')' : ' (아직 안 함)'); row.appendChild(nm);
+        row.appendChild(staffInput('input', t.every_min, { type: 'number', min: 10, max: 10080, 'data-t': 'every_min', title: '주기(분)' }));
+        var run = document.createElement('button'); run.type = 'button'; run.className = 'l3d-btn'; run.textContent = '지금 실행';
+        run.addEventListener('click', function () {
+          el('l3d-staff-msg').textContent = a.name + ' - ' + t.title + ' 시작했습니다. 끝나면 활동 기록에 남습니다.';
+          postJSON('api/lib3d/agents', { action: 'run', agent: a.id, task: t.id }).catch(function (e) { el('l3d-staff-msg').textContent = e.message; });
+        });
+        row.appendChild(run);
+        row.appendChild(staffInput('textarea', t.prompt, { 'data-t': 'prompt' }));
+        fs.appendChild(row);
+      });
+      var notes = (d.notes[a.id] || []).slice(-6);
+      if (notes.length) { var n = document.createElement('div'); n.className = 'notes'; n.textContent = '기억: ' + notes.join(' / '); fs.appendChild(n); }
+      body.appendChild(fs);
+    });
+    var lg2 = document.createElement('h4'); lg2.textContent = '활동 기록'; body.appendChild(lg2);
+    var logs = document.createElement('div'); logs.className = 'logs';
+    (d.log || []).slice(0, 15).forEach(function (e) {
+      var r = document.createElement('div');
+      r.textContent = new Date(e.t * 1000).toLocaleString() + ' · ' + e.name + ' · ' + e.title + '\n' + e.text;
+      logs.appendChild(r);
+    });
+    if (!(d.log || []).length) logs.textContent = '아직 기록이 없습니다.';
+    body.appendChild(logs);
+  }
+  function openStaff() {
+    [setBox, aiBox, pplBox, outBox, mdlBox].forEach(function (b) { b.classList.remove('on'); }); staffBox.classList.add('on');
+    el('l3d-staff-msg').textContent = '';
+    api('api/lib3d/agents').then(drawStaff).catch(function (e) { el('l3d-staff-body').textContent = e.message; });
+  }
+  el('l3d-set-staff').addEventListener('click', openStaff);
+  el('l3d-staff-close').addEventListener('click', function () { staffBox.classList.remove('on'); });
+  el('l3d-staff-reset').addEventListener('click', function () {
+    if (!window.confirm('AI 직원 설정을 기본값으로 되돌릴까요? (기억·활동 기록은 남습니다)')) return;
+    postJSON('api/lib3d/agents', { action: 'reset' }).then(function (d) { drawStaff(d); el('l3d-staff-msg').textContent = '기본값으로 되돌렸습니다.'; })
+      .catch(function (e) { el('l3d-staff-msg').textContent = e.message; });
+  });
+  el('l3d-staff-save').addEventListener('click', function () {
+    var body = { action: 'save', autonomous: staffBox.querySelector('[data-k=autonomous]').checked, agents: [] };
+    Array.prototype.forEach.call(staffBox.querySelectorAll('fieldset[data-agent]'), function (fs) {
+      var a = { id: fs.dataset.agent, tasks: [] };
+      Array.prototype.forEach.call(fs.querySelectorAll('[data-f]'), function (i) { a[i.dataset.f] = i.type === 'checkbox' ? i.checked : i.value; });
+      Array.prototype.forEach.call(fs.querySelectorAll('.task'), function (row) {
+        var t = { id: row.dataset.task };
+        Array.prototype.forEach.call(row.querySelectorAll('[data-t]'), function (i) { t[i.dataset.t] = i.type === 'checkbox' ? i.checked : i.value; });
+        a.tasks.push(t);
+      });
+      body.agents.push(a);
+    });
+    el('l3d-staff-msg').textContent = '저장 중...';
+    postJSON('api/lib3d/agents', body).then(function (d) { drawStaff(d); el('l3d-staff-msg').textContent = '저장했습니다.'; })
+      .catch(function (e) { el('l3d-staff-msg').textContent = e.message; });
+  });
   function hashNav() {
     if (ME && ME.role === 'viewer') return;
     if (location.hash === '#outside') openOutside();
     if (location.hash === '#models') openModels();
+    if (location.hash === '#staff') openStaff();
     if (location.hash === '#settings') openSettings();
     if (location.hash === '#ai') openAI();
     if (location.hash === '#people') { if (floors.length) openPeople(); else pendingPeople = true; }
@@ -2858,6 +2946,7 @@
           return;
         }
         applyMe(d.me);
+        STAFF_ON = !!d.staff_on;
         if (d.ai) setAI(d.ai);
         PEOPLE = d.people || {};
         MODELS = d.models === 'real' ? 'real' : 'basic'; loadReal();
@@ -2884,7 +2973,7 @@
   function ukey(k) { return ME ? k + '@' + ME.username : k; }   // 같은 브라우저를 여러 사람이 써도 기억을 따로
   var remotes = {};                 // 사용자 → 사람 모형 {g, mixer, acts, tag, tx, tz, tyaw, msg, msgUntil}
   var chatSince = 0, presBusy = false, onlineList = [];
-  function nameTag(name, msg) {   // 머리 위 이름표 (말하면 말풍선 위에 한 줄)
+  function nameTag(name, msg, color) {   // 머리 위 이름표 (말하면 말풍선 위에 한 줄)
     var c = document.createElement('canvas'); c.width = 512; c.height = msg ? 220 : 90;
     var g = c.getContext('2d');
     function pill(y, h, bg, fg, text, size, bold) {
@@ -2898,7 +2987,7 @@
       var line = msg.length > 26 ? msg.slice(0, 25) + '…' : msg;
       pill(10, 100, 'rgba(255,255,255,0.96)', '#1d1e20', line, 40, false);
     }
-    pill(c.height - 78, 66, 'rgba(20,21,23,0.82)', '#ffd166', name, 36, true);
+    pill(c.height - 78, 66, 'rgba(20,21,23,0.82)', color || '#ffd166', name, 36, true);
     var tex = new T.CanvasTexture(c); tex.encoding = T.sRGBEncoding;
     var sp = new T.Sprite(new T.SpriteMaterial({ map: tex, depthTest: false, transparent: true }));
     sp.scale.set(1.6, 1.6 * c.height / 512, 1); sp.renderOrder = 10;
@@ -3012,6 +3101,7 @@
       .then(function (d) {
         if (!d.success) return;
         syncRemotes(d.others || []);
+        if (STAFF_ON) syncStaff(d.staff);
         onlineList = d.online || []; onlineChip();
         (d.chat || []).forEach(function (m) { if (m.id > chatSince) chatLine(m); });
         chatSince = Math.max(chatSince, d.chat_id || 0);
@@ -3034,7 +3124,151 @@
     ME = me || null;
     var viewer = ME && ME.role === 'viewer';
     ['l3d-set-btn'].forEach(function (id) { el(id).hidden = viewer; });
-    if (viewer) ['l3d-set', 'l3d-ai', 'l3d-ppl', 'l3d-out', 'l3d-mdl'].forEach(function (id) { el(id).classList.remove('on'); });
+    if (viewer) ['l3d-set', 'l3d-ai', 'l3d-ppl', 'l3d-out', 'l3d-mdl', 'l3d-staff'].forEach(function (id) { el(id).classList.remove('on'); });
+  }
+
+  // ── AI 직원 (사서·도슨트 …): 서버의 상태(가려는 곳·말·가리키는 책)대로 걷고 말하고 가리킨다 + 로비 안내판 ──
+  var staffNPC = {}, staffData = [], boardMesh = null, boardSig = '', pointer = null, STAFF_ON = false;
+  function placePos(name) {
+    var L = layout; if (!L) return null;
+    var lx = Math.max(L.w / 2 - 6.5, 8);
+    if (name === 'desk') return [L.w / 2 - 5.5, L.front - 6.35, 0];
+    if (name === 'lobby') return [-3.5, L.front - 9, 0.4];
+    if (name === 'entrance') return [1.6, L.front - 2.4, Math.PI];
+    if (name === 'lounge') return [-lx + 2.4, L.front - 11.2, 0.6];
+    if (name === 'elevator') return [-L.w / 2 + 2.2, L.front - 3, -Math.PI / 2];
+    var b = (floors[cur] && floors[cur].booths || []).filter(function (x) { return x.name === name; })[0];
+    if (b) return [b.x + 2.6, b.z + BOOTH_D / 2 + 1.6, Math.PI];
+    return null;
+  }
+  function bookByKey(key) { return books.filter(function (b) { return b.key === key && b.mesh && b.kind !== 'banner'; })[0]; }
+  function makeStaff(s) {
+    var p = makePerson(5000 + s.look * 37);
+    p.kind = 'agent'; p.walkW = 0; p.staffId = s.id;
+    p.tag = null; setStaffTag(p, s, '');
+    var home = placePos(s.post) || placePos('lobby');
+    p.g.position.set(home[0], 0, home[1]); p.g.rotation.y = home[2];
+    p.tx = home[0]; p.tz = home[1]; p.face = home[2];
+    floorGroup.add(p.g); dimEnv(p.g);
+    if (p.mixer) setLook(p, 'calm');
+    return p;
+  }
+  function setStaffTag(p, s, msg) {
+    if (p.tag) { p.g.remove(p.tag); p.tag.material.map.dispose(); p.tag.material.dispose(); }
+    p.tag = nameTag(s.name + ' · ' + s.job, msg, '#7ee0c3');
+    p.tag.position.y = 2.15 + (msg ? 0.2 : 0); p.g.add(p.tag);
+  }
+  function syncStaff(d) {
+    if (!d || !floorGroup || !layout) return;
+    staffData = d.agents || [];
+    staffData.forEach(function (s) {
+      var p = staffNPC[s.id];
+      if (p && p.g.parent !== floorGroup) { disposeGroup(p.g); p = null; }
+      if (!p) p = staffNPC[s.id] = makeStaff(s);
+      var pos = null, face = null;
+      if (s.target === 'book' && s.book) {
+        var bk = bookByKey(s.book);
+        if (bk) {   // 그 책이 있는 구역 앞에 서서 책 쪽을 본다
+          var q0 = placePos(bk.lib);
+          bk.mesh.getWorldPosition(tmpV);
+          pos = q0 ? [q0[0], q0[1]] : [tmpV.x, tmpV.z + 1.4];
+          face = Math.atan2(tmpV.x - pos[0], tmpV.z - pos[1]);
+          showPointer(bk, s.book);
+        }
+      } else if (s.target) {
+        var q = placePos(s.target); if (q) { pos = [q[0], q[1]]; face = q[2]; }
+      }
+      if (!pos) { var h = placePos(s.post) || placePos('lobby'); pos = [h[0], h[1]]; face = h[2]; }
+      p.tx = pos[0]; p.tz = pos[1]; p.face = face;
+      var say = s.say || '';
+      if (say !== (p.lastSay || '')) { p.lastSay = say; setStaffTag(p, s, say); }
+    });
+    if (pointer && !staffData.some(function (s) { return s.target === 'book' && s.book === pointer.key; })) hidePointer();
+    drawBoard(d.board || {}, d.log || []);
+  }
+  function updateStaff(p, dt, now) {
+    var dx = p.tx - p.g.position.x, dz = p.tz - p.g.position.z, d = Math.hypot(dx, dz), moving = d > 0.15;
+    if (d > 40) { p.g.position.x = p.tx; p.g.position.z = p.tz; moving = false; }
+    if (moving) {
+      var step = Math.min(d, (d > 8 ? 2.4 : 1.35) * dt * Math.max(0.2, p.walkW));   // 멀면 바삐 걷는다
+      p.g.position.x += dx / d * step; p.g.position.z += dz / d * step;
+      var want = Math.atan2(dx, dz), cy = p.g.rotation.y;
+      p.g.rotation.y = cy + Math.atan2(Math.sin(want - cy), Math.cos(want - cy)) * Math.min(1, dt * 6);
+    } else if (p.face != null) {
+      var cy2 = p.g.rotation.y;
+      p.g.rotation.y = cy2 + Math.atan2(Math.sin(p.face - cy2), Math.cos(p.face - cy2)) * Math.min(1, dt * 3);
+    }
+    p.walkW += ((moving ? 1 : 0) - p.walkW) * Math.min(1, dt * 4);
+    if (p.mixer) {
+      if (p.acts.walk) { p.acts.walk.setEffectiveWeight(p.walkW); p.acts.walk.timeScale = Math.hypot(p.tx - p.g.position.x, p.tz - p.g.position.z) > 8 ? 1.6 : 1.05; }
+      if (p.acts.idle) p.acts.idle.setEffectiveWeight(1 - p.walkW);
+      p.mixer.update(dt);
+      applyLook(p, now);
+    }
+  }
+  function showPointer(bk, key) {   // 가리키는 책 위에 통통 튀는 화살표
+    if (pointer && pointer.key === key) return;
+    hidePointer();
+    var cone = new T.Mesh(new T.ConeGeometry(0.09, 0.22, 16), new T.MeshBasicMaterial({ color: 0xffb703, toneMapped: false }));
+    cone.rotation.x = Math.PI;
+    bk.mesh.getWorldPosition(tmpV);
+    cone.position.set(tmpV.x, tmpV.y + 0.42, tmpV.z);
+    floorGroup.add(cone);
+    pointer = { key: key, mesh: cone, y: tmpV.y + 0.42 };
+  }
+  function hidePointer() {
+    if (pointer) { if (pointer.mesh.parent) pointer.mesh.parent.remove(pointer.mesh); pointer.mesh.geometry.dispose(); pointer.mesh.material.dispose(); }
+    pointer = null;
+  }
+  function drawBoard(board, logs) {   // 로비 안내판: 직원이 건 내용 + 최근 활동
+    if (!floorGroup || !layout) return;
+    var sig = JSON.stringify([board, logs.map(function (e) { return e.t; })]);
+    if (boardMesh && boardMesh.parent === floorGroup && sig === boardSig) return;
+    boardSig = sig;
+    if (boardMesh) { if (boardMesh.parent) boardMesh.parent.remove(boardMesh); disposeGroup(boardMesh); }
+    var tex = canvasTex(1024, 1280, function (g, w, h) {
+      g.fillStyle = '#1d2a26'; g.fillRect(0, 0, w, h);
+      g.fillStyle = '#7ee0c3'; g.font = '700 30px ' + FONT; g.textBaseline = 'top';
+      g.fillText('AI 직원 소식판', 48, 40);
+      g.fillStyle = '#f5f2ec'; g.font = '700 54px ' + FONT;
+      g.fillText(board.title || '오늘의 도서관', 48, 90, w - 96);
+      g.font = '400 36px ' + FONT;
+      var y = 172;
+      (board.lines && board.lines.length ? board.lines : ['직원들이 일한 내용이 여기에 걸립니다.']).slice(0, 8).forEach(function (ln) {
+        wrapText(g, ln, 48, y, w - 96, 46, 2).forEach(function () { y += 46; });
+      });
+      if (board.by) { g.fillStyle = '#9fb8b0'; g.font = '400 26px ' + FONT; g.fillText('— ' + board.by, 48, y + 6); y += 40; }
+      y = Math.max(y + 30, 620);
+      g.fillStyle = '#7ee0c3'; g.font = '700 32px ' + FONT; g.fillText('최근 활동', 48, y); y += 52;
+      logs.slice(0, 5).forEach(function (e) {
+        var tm = new Date(e.t * 1000), hh = ('0' + tm.getHours()).slice(-2) + ':' + ('0' + tm.getMinutes()).slice(-2);
+        g.fillStyle = '#ffd166'; g.font = '700 28px ' + FONT; g.fillText(hh + '  ' + e.name + ' · ' + e.title, 48, y, w - 96); y += 38;
+        g.fillStyle = '#d8d2c6'; g.font = '400 26px ' + FONT;
+        wrapText(g, e.text || '', 48, y, w - 96, 34, 2).forEach(function () { y += 34; });
+        y += 14;
+      });
+    });
+    var g = new T.Group(); g.position.set(5.5, 0, layout.front - 8.2);
+    var face = new T.Mesh(new T.PlaneGeometry(1.6, 2.0), new T.MeshBasicMaterial({ map: tex, toneMapped: false }));
+    face.position.set(0, 1.55, 0.03); g.add(face);
+    var back = new T.Mesh(unitBox, M.black); back.scale.set(1.7, 2.1, 0.05); back.position.set(0, 1.55, 0); g.add(back);
+    var leg = new T.Mesh(unitBox, M.black); leg.scale.set(0.08, 0.55, 0.08); leg.position.set(0, 0.27, 0); g.add(leg);
+    var foot = new T.Mesh(unitBox, M.black); foot.scale.set(0.7, 0.04, 0.4); foot.position.set(0, 0.02, 0); g.add(foot);
+    floorGroup.add(g); boardMesh = g;
+  }
+  function wrapText(g, text, x, y, maxW, lh, maxLines) {   // 글자 단위로 줄바꿈해 그리고 줄 목록을 돌려준다
+    var lines = [], cur0 = '';
+    String(text).split('').forEach(function (ch) {
+      if (g.measureText(cur0 + ch).width > maxW) { lines.push(cur0); cur0 = ch; } else cur0 += ch;
+    });
+    if (cur0) lines.push(cur0);
+    if (lines.length > maxLines) { lines = lines.slice(0, maxLines); lines[maxLines - 1] = lines[maxLines - 1].slice(0, -1) + '…'; }
+    lines.forEach(function (ln, i) { g.fillText(ln, x, y + i * lh); });
+    return lines;
+  }
+  function dropStaff() {
+    Object.keys(staffNPC).forEach(function (k) { var p = staffNPC[k]; if (p.g.parent) p.g.parent.remove(p.g); disposeGroup(p.g); });
+    staffNPC = {}; hidePointer(); boardMesh = null; boardSig = '';
   }
 
   // ── 그리기 ──
@@ -3043,7 +3277,9 @@
     var dt = Math.min(0.05, (now - last) / 1000);
     last = now;
     step(dt);
-    if (!reading) { updatePeople(dt, now); updateWeather(dt, now); updateCars(dt); for (var rn in remotes) updateRemote(remotes[rn], dt); }
+    if (!reading) { updatePeople(dt, now); updateWeather(dt, now); updateCars(dt); for (var rn in remotes) updateRemote(remotes[rn], dt);
+      for (var sn in staffNPC) updateStaff(staffNPC[sn], dt, now);
+      if (pointer) pointer.mesh.position.y = pointer.y + Math.abs(Math.sin(now / 300)) * 0.12; }
     acc += dt;
     if (acc > 0.3) { acc = 0; loadNear(); where(); if (now - posSavedAt > 2000) { posSavedAt = now; savePos(); } }
     if (!reading) renderer.render(scene, camera);

@@ -50,7 +50,7 @@ TOOL_RESULT_MAX = 40000   # 도구 결과가 이보다 길면 잘랐다고 표�
 ASK_MAX_STEPS = 10
 
 KEYS = ("LIB3D_AI_PROVIDER", "LIB3D_AI_BASE_URL", "LIB3D_AI_API_KEY", "LIB3D_AI_MODEL", "LIB3D_AI_CHAT", "LIB3D_AI_CHAT_SEC", "LIB3D_AI_ASK",
-        "LIB3D_MCP_COMMAND", "LIB3D_MCP_SERVERS", "LIB3D_AI_BUILTIN")
+        "LIB3D_MCP_COMMAND", "LIB3D_MCP_SERVERS", "LIB3D_AI_BUILTIN", "LIB3D_AI_DAILY")
 
 
 # ── 설정 ──
@@ -75,6 +75,13 @@ def sdk_ok():
         return False
 
 
+def configured():
+    """LLM을 부를 준비가 됐는지 (자율 업무가 확인)"""
+    if provider() == "anthropic":
+        return sdk_ok()
+    return bool(config.env("LIB3D_AI_BASE_URL") and model())
+
+
 def flags():
     """화면에 알려 줄 켜짐 상태 (키·명령은 보내지 않는다)"""
     return {"chat": config.env_bool("LIB3D_AI_CHAT", False), "ask": config.env_bool("LIB3D_AI_ASK", False),
@@ -85,7 +92,7 @@ def settings():
     return dict(flags(), provider=provider(), base_url=config.env("LIB3D_AI_BASE_URL"), model=model(),
                 api_key_set=bool(config.env("LIB3D_AI_API_KEY") or (provider() == "anthropic" and config.env("ANTHROPIC_API_KEY"))),
                 mcp_command=config.env("LIB3D_MCP_COMMAND"), mcp_servers=config.env("LIB3D_MCP_SERVERS"),
-                builtin=builtin_on(), sdk=sdk_ok(), fixed=config.overridden(list(KEYS)))
+                builtin=builtin_on(), daily=daily_limit(), budget=budget(), sdk=sdk_ok(), fixed=config.overridden(list(KEYS)))
 
 
 def builtin_on():
@@ -118,6 +125,11 @@ def save(values):
             if ln.strip() and not ln.strip().startswith("#") and "=" not in ln:
                 raise ValueError("추가 MCP는 한 줄에 '이름 = 실행 명령 또는 http(s) 주소' 형식으로 적어 주세요: " + ln.strip())
         out["LIB3D_MCP_SERVERS"] = text
+    if "daily" in values:
+        try:
+            out["LIB3D_AI_DAILY"] = str(max(0, min(100000, int(values["daily"]))))
+        except (TypeError, ValueError):
+            raise ValueError("하루 호출 한도는 숫자로 적어 주세요.")
     if "builtin" in values:
         out["LIB3D_AI_BUILTIN"] = "true" if values["builtin"] else "false"
     if values.get("api_key"):
@@ -144,7 +156,45 @@ def _client():
     return anthropic.Anthropic(api_key=key) if key else anthropic.Anthropic()
 
 
+# ── 하루 호출 한도 (3D 서재의 모든 LLM 호출: 손님 대화·안내 데스크·AI 직원) ──
+_BUDGET_LOCK = threading.Lock()
+
+
+def daily_limit():
+    return max(0, config.env_int("LIB3D_AI_DAILY", 1000))
+
+
+def _budget_path():
+    return config.data_dir() + "/lib3d_ai_budget.json"
+
+
+def budget():
+    today = time.strftime("%Y-%m-%d")
+    try:
+        with open(_budget_path(), encoding="utf-8") as f:
+            b = json.load(f)
+    except (OSError, ValueError):
+        b = {}
+    used = int(b.get("used") or 0) if b.get("date") == today else 0
+    return {"date": today, "used": used, "limit": daily_limit()}
+
+
+def _spend():
+    """호출 한 번을 센다. 오늘 한도를 넘으면 RuntimeError"""
+    with _BUDGET_LOCK:
+        b = budget()
+        if b["limit"] and b["used"] >= b["limit"]:
+            raise RuntimeError("오늘 AI 호출 한도(%d회)를 다 썼습니다. 내일 다시 하거나 AI 설정에서 한도를 늘리세요." % b["limit"])
+        b["used"] += 1
+        try:
+            with open(_budget_path(), "w", encoding="utf-8") as f:
+                json.dump({"date": b["date"], "used": b["used"]}, f)
+        except OSError:
+            pass
+
+
 def _create(**kw):
+    _spend()
     """모델이 받으면 거절 시 다른 모델로 이어 받기(fallbacks="default")를 켠다"""
     client = _client()   # 패키지가 없으면 여기서 안내 문구로 멈춘다
     import anthropic
@@ -173,6 +223,7 @@ RETRY_CODES = (429, 500, 502, 503, 504, 529)
 
 def _oa_post(payload, timeout=180):
     """서버가 붐비거나(503) 한도에 걸리면(429) 잠깐 쉬었다가 두 번 더 시도한다"""
+    _spend()
     for attempt, wait in enumerate((2, 6, None)):
         try:
             return _oa_post_once(payload, timeout)
@@ -769,6 +820,10 @@ def _collect_books(found, name, args, text):
 
 
 def _run_tool(table, name, args, found=None):
+    check = getattr(_CTX, "check", None)
+    why = check(name, args if isinstance(args, dict) else {}) if check else None
+    if why:
+        return why, True
     text, is_err = _run_tool_raw(table, name, args)
     if not is_err:
         _collect_books(found, name, args, text)
@@ -796,21 +851,41 @@ _ASK_SYSTEM = (
     "- 책을 찾아 준 경우 화면이 찾은 책 목록과 링크를 답 아래에 따로 붙여 주므로, 답에서는 요약(몇 개·어느 서재·특징)만 말한다.")
 
 
-def ask(question, history=None):
-    """{"answer", "tools": [쓴 도구 이름…], "warnings": [연결 못 한 MCP]} - history는 [{"q", "a"}] (화면이 기억하는 지난 문답)"""
-    if not flags()["ask"]:
+def ask(question, history=None, system=None, extra=None, allow=None, check=None, need_flag=True, found=None):
+    """{"answer", "tools": [쓴 도구 이름…], "warnings": [연결 못 한 MCP]} - history는 [{"q", "a"}] (화면이 기억하는 지난 문답)
+    system: 지시문(없으면 안내 데스크), extra: 더 붙일 도구 연결(월드 도구 등), allow(shown, real, client) → 쓸 도구인지,
+    check(name, args) → 막을 이유(문자열) 또는 None"""
+    if need_flag and not flags()["ask"]:
         raise ValueError("질문하기가 꺼져 있습니다 (3D 서재 설정 > AI).")
-    question = str(question or "").strip()[:2000]
+    question = str(question or "").strip()[:4000]
     if not question:
         raise ValueError("질문을 적어 주세요.")
     table, warns = _tool_table()
-    found = []
-    out = (_ask_anthropic if provider() == "anthropic" else _ask_openai)(question, history, table, found)
+    for c in extra or []:
+        for t in c.list_tools():
+            table.append((t["name"], t, c, t["name"]))
+    if allow:
+        table = [row for row in table if allow(row[0], row[3], row[2])]
+    if found is None:   # 찾은 책 목록 (월드 도구가 같은 목록을 보도록 넘겨받을 수 있다)
+        found = []
+    _CTX.system = system or _ASK_SYSTEM
+    _CTX.check = check
+    try:
+        out = (_ask_anthropic if provider() == "anthropic" else _ask_openai)(question, history, table, found)
+    finally:
+        _CTX.system, _CTX.check = None, None
     if found:
         out["books"] = found
     if warns:
         out["warnings"] = warns
     return out
+
+
+_CTX = threading.local()
+
+
+def _sys():
+    return getattr(_CTX, "system", None) or _ASK_SYSTEM
 
 
 def _history(history):
@@ -827,7 +902,7 @@ def _ask_anthropic(question, history, table, found=None):
     messages = _history(history) + [{"role": "user", "content": question}]
     used = []
     for _ in range(ASK_MAX_STEPS):
-        kw = dict(max_tokens=16000, system=_ASK_SYSTEM, output_config={"effort": "medium"}, messages=messages)
+        kw = dict(max_tokens=16000, system=_sys(), output_config={"effort": "medium"}, messages=messages)
         if tools:
             kw["tools"] = tools
         resp = _create(**kw)
@@ -852,7 +927,7 @@ def _ask_openai(question, history, table, found=None):
     tools = [{"type": "function", "function": {
         "name": shown, "description": (t.get("description") or "")[:1024],
         "parameters": _oa_schema(t.get("inputSchema") or {"type": "object", "properties": {}})}} for shown, t, c, real in table]
-    messages = [{"role": "system", "content": _ASK_SYSTEM}] + _history(history) + [{"role": "user", "content": question}]
+    messages = [{"role": "system", "content": _sys()}] + _history(history) + [{"role": "user", "content": question}]
     used = []
     for _ in range(ASK_MAX_STEPS):
         payload = {"model": model(), "messages": messages, "max_tokens": 4000}

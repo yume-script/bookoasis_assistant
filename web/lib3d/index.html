@@ -66,6 +66,13 @@
   .l3d-ai .warn { color: #b3261e; }
   .l3d-ai .body { flex: 1; overflow: auto; }
   .l3d-ppl { width: min(560px, calc(100% - 24px)); }
+  .l3d-staff { width: min(620px, calc(100% - 24px)); }
+  .l3d-staff fieldset { border: 1px solid #e6e1d8; border-radius: 12px; padding: 8px 12px; margin: 0 0 10px; }
+  .l3d-staff legend { font-weight: 700; padding: 0 4px; }
+  .l3d-staff .task { display: grid; grid-template-columns: auto 1fr 80px auto; gap: 6px; align-items: center; font-size: 0.82rem; margin: 4px 0; }
+  .l3d-staff .task textarea { grid-column: 1 / -1; }
+  .l3d-staff .notes, .l3d-staff .logs { font-size: 0.76rem; opacity: 0.8; margin: 4px 0; white-space: pre-wrap; }
+  .l3d-staff .logs div { border-top: 1px dashed #e6e1d8; padding: 4px 0; }
   .l3d-ppl-t { border-collapse: collapse; width: 100%; font-size: 0.82rem; }
   .l3d-ppl-t th, .l3d-ppl-t td { padding: 4px 5px; text-align: left; border-bottom: 1px solid #eee8de; }
   .l3d-ppl-t th { font-weight: 700; white-space: nowrap; }
@@ -204,6 +211,7 @@
         <button type="button" class="l3d-btn" id="l3d-set-ppl">인물 수</button>
         <button type="button" class="l3d-btn" id="l3d-set-out">창밖 풍경</button>
         <button type="button" class="l3d-btn" id="l3d-set-mdl">3D 모형</button>
+        <button type="button" class="l3d-btn" id="l3d-set-staff">AI 직원</button>
       </div>
     </div>
     <div class="l3d-set l3d-ai" id="l3d-ai" role="dialog" aria-label="3D 서재 AI 설정">
@@ -224,10 +232,12 @@
         <datalist id="l3d-ai-models"></datalist>
         <label class="c"><input type="checkbox" id="l3d-ai-chat"> 손님 대화 (층마다 두 손님이 책 한 권을 두고 이야기)</label>
         <label class="f">대화 사이 최소 간격(초) <input type="number" id="l3d-ai-sec" min="15" max="3600" step="5"></label>
-        <label class="c"><input type="checkbox" id="l3d-ai-ask"> 안내 데스크 - 관리자가 채팅창에서 <code>@안내 질문</code>으로 부름 (서재·날씨·일반 질문, 답은 부른 사람에게만)</label>
+        <label class="c"><input type="checkbox" id="l3d-ai-ask"> AI 직원과 대화 - 채팅창에서 <code>@사서</code>·<code>@도슨트</code> + 할 말 (답은 부른 사람에게만, 직원의 말·행동은 모두에게)</label>
         <label class="f">BookOasis MCP 실행 명령
           <input type="text" id="l3d-ai-mcp" placeholder="docker exec -i bookoasis python3 tools/mcp_server.py"></label>
         <p class="sub">BookOasis가 같은 서버에 직접 설치돼 있으면 <code>python3 /BookOasis경로/tools/mcp_server.py</code>. 읽기 전용 도구만 씁니다.</p>
+        <label class="f">하루 AI 호출 한도 (손님 대화·AI 직원 모두 합쳐서, 0이면 무제한) <input type="number" id="l3d-ai-daily" min="0" max="100000" step="50"></label>
+        <p class="sub" id="l3d-ai-budget"></p>
         <label class="c"><input type="checkbox" id="l3d-ai-builtin"> 기본 도구 - 지금 시각·날씨(Open-Meteo)·웹 페이지 읽기</label>
         <label class="f"><span>추가 MCP 서버 - 한 줄에 <code>이름 = 실행 명령</code> 또는 <code>이름 = https://주소</code></span>
           <textarea id="l3d-ai-servers" rows="4" placeholder="fetch = uvx mcp-server-fetch&#10;time = uvx mcp-server-time --local-timezone=Asia/Seoul&#10;remote = https://example.com/mcp"></textarea></label>
@@ -288,6 +298,17 @@
       <div class="row">
         <button type="button" class="l3d-btn primary" id="l3d-mdl-save">저장</button>
         <button type="button" class="l3d-btn" id="l3d-mdl-close">닫기</button>
+      </div>
+    </div>
+    <div class="l3d-set l3d-ai l3d-staff" id="l3d-staff" role="dialog" aria-label="AI 직원">
+      <h3>AI 직원</h3>
+      <p class="sub">직원마다 직업·목표·성격을 정하고, 이용자가 없어도 정해진 주기로 혼자 하는 업무를 켭니다. 직원은 월드 행동(걷기·말하기·책 가리키기·안내판 바꾸기·기억하기)과 BookOasis 도구를 씁니다.</p>
+      <div class="body" id="l3d-staff-body">불러오는 중...</div>
+      <p class="sub" id="l3d-staff-msg"></p>
+      <div class="row">
+        <button type="button" class="l3d-btn primary" id="l3d-staff-save">저장</button>
+        <button type="button" class="l3d-btn" id="l3d-staff-reset">기본값으로</button>
+        <button type="button" class="l3d-btn" id="l3d-staff-close">닫기</button>
       </div>
     </div>
     <div class="l3d-bubble" id="l3d-bubble"></div>

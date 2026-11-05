@@ -28,7 +28,7 @@ import zipfile
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import lib3d, lib3d_ai, lib3d_presence, auth, config, mcp, service
+from . import lib3d, lib3d_agents, lib3d_ai, lib3d_presence, auth, config, mcp, service
 
 log = logging.getLogger("gdw.web")
 WEB_DIR = os.path.join(config.ROOT, "web")
@@ -46,7 +46,7 @@ OFF_PAGE = """<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta n
 MAX_BODY = 2 * 1024 * 1024
 # 관람자(role=viewer)가 쓸 수 있는 것: 3D 서재 보기·읽기·함께 보기와 자기 비밀번호·로그아웃
 VIEWER_GET = {"/library3d", "/library3d/", "/library3d/app.js", "/theme.css", "/shell.js", "/api/modules", "/api/auth/state"}
-VIEWER_LIB3D_ADMIN_ONLY = {"/api/lib3d/libraries", "/api/lib3d/ai/settings", "/api/lib3d/ai/test"}
+VIEWER_LIB3D_ADMIN_ONLY = {"/api/lib3d/libraries", "/api/lib3d/ai/settings", "/api/lib3d/ai/test", "/api/lib3d/agents"}
 VIEWER_POST = {"/api/auth/logout", "/api/auth/password", "/api/lib3d/presence", "/api/lib3d/say"}
 
 
@@ -345,10 +345,9 @@ class Handler(BaseHTTPRequestHandler):
                 if not adult:   # 성인 층을 볼 수 없는 관람자에게는 빼고
                     d = dict(d, libraries=[x for x in d.get("libraries", []) if x.get("db_type") != "adult"])
                 ai = lib3d_ai.flags()
-                if not auth.is_admin(user):
-                    ai = dict(ai, ask=False)   # 질문하기(추가 MCP 도구를 쓸 수 있음)는 관리자만
                 me = {"username": user["username"], "role": auth.role_of(user), "adult": adult} if user else None
-                return self._send(200, dict(d, ai=ai, me=me,
+                staff_on = lib3d_ai.configured() and bool(lib3d_agents.agents())
+                return self._send(200, dict(d, ai=ai, me=me, staff_on=staff_on,
                                             people=lib3d.load_settings().get("people") or {},
                                             outside=lib3d.load_settings().get("outside") or {},
                                             models=lib3d.load_settings().get("models") or "basic",
@@ -364,6 +363,8 @@ class Handler(BaseHTTPRequestHandler):
             # AI: 손님 대화 / 설정 / BookOasis MCP 연결 시험
             if path == "/api/lib3d/ai/settings":
                 return self._send(200, dict(lib3d_ai.settings(), success=True))
+            if path == "/api/lib3d/agents":   # AI 직원 설정·활동 기록 (관리자)
+                return self._send(200, dict(lib3d_agents.admin_info(), success=True))
             if path == "/api/lib3d/ai/chat":
                 libs = [x for x in (q.get("libs") or [""])[0].split(",") if x]
                 return self._send(200, dict(lib3d_ai.chat(libs), success=True))
@@ -458,7 +459,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(403, {"success": False, "error": "관람자 계정은 할 수 없는 일입니다."})
         if not path.startswith(("/api/rpc/", "/api/auth/", "/api/users")) and path not in ("/api/wtm/action", "/api/ui-prefs", "/api/mcp",
                                                                                           "/api/lib3d/settings", "/api/lib3d/ai/settings", "/api/lib3d/ai/ask",
-                                                                                          "/api/lib3d/presence", "/api/lib3d/say"):
+                                                                                          "/api/lib3d/presence", "/api/lib3d/say", "/api/lib3d/agents"):
             return self._send(404, {"success": False, "error": "없는 주소입니다."})
         if (self.headers.get("Content-Type") or "").split(";")[0].strip().lower() != "application/json":
             return self._send(415, {"success": False, "error": "Content-Type은 application/json이어야 합니다."})
@@ -483,15 +484,13 @@ class Handler(BaseHTTPRequestHandler):
                 context["floor"] = ""
             try:
                 if path == "/api/lib3d/presence":
-                    return self._send(200, dict(lib3d_presence.update(user["username"], context), success=True))
-                text = " ".join(str(context.get("text") or "").split())
-                head = next((p for p in lib3d_presence.ASK_PREFIXES if text == p or text.startswith(p + " ")), None)
-                if head:   # 채팅에서 안내 데스크 부르기 (관리자만, 문답은 부른 사람에게만 보임)
-                    if not auth.is_admin(user):
-                        return self._send(403, {"success": False, "error": "안내 데스크는 관리자만 부를 수 있습니다."})
+                    return self._send(200, dict(lib3d_presence.update(user["username"], context),
+                                                staff=lib3d_agents.public(str(context.get("floor") or "")), success=True))
+                ag, question = lib3d_agents.match_call(context.get("text"))
+                if ag:   # 채팅에서 AI 직원 부르기 (@사서·@도슨트…): 문답은 부른 사람에게만, 직원의 말은 그 층 모두에게
                     if not lib3d_ai.flags()["ask"]:
-                        return self._send(400, {"success": False, "error": "안내 데스크(질문하기)가 꺼져 있습니다 - 3D 서재 설정 > AI 설정."})
-                    lib3d_presence.ask_in_chat(user["username"], text[len(head):].strip(), context.get("floor"), lib3d_ai.ask)
+                        return self._send(400, {"success": False, "error": "AI 직원과의 대화가 꺼져 있습니다 - 3D 서재 설정 > AI 설정의 'AI 직원'."})
+                    lib3d_agents.talk(ag, user["username"], question, context.get("floor"), auth.is_admin(user), auth.adult_ok(user))
                     return self._send(200, {"success": True, "ask": True})
                 return self._send(200, {"success": True, "msg": lib3d_presence.say(user["username"], context.get("text"), context.get("floor"))})
             except ValueError as e:
@@ -534,6 +533,22 @@ class Handler(BaseHTTPRequestHandler):
             if libs is not None and not isinstance(libs, list):
                 return self._send(400, {"success": False, "error": "libraries는 목록이나 null이어야 합니다."})
             return self._send(200, dict(lib3d.save_settings(libs), success=True))
+        if path == "/api/lib3d/agents":   # AI 직원: {action: save|reset|run, ...} (관리자)
+            if not modules()["lib3d"]:
+                return self._send(404, {"success": False, "error": "BookOasis 3D 서재가 꺼져 있습니다 (LIB3D_ENABLED)."})
+            try:
+                act = context.get("action")
+                if act == "save":
+                    lib3d_agents.save_config(context)
+                elif act == "reset":
+                    lib3d_agents.reset_config()
+                elif act == "run":
+                    lib3d_agents.run_now(context.get("agent"), context.get("task"))
+                else:
+                    return self._send(400, {"success": False, "error": "action은 save·reset·run 중 하나입니다."})
+                return self._send(200, dict(lib3d_agents.admin_info(), success=True))
+            except ValueError as e:
+                return self._send(400, {"success": False, "error": str(e)})
         if path in ("/api/lib3d/ai/settings", "/api/lib3d/ai/ask"):  # 3D 서재 AI: 설정 저장 / 질문하기
             if not modules()["lib3d"]:
                 return self._send(404, {"success": False, "error": "BookOasis 3D 서재가 꺼져 있습니다 (LIB3D_ENABLED)."})
@@ -671,6 +686,8 @@ class Handler(BaseHTTPRequestHandler):
 def make_server(svc, host, port):
     handler = type("GdwHandler", (Handler,), {"svc": svc})
     server = ThreadingHTTPServer((host, port), handler)
+    if modules().get("lib3d"):
+        lib3d_agents.start()   # AI 직원 자율 업무 (AI 설정이 돼 있고 자율 업무가 켜져 있을 때만 실제로 일함)
     server.daemon_threads = True
     _fetch_latest()   # 새 버전 확인을 미리 시작 (첫 화면부터 업데이트 표시가 나오게)
     return server
