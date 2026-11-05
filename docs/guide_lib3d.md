@@ -82,7 +82,8 @@ cd /mnt/bookoasis_assistant && git pull && systemctl restart bookoasis_assistant
 ### 함께 보기
 같은 시간에 3D 서재에 들어온 사람끼리 서로 보입니다. 따로 켤 것은 없습니다.
 - 같은 층의 다른 사람이 이름표를 단 사람 모형으로 걸어 다니고, 왼쪽 위에 "함께 보는 사람 N · 이름(층 · 읽는 중)"이 나옵니다.
-- 왼쪽 아래 **채팅**: Enter로 보내면 모두에게 보이고, 같은 층 사람이면 그 사람 머리 위에 말풍선이 잠깐 뜹니다. 💬 버튼으로 접기.
+- 왼쪽 아래 **채팅**: Enter로 보내면 모두에게 보이고, 같은 층 사람이면 그 사람 머리 위에 말풍선이 잠깐 뜹니다. 💬 버튼으로 접기. 층·지도 목록을 여는 동안은 숨겨집니다.
+- **안내 데스크 부르기 (관리자만)**: 채팅창에 `@안내 질문`(또는 `@ai`·`@봇`) → 안내 데스크가 찾아보고 채팅창에 답합니다. 서재 데이터가 담길 수 있어 질문과 답은 **부른 사람에게만**(보라색 줄) 보이고, 최근 문답 몇 개를 이어서 기억합니다. 관람자가 쓰면 거절됩니다.
 - 위치는 0.4초마다 서버와 주고받습니다(서버 메모리에만, 다시 시작하면 채팅도 비워짐). 몇 명~십여 명 규모에 맞춘 방식입니다.
 
 ## 5. AI: 손님 대화 · 질문하기 (선택)
@@ -96,7 +97,7 @@ cd /mnt/bookoasis_assistant && git pull && systemctl restart bookoasis_assistant
 | API 키 | `LIB3D_AI_API_KEY` | anthropic에서 비우면 `ANTHROPIC_API_KEY` |
 | 모델 | `LIB3D_AI_MODEL` | 게이트웨이에 등록된 이름 그대로 (예 `gemini-free3_1`). anthropic은 비우면 `claude-opus-5-5` |
 | 손님 대화 | `LIB3D_AI_CHAT`, `LIB3D_AI_CHAT_SEC` | 층마다 두 손님이 무작위 책 한 권(제목·작가·장르·줄거리)을 두고 나누는 말을 말풍선으로. 간격(기본 60초)보다 자주 부르지 않고, 가까이 있고 탭이 보일 때만 부름 |
-| 질문하기 (관리자만) | `LIB3D_AI_ASK`, `LIB3D_MCP_COMMAND`, `LIB3D_MCP_SERVERS`, `LIB3D_AI_BUILTIN` | 아래 [질문] 버튼 → LLM이 BookOasis MCP(서재)·기본 도구(시각·날씨·웹 페이지)·추가 MCP로 찾아 답함 (모델이 도구 호출을 지원해야 함) |
+| 안내 데스크 (관리자만) | `LIB3D_AI_ASK`, `LIB3D_MCP_COMMAND`, `LIB3D_MCP_SERVERS`, `LIB3D_AI_BUILTIN` | 관리자가 채팅창에 `@안내 질문`(또는 `@ai`·`@봇`)을 쓰면 LLM이 BookOasis MCP(서재)·기본 도구(시각·날씨·웹 페이지)·추가 MCP로 찾아 답함 (모델이 도구 호출을 지원해야 함) |
 
 ### 기본 도구 · 추가 MCP
 

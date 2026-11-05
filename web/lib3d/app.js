@@ -2489,8 +2489,7 @@
   // ── AI: 설정 / 질문하기 / 손님 대화 ──
   function setAI(a) {
     AI = { chat: !!a.chat, ask: !!a.ask, chat_sec: a.chat_sec || 60 };
-    el('l3d-ask-btn').hidden = !AI.ask;
-    if (!AI.ask) el('l3d-ask').classList.remove('on');
+    chatIn.placeholder = AI.ask && ME && ME.role !== 'viewer' ? '채팅 (Enter) · @안내 질문 → 안내 데스크가 답함' : '채팅 (Enter로 보내기)';
   }
   function postJSON(url, body) {
     return fetch(url, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
@@ -2552,33 +2551,6 @@
       el('l3d-ai-msg').textContent = lines.join('\n') || '연결된 MCP·도구가 없습니다.';
       el('l3d-ai-msg').style.whiteSpace = 'pre-wrap';
     }).catch(function (e) { el('l3d-ai-msg').textContent = e.message; });
-  });
-
-  // 질문하기: 안내 데스크 직원(LLM)이 BookOasis MCP로 찾아보고 답한다
-  var askBox = el('l3d-ask'), askLog = el('l3d-ask-log'), askHist = [], asking = false;
-  function askLine(cls, text, tools) {
-    var d = document.createElement('div'); d.className = cls; d.textContent = text;
-    if (tools && tools.length) { var t = document.createElement('div'); t.className = 't'; t.textContent = '찾아본 도구: ' + tools.join(', '); d.appendChild(t); }
-    askLog.appendChild(d); askLog.scrollTop = askLog.scrollHeight; return d;
-  }
-  el('l3d-ask-btn').addEventListener('click', function () { askBox.classList.toggle('on'); if (askBox.classList.contains('on')) el('l3d-ask-q').focus(); });
-  el('l3d-ask-close').addEventListener('click', function () { askBox.classList.remove('on'); });
-  el('l3d-ask-q').addEventListener('keydown', function (e) {
-    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); el('l3d-ask-form').requestSubmit(); }
-  });
-  el('l3d-ask-form').addEventListener('submit', function (e) {
-    e.preventDefault();
-    var q = el('l3d-ask-q').value.trim();
-    if (!q || asking) return;
-    asking = true; el('l3d-ask-send').disabled = true; el('l3d-ask-q').value = '';
-    askLine('q', q);
-    var wait = askLine('a', '찾아보는 중...');
-    postJSON('api/lib3d/ai/ask', { question: q, history: askHist.slice(-6) }).then(function (d) {
-      wait.remove(); askLine('a', d.answer, d.tools);
-      if ((d.warnings || []).length) askLine('a t', '연결 못 한 MCP: ' + d.warnings.join(' / '));
-      askHist.push({ q: q, a: d.answer });
-    }).catch(function (er) { wait.textContent = '답하지 못했습니다: ' + er.message; })
-      .then(function () { asking = false; el('l3d-ask-send').disabled = false; });
   });
 
   // 손님 대화: 층의 두 손님이 책 한 권을 두고 나누는 말을 말풍선으로 번갈아 띄운다
@@ -2983,11 +2955,16 @@
   // 채팅
   var chatLog = el('l3d-chat-log'), chatIn = el('l3d-chat-in');
   function chatLine(m) {
-    var d = document.createElement('div'); d.className = 'l3d-chat-line';
+    var d = document.createElement('div'); d.className = 'l3d-chat-line' + (m.to ? ' priv' : '');
     var who = document.createElement('b'); who.textContent = m.user + (m.floor && floors[cur] && m.floor !== floors[cur].key ? ' (' + floorLabel(m.floor) + ')' : '');
     d.appendChild(who); d.appendChild(document.createTextNode(' ' + m.text));
+    if (m.user === '안내 데스크' && m.text !== '찾아보는 중...') {   // 답이 오면 '찾아보는 중...'은 지운다
+      Array.prototype.forEach.call(chatLog.querySelectorAll('.l3d-chat-line.wait'), function (x) { x.remove(); });
+    }
+    if (m.user === '안내 데스크' && m.text === '찾아보는 중...') d.classList.add('wait');
+    if (m.to) el('l3d-chat').classList.add('ask');
     chatLog.appendChild(d);
-    while (chatLog.children.length > 30) chatLog.removeChild(chatLog.firstChild);
+    while (chatLog.children.length > 40) chatLog.removeChild(chatLog.firstChild);
     chatLog.scrollTop = chatLog.scrollHeight;
     var p = remotes[m.user];
     if (p && Date.now() / 1000 - m.t < 20) { setTag(p, m.user, m.text); p.msgUntil = performance.now() + 7000; }
@@ -3026,9 +3003,11 @@
     if (e.key !== 'Enter' || e.isComposing) return;
     var text = chatIn.value.trim(); if (!text || !floors[cur]) return;
     chatIn.value = '';
-    postJSON('api/lib3d/say', { text: text, floor: floors[cur].key }).then(presenceTick)
+    postJSON('api/lib3d/say', { text: text, floor: floors[cur].key }).then(function () { presenceTick(); setTimeout(presenceTick, 300); })
       .catch(function (er) { var m = { user: '알림', text: er.message, t: Date.now() / 1000 }; chatLine(m); });
   });
+  new MutationObserver(function () { el('l3d-chat').classList.toggle('hide', map.classList.contains('on')); })   // 층·지도 목록과 겹치지 않게
+    .observe(map, { attributes: true, attributeFilter: ['class'] });
   el('l3d-chat-toggle').addEventListener('click', function () { el('l3d-chat').classList.toggle('min'); });
   function applyMe(me) {   // 관람자: 설정 버튼·질문하기를 숨긴다 (서버도 막음)
     ME = me || null;

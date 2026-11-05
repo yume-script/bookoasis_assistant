@@ -70,20 +70,6 @@
   .l3d-ppl-t th, .l3d-ppl-t td { padding: 4px 5px; text-align: left; border-bottom: 1px solid #eee8de; }
   .l3d-ppl-t th { font-weight: 700; white-space: nowrap; }
   .l3d-ppl-t input { width: 100%; min-width: 48px; box-sizing: border-box; }
-  .l3d-ask { position: absolute; right: 12px; top: 12px; bottom: 70px; width: min(400px, calc(100% - 24px)); z-index: 6; display: none;
-    flex-direction: column; gap: 8px; background: rgba(255, 255, 255, 0.97); color: #1d1e20; border-radius: 16px; padding: 14px;
-    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.18); }
-  .l3d-ask.on { display: flex; }
-  .l3d-ask h3 { margin: 0; font-size: 1rem; }
-  .l3d-ask-log { flex: 1; overflow: auto; display: flex; flex-direction: column; gap: 8px; font-size: 0.86rem; line-height: 1.5; }
-  .l3d-ask-log .q { align-self: flex-end; background: var(--accent, #e5a00d); color: var(--accent-ink, #141517); border-radius: 12px 12px 2px 12px;
-    padding: 7px 10px; max-width: 85%; white-space: pre-wrap; word-break: break-word; }
-  .l3d-ask-log .a { align-self: flex-start; background: #f1ede6; border-radius: 12px 12px 12px 2px; padding: 8px 10px; max-width: 92%;
-    white-space: pre-wrap; word-break: break-word; }
-  .l3d-ask-log .t { font-size: 0.72rem; opacity: 0.6; margin-top: 4px; }
-  .l3d-ask form { display: flex; gap: 6px; }
-  .l3d-ask textarea { flex: 1; font: inherit; resize: none; height: 54px; padding: 7px 9px; border: 1px solid #d9d3c8; border-radius: 10px;
-    background: #fff; color: #1d1e20; }
   .l3d-bubble { position: absolute; left: 0; top: 0; z-index: 3; max-width: 230px; padding: 7px 11px; border-radius: 14px; background: #fff;
     color: #1d1e20; font-size: 0.8rem; line-height: 1.4; box-shadow: 0 4px 16px rgba(0, 0, 0, 0.16); pointer-events: none; display: none;
     transform: translate(-50%, -100%); word-break: keep-all; }
@@ -100,6 +86,11 @@
   .l3d-chat-toggle { align-self: flex-start; border: 0; border-radius: 999px; background: rgba(20, 21, 23, 0.7); color: #fff; padding: 4px 9px; cursor: pointer; }
   .l3d-chat.min .l3d-chat-log, .l3d-chat.min .l3d-chat-in { display: none; }
   .l3d-chat-log:empty { display: none; }
+  .l3d-chat.hide { display: none; }   /* 층·지도 목록이 열려 있는 동안 */
+  .l3d-chat-line.priv { background: rgba(58, 42, 92, 0.85); }
+  .l3d-chat-line.priv b { color: #c9b6ff; }
+  .l3d-chat-line { white-space: pre-wrap; }
+  .l3d-chat.ask .l3d-chat-log { max-height: 260px; }
   /* 서재 안에서 읽기 (뷰어) */
   .l3d-reader { position: absolute; inset: 0; z-index: 5; display: none; flex-direction: column; background: rgba(24, 22, 20, 0.62);
     backdrop-filter: blur(7px); -webkit-backdrop-filter: blur(7px); color: #eee; }
@@ -223,7 +214,7 @@
         <datalist id="l3d-ai-models"></datalist>
         <label class="c"><input type="checkbox" id="l3d-ai-chat"> 손님 대화 (층마다 두 손님이 책 한 권을 두고 이야기)</label>
         <label class="f">대화 사이 최소 간격(초) <input type="number" id="l3d-ai-sec" min="15" max="3600" step="5"></label>
-        <label class="c"><input type="checkbox" id="l3d-ai-ask"> 질문하기 (안내 데스크 [질문] 버튼 - 서재·날씨·일반 질문)</label>
+        <label class="c"><input type="checkbox" id="l3d-ai-ask"> 안내 데스크 - 관리자가 채팅창에서 <code>@안내 질문</code>으로 부름 (서재·날씨·일반 질문, 답은 부른 사람에게만)</label>
         <label class="f">BookOasis MCP 실행 명령
           <input type="text" id="l3d-ai-mcp" placeholder="docker exec -i bookoasis python3 tools/mcp_server.py"></label>
         <p class="sub">BookOasis가 같은 서버에 직접 설치돼 있으면 <code>python3 /BookOasis경로/tools/mcp_server.py</code>. 읽기 전용 도구만 씁니다.</p>
@@ -289,15 +280,6 @@
         <button type="button" class="l3d-btn" id="l3d-mdl-close">닫기</button>
       </div>
     </div>
-    <div class="l3d-ask" id="l3d-ask" role="dialog" aria-label="안내 데스크에 질문">
-      <h3>안내 데스크에 질문</h3>
-      <div class="l3d-ask-log" id="l3d-ask-log"><div class="a">BookOasis 서재에 대해 물어보세요. 예: "최근에 들어온 판타지 소설 알려줘", "표지 없는 책이 몇 권이야?"</div></div>
-      <form id="l3d-ask-form">
-        <textarea id="l3d-ask-q" placeholder="질문 (Enter 보내기, Shift+Enter 줄바꿈)"></textarea>
-        <button type="submit" class="l3d-btn primary" id="l3d-ask-send">보내기</button>
-      </form>
-      <button type="button" class="l3d-btn" id="l3d-ask-close">닫기</button>
-    </div>
     <div class="l3d-bubble" id="l3d-bubble"></div>
     <div class="l3d-chat" id="l3d-chat">
       <button type="button" class="l3d-chat-toggle" id="l3d-chat-toggle" title="채팅 접기·펴기" aria-label="채팅 접기·펴기">💬</button>
@@ -334,7 +316,6 @@
       <button type="button" class="l3d-btn" id="l3d-home">입구로</button>
       <button type="button" class="l3d-btn" id="l3d-reload">새로고침</button>
       <button type="button" class="l3d-btn" id="l3d-set-btn">설정</button>
-      <button type="button" class="l3d-btn" id="l3d-ask-btn" hidden>질문</button>
     </div>
   </div>
 </main>

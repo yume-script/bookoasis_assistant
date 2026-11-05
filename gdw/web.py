@@ -484,6 +484,15 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 if path == "/api/lib3d/presence":
                     return self._send(200, dict(lib3d_presence.update(user["username"], context), success=True))
+                text = " ".join(str(context.get("text") or "").split())
+                head = next((p for p in lib3d_presence.ASK_PREFIXES if text == p or text.startswith(p + " ")), None)
+                if head:   # 채팅에서 안내 데스크 부르기 (관리자만, 문답은 부른 사람에게만 보임)
+                    if not auth.is_admin(user):
+                        return self._send(403, {"success": False, "error": "안내 데스크는 관리자만 부를 수 있습니다."})
+                    if not lib3d_ai.flags()["ask"]:
+                        return self._send(400, {"success": False, "error": "안내 데스크(질문하기)가 꺼져 있습니다 - 3D 서재 설정 > AI 설정."})
+                    lib3d_presence.ask_in_chat(user["username"], text[len(head):].strip(), context.get("floor"), lib3d_ai.ask)
+                    return self._send(200, {"success": True, "ask": True})
                 return self._send(200, {"success": True, "msg": lib3d_presence.say(user["username"], context.get("text"), context.get("floor"))})
             except ValueError as e:
                 return self._send(400, {"success": False, "error": str(e)})

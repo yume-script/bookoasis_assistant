@@ -45,12 +45,60 @@ def update(username, body):
             since = int(body.get("since") or 0)
         except (TypeError, ValueError):
             since = 0
-        chat = [c for c in _CHAT if c["id"] > since] if since >= 0 else []
+        mine = [c for c in _CHAT if not c.get("to") or c["to"] == username]   # 귓속말(안내 데스크 문답)은 당사자에게만
+        chat = [c for c in mine if c["id"] > since] if since >= 0 else []
         if since == 0:          # 처음 들어오면 최근 몇 개만
-            chat = _CHAT[-10:]
+            chat = mine[-10:]
     for o in others:
         o.pop("t", None)
     return {"others": others, "online": online, "chat": chat, "chat_id": _SEQ["chat"]}
+
+
+def post(user, text, floor="", to=None):
+    """서버가 남기는 메시지 (to가 있으면 그 사람에게만)"""
+    with _LOCK:
+        _SEQ["chat"] += 1
+        msg = {"id": _SEQ["chat"], "user": user, "floor": str(floor or "")[:40], "text": str(text)[:4000], "t": time.time()}
+        if to:
+            msg["to"] = to
+        _CHAT.append(msg)
+        del _CHAT[:-CHAT_KEEP]
+    return msg
+
+
+ASK_PREFIXES = ("@안내", "@ai", "@AI", "@봇")
+_ASK_HIST = {}   # 사용자 → 최근 문답 [{"q", "a"}]
+_ASKING = set()
+
+
+def ask_in_chat(username, question, floor, ask_fn):
+    """관리자가 채팅에서 안내 데스크를 부르면: 질문을 귓속말로 남기고, 답은 다른 스레드에서 구해 귓속말로"""
+    import threading as _t
+    if not question:
+        raise ValueError("'@안내 질문'처럼 물어볼 것을 적어 주세요.")
+    with _LOCK:
+        if username in _ASKING:
+            raise ValueError("앞 질문에 답하는 중입니다. 잠시 기다려 주세요.")
+        _ASKING.add(username)
+    post(username, "@안내 " + question, floor, to=username)
+    post("안내 데스크", "찾아보는 중...", floor, to=username)
+
+    def run():
+        try:
+            out = ask_fn(question, _ASK_HIST.get(username, []))
+            answer = out.get("answer") or "(답이 비어 있습니다)"
+            if out.get("tools"):
+                answer += "\n(찾아본 도구: " + ", ".join(dict.fromkeys(out["tools"])) + ")"
+            if out.get("warnings"):
+                answer += "\n(연결 못 한 MCP: " + " / ".join(out["warnings"]) + ")"
+            _ASK_HIST[username] = (_ASK_HIST.get(username, []) + [{"q": question, "a": out.get("answer") or ""}])[-6:]
+        except Exception as error:  # noqa: BLE001 - 실패 이유를 채팅으로
+            answer = "답하지 못했습니다: %s" % error
+        finally:
+            with _LOCK:
+                _ASKING.discard(username)
+        post("안내 데스크", answer, floor, to=username)
+    _t.Thread(target=run, daemon=True).start()
 
 
 def say(username, text, floor):
