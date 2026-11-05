@@ -3374,13 +3374,24 @@
       list.forEach(function (o) { var op = document.createElement('option'); op.value = o[0]; op.textContent = o[1]; op.disabled = !!o[2]; og.appendChild(op); });
       sel.appendChild(og);
     }
-    var bv = brKoVoices().map(function (v) { return ['b:' + v.name, String(v.name).replace(/\s*[-–]\s*(Korean|한국어).*$/i, '')]; });
+    var bv = brKoVoices().map(function (v) { return ['b:' + v.name, brVoiceLabel(v)]; });
     if (bv.length) group('브라우저 음성', bv);
     if (brTts.server.length) group('Edge 음성 (서버)', brTts.server.map(function (v) { return ['e:' + v.id, v.name]; }));
     else if (brTts.serverNote) group('Edge 음성 (서버)', [['', brTts.serverNote, true]]);
     var vals = Array.prototype.filter.call(sel.options, function (o) { return !o.disabled; }).map(function (o) { return o.value; });
     sel.value = brTts.cfg.voice && vals.indexOf(brTts.cfg.voice) >= 0 ? brTts.cfg.voice : (vals.filter(function (v) { return v.indexOf('e:ko-KR-SunHi') === 0; })[0] || vals[0] || '');
     el('l3d-br-play').disabled = !vals.length;
+  }
+  // 브라우저 음성 이름은 제각각이다: 크롬 "Google 한국의", 엣지 "Microsoft SunHi Online (Natural) - Korean (Korea)",
+  // 윈도우 "Microsoft Heami - Korean (Korean)", 애플 "Yuna". 알아보기 쉽게 바꾼다.
+  function brVoiceLabel(v) {
+    var n = String(v.name || '').trim();
+    if (/^Google\s*한국의$/i.test(n) || /^Google\s*(Korean|한국어)$/i.test(n)) n = 'Google 한국어 (여성)';
+    n = n.replace(/\s*[-–]\s*(Korean|한국어).*$/i, '').replace(/\s+Online \(Natural\)/i, ' (자연스러운 음성)');
+    n = n.replace(/^Microsoft\s+/i, 'MS ').replace(/^Yuna$/i, 'Yuna (애플)');
+    if (!/^ko/i.test(v.lang || '')) n += ' (' + v.lang + ')';
+    if (v.localService === false && !/Google/i.test(n)) n += ' · 온라인';
+    return n || v.lang || '기본 음성';
   }
   function brVoice() { return el('l3d-br-voice').value || ''; }
   function brRate() { return parseFloat(el('l3d-br-rate').value) || 1; }
