@@ -2082,7 +2082,8 @@
   var stickEl = document.getElementById('l3d-stick'), stickKnob = stickEl.firstChild;
   renderer.domElement.addEventListener('pointerdown', function (e) {
     var r = wrap.getBoundingClientRect();
-    var isStick = e.pointerType === 'touch' && e.clientX - r.left < r.width * 0.4 && e.clientY - r.top > r.height * 0.45;
+    if (e.pointerType === 'touch') padOn();
+    var isStick = false;   // 떠오르는 조이스틱은 채팅과 겹쳐서 쓰지 않는다 - 오른쪽 아래 이동 버튼(l3d-pad)으로
     drag = { id: e.pointerId, x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY, moved: false, stick: isStick };
     if (isStick) {
       stickEl.style.display = 'block';
@@ -2111,6 +2112,24 @@
     if (drag.stick) { moveStick.x = moveStick.y = 0; stickEl.style.display = 'none'; stickKnob.style.transform = ''; }
     drag = null;
   }
+  // 터치 이동 버튼: 누르고 있는 동안 그 키를 누른 것처럼 (여러 손가락으로 같이 눌러도 된다)
+  var padEl = document.getElementById('l3d-pad');
+  function padOn() { if (!wrap.classList.contains('touch')) { wrap.classList.add('touch'); helpText(); } }
+  function helpText() {
+    var h = el('l3d-help');
+    if (h && wrap.classList.contains('touch')) h.textContent = '이동 오른쪽 아래 ↑←↓→ 버튼 · 둘러보기 화면 끌기 · 책·엘리베이터 누르기';
+  }
+  try { if (window.matchMedia && window.matchMedia('(pointer: coarse)').matches || navigator.maxTouchPoints > 1 && /Macintosh|iPad/.test(navigator.userAgent)) padOn(); } catch (e) { /* 마우스 화면 */ }
+  Array.prototype.forEach.call(padEl.querySelectorAll('button'), function (b) {
+    var k = b.getAttribute('data-k');
+    function down(e) { e.preventDefault(); e.stopPropagation(); keys[k] = true; b.classList.add('on'); try { b.setPointerCapture(e.pointerId); } catch (x) { /* 없어도 됨 */ } }
+    function up(e) { e.preventDefault(); keys[k] = false; b.classList.remove('on'); }
+    b.addEventListener('pointerdown', down);
+    b.addEventListener('pointerup', up);
+    b.addEventListener('pointercancel', up);
+    b.addEventListener('lostpointercapture', up);
+    b.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+  });
   renderer.domElement.addEventListener('pointerup', endDrag);
   renderer.domElement.addEventListener('pointercancel', endDrag);
 
@@ -2259,7 +2278,7 @@
   function note(t) { var m = el('l3d-r-msg'); m.textContent = t || ''; m.hidden = !t; }
   function spread() { return R.box.clientWidth > 900 && R.info && R.info.kind !== 'pdf'; }
   function openReader(b) {
-    reading = true; keys = {};
+    reading = true; keys = {}; wrap.classList.add('reading');
     R.box.classList.add('on'); note('불러오는 중...');
     el('l3d-r-title').textContent = b.title;
     var saved = null;
@@ -2277,7 +2296,7 @@
       loadVolume(start, saved && saved.key ? saved.page || 0 : 0);
     }).catch(function (e) { note(e.message); });
   }
-  function closeReader() { reading = false; R.box.classList.remove('on'); R.body.innerHTML = ''; clearPage(pgL); clearPage(pgR); }
+  function closeReader() { reading = false; wrap.classList.remove('reading'); R.box.classList.remove('on'); R.body.innerHTML = ''; clearPage(pgL); clearPage(pgR); }
   function remember() {
     if (!R.info) return;
     var at = R.info.kind === 'epub' ? { c: R.chap || 0, p: R.idx } : R.idx;

@@ -51,6 +51,8 @@ cd /mnt/bookoasis_assistant && git pull && systemctl restart bookoasis_assistant
 - 입구 벽·안쪽 벽의 **표지 포스터**도 누르면 같은 작품 카드가 열립니다.
 - 표지는 가까이 간 책부터 BookOasis에서 받아 옵니다(작게 줄여 `DATA_DIR/lib3d_covers`에 저장).
 
+- **아이패드·폰(터치 화면)**: 오른쪽 아래 이동 버튼 - ↑(W) 앞, ↓(S) 뒤, ←(A)·→(D) 옆으로, ⟲·⟳ 돌기, » 누른 채로 달리기. 여러 손가락으로 같이 눌러도 됩니다. 화면을 끌면 둘러보기, 짧게 누르면 책·엘리베이터 고르기.
+
 ## 3. 설정 (모두 `DATA_DIR/lib3d.json`에 저장, 저장하면 바로 반영)
 
 | 메뉴 | 고르는 것 | lib3d.json 키 |
