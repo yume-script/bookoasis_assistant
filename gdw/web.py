@@ -28,7 +28,7 @@ import zipfile
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import lib3d, lib3d_agents, lib3d_brunch, lib3d_ai, lib3d_presence, auth, config, mcp, service
+from . import lib3d, lib3d_agents, lib3d_brunch, lib3d_ymp, lib3d_ai, lib3d_presence, auth, config, mcp, service
 
 log = logging.getLogger("gdw.web")
 WEB_DIR = os.path.join(config.ROOT, "web")
@@ -327,6 +327,55 @@ class Handler(BaseHTTPRequestHandler):
             ctype += "; charset=utf-8"
         self._send(200, data, ctype)
 
+    def _ym(self, rest, user, post=False):
+        """YMPlayer 중계 (gdw/lib3d_ymp.py) - 허용한 주소만, 스트림은 조각으로 그대로 흘려 보낸다"""
+        if not lib3d_ymp.configured():
+            return self._send(404, {"success": False, "error": "YMPlayer 중계 설정이 없습니다 (LIB3D_YMPLAYER_USER·PASSWORD)."})
+        if user and not auth.is_admin(user) and not lib3d_ymp.viewers_ok():
+            return self._send(403, {"success": False, "error": "관람자 계정은 영화관을 볼 수 없습니다."})
+        try:
+            if rest == "sources" and not post:
+                return self._send(200, {"success": True, "sources": lib3d_ymp.sources(), "newtab": lib3d.ymplayer_url()})
+            if not lib3d_ymp.allowed(rest, post):
+                return self._send(404, {"success": False, "error": "중계하지 않는 주소입니다."})
+            query = self.path.partition("?")[2]
+            fwd = {k: self.headers[k] for k in ("Range", "Accept") if self.headers.get(k)}
+            if post:
+                fwd["Content-Type"] = "application/json"
+            r = lib3d_ymp.open_upstream(rest, query, fwd, b"{}" if post else None)
+        except RuntimeError as e:
+            return self._send(502, {"success": False, "error": str(e)})
+        status = getattr(r, "status", None) or getattr(r, "code", 502)
+        ctype = r.headers.get("Content-Type") or "application/octet-stream"
+        try:
+            if post or "json" in ctype or "mpegurl" in ctype.lower() or rest.endswith(".m3u8"):
+                raw = r.read(16 * 1024 * 1024)
+                if "mpegurl" in ctype.lower() or rest.endswith(".m3u8"):
+                    raw = lib3d_ymp.rewrite_playlist(raw.decode("utf-8", "replace")).encode("utf-8")
+                elif post:
+                    raw = lib3d_ymp.rewrite_playlist(raw.decode("utf-8", "replace")).encode("utf-8")
+                return self._send(status, raw, ctype)
+            self.send_response(status)
+            for k in ("Content-Type", "Content-Length", "Content-Range", "Accept-Ranges"):
+                if r.headers.get(k):
+                    self.send_header(k, r.headers[k])
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.end_headers()
+            while True:
+                chunk = r.read(64 * 1024)
+                if not chunk:
+                    break
+                self.wfile.write(chunk)
+        except (BrokenPipeError, ConnectionResetError, TimeoutError):   # 재생기가 건너뛰거나 채널을 바꾸면 흔히 끊는다
+            pass
+        finally:
+            try:
+                r.close()
+            except Exception:  # noqa: BLE001
+                pass
+        return None
+
     def _send_range(self, full, ctype):
         """큰 파일을 조각으로 (HTTP Range: 오디오·영상 재생기가 건너뛸 때 그 자리부터)"""
         import re as _re
@@ -393,6 +442,8 @@ class Handler(BaseHTTPRequestHandler):
         if not mods["lib3d"]:
             return self._send(404, {"success": False, "error": "BookOasis 3D 서재가 꺼져 있습니다 (LIB3D_ENABLED)."})
         from urllib.parse import parse_qs
+        if path.startswith("/api/lib3d/ym/"):   # 영화관 층: YMPlayer IPTV·텔레그램 중계
+            return self._ym(path[len("/api/lib3d/ym/"):], user)
         q = parse_qs(self.path.partition("?")[2])
         key = (q.get("k") or [""])[0]
         adult = auth.adult_ok(user)
@@ -412,7 +463,7 @@ class Handler(BaseHTTPRequestHandler):
                                             people=lib3d.load_settings().get("people") or {},
                                             outside=lib3d.load_settings().get("outside") or {},
                                             models=lib3d.load_settings().get("models") or "basic",
-                                            banner=lib3d.banner_info(), ymplayer=lib3d.ymplayer_url(), ymplayer_embed=lib3d.ymplayer_embed(), success=True))
+                                            banner=lib3d.banner_info(), ymplayer=lib3d.ymplayer_url(), ymproxy=lib3d_ymp.configured(), ymplayer_embed=lib3d.ymplayer_embed(), success=True))
             if path.startswith("/api/lib3d/brunch/"):   # 1층 브런치 연재 낭독 코너 (브런치 공개 글이라 관람자도)
                 return self._brunch_get(path, {k: v[0] for k, v in q.items() if v})
             if path == "/api/lib3d/banner_pick":   # 현수막에 띄울 무작위 작품 (보관함 표지 모드)
@@ -521,6 +572,12 @@ class Handler(BaseHTTPRequestHandler):
         user = self._user()
         if not user and path not in PUBLIC:
             return self._deny(path)
+        if user and path.startswith("/api/lib3d/ym/") and modules()["lib3d"]:   # 영화관 중계 (텔레그램 HLS 변환 시작)
+            try:
+                self.rfile.read(min(int(self.headers.get("Content-Length") or 0), 65536))   # 본문은 쓰지 않지만 읽어 비운다
+            except ValueError:
+                pass
+            return self._ym(path[len("/api/lib3d/ym/"):], user, post=True)
         if user and not auth.is_admin(user) and path not in VIEWER_POST:
             return self._send(403, {"success": False, "error": "관람자 계정은 할 수 없는 일입니다."})
         if not path.startswith(("/api/rpc/", "/api/auth/", "/api/users")) and path not in ("/api/wtm/action", "/api/ui-prefs", "/api/mcp",

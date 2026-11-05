@@ -2241,7 +2241,7 @@
     sitBtn();
     if (st.brunch && BRUNCH_ON) openBrunch();
     if (st.media) openMediaPick();
-    if (st.cinema) setTimeout(openCinema, 700);   // 자리에 앉은 뒤 상영관
+    if (st.cinema && !(cine.video && !cine.video.paused)) setTimeout(openCinema, 700);   // 자리에 앉은 뒤 상영관 (상영 중이면 그대로)
   }
   function standUp(now) {
     var st = sitting; sitting = null;
@@ -3134,7 +3134,7 @@
     floorGroup = new T.Group();
     scene.add(floorGroup);
     parent = floorGroup;
-    CINE_WALL = null;
+    CINE_WALL = null; if (cine.video) cineStop(); cineScreen = null; if (cine.tex) { cine.tex.dispose(); cine.tex = null; }
     COLS = fl.cinema ? 3 : Math.max(2, Math.min(4, fl.libs.length));
     addBuilding(fl, COLS, fl.cinema ? 1 : Math.ceil(fl.libs.length / COLS));
     applyOutside.force = true; applyOutside();
@@ -3172,8 +3172,8 @@
         if (d.banner) { BANNER = d.banner; if (el('l3d-out').classList.contains('on')) openOutside(); }
         if (d.outside) OUTSIDE = Object.assign({ time: 'auto', season: 'auto', weather: 'clear' }, d.outside);
         floors = makeFloors(libs);
-        YMPLAYER = d.ymplayer || ''; YM_EMBED = d.ymplayer_embed || 'auto';
-        if (YMPLAYER) floors.push({ key: 'cinema', label: (floors.length + 1) + '층 영화관', libs: [], total: 0, booths: [], cinema: true });
+        YMPLAYER = d.ymplayer || ''; YM_EMBED = d.ymplayer_embed || 'auto'; YMPROXY = !!d.ymproxy;
+        if (YMPLAYER || YMPROXY) floors.push({ key: 'cinema', label: (floors.length + 1) + '층 영화관', libs: [], total: 0, booths: [], cinema: true });
         floors.forEach(function (f, i) {
           var cols = Math.max(2, Math.min(4, f.libs.length));
           f.booths = f.libs.map(function (l, j) {
@@ -3926,6 +3926,7 @@
     });
     var scr = new T.Mesh(new T.PlaneGeometry(sw, sh), new T.MeshBasicMaterial({ map: scrTex, toneMapped: false }));
     scr.position.set(0, 0.6 + sh / 2, b0 + 0.5); scr.userData.cinema = true; parent.add(scr); brunchHits.push(scr);
+    cineScreen = scr; cineIdle = scrTex;
     var frame = new T.Mesh(unitBox, M.black); frame.scale.set(sw + 0.3, sh + 0.3, 0.05); frame.position.set(0, 0.6 + sh / 2, b0 + 0.46); parent.add(frame);
     // 좌석: 스크린을 보고 여러 줄
     var seatMat = new T.MeshStandardMaterial({ color: 0x9b1d2a, roughness: 0.75 }), n = Math.max(6, Math.min(12, Math.floor((w - 8) / 0.78)));
@@ -3943,6 +3944,7 @@
     }
   }
   function openCinema(gesture) {
+    if (YMPROXY) { openCinemaPick(); return; }   // 서버 중계가 있으면 스크린에 직접 상영
     if (!YMPLAYER) return;
     var why = ymWhyNoFrame(), fr = el('l3d-cine-frame'), gate = el('l3d-cine-gate');
     el('l3d-cine-tab').href = YMPLAYER + '/';
@@ -3958,6 +3960,222 @@
   }
   el('l3d-cine-close').addEventListener('click', closeCinema);
   el('l3d-cine-go').addEventListener('click', function () { if (ymNewTab()) closeCinema(); });
+
+  // ── 영화관: YMPlayer IPTV·텔레그램을 서버 중계로 받아 3D 스크린에 직접 상영 ──
+  // 고르기 창(소스 탭 → IPTV 채널 / 텔레그램 영상) → 숨은 <video>로 재생하고 그 화면을 스크린 텍스처로.
+  // 엔진은 YMPlayer와 같은 hls.js·mpegts.js (처음 쓸 때 jsdelivr에서 받음). 소리는 고른 사람에게만.
+  var YMPROXY = false, cineScreen = null, cineIdle = null, cine = { video: null, hls: null, ts: null, tex: null, title: '', vod: false, token: 0 };
+  var cpBox = el('l3d-cpick'), cpState = { src: null, list: [], tgCh: '', offset: 0, more: false, sources: null, group: '' };
+  var IS_SAFARI = /^((?!chrome|android|crios|fxios).)*safari/i.test(navigator.userAgent);
+  function loadScript(url, test) {
+    if (test()) return Promise.resolve();
+    return new Promise(function (ok, bad) {
+      var s = document.createElement('script'); s.src = url; s.onload = function () { if (test()) ok(); else bad(new Error('재생 엔진을 불러오지 못했습니다')); };
+      s.onerror = function () { bad(new Error('재생 엔진을 불러오지 못했습니다 (인터넷 연결 확인)')); }; document.head.appendChild(s);
+    });
+  }
+  function cineVideo() {
+    if (cine.video) return cine.video;
+    var v = document.createElement('video'); v.className = 'l3d-cine-video'; v.setAttribute('playsinline', ''); v.crossOrigin = 'anonymous'; v.preload = 'auto';
+    v.addEventListener('loadedmetadata', fitScreen);
+    v.addEventListener('playing', function () { cineUi(); });
+    v.addEventListener('pause', function () { cineUi(); });
+    v.addEventListener('timeupdate', function () { if (Date.now() - (cine.uiAt || 0) > 500) { cine.uiAt = Date.now(); cineUi(); } });
+    v.addEventListener('error', function () { cineMsg('재생하지 못했습니다' + (v.error && v.error.message ? ': ' + v.error.message : '')); });
+    wrap.appendChild(v);
+    cine.video = v;
+    return v;
+  }
+  function fitScreen() {   // 스크린 가로 길이를 영상 비율에 맞춘다 (높이는 그대로)
+    var v = cine.video; if (!cineScreen || !v || !v.videoWidth) return;
+    var p = cineScreen.geometry.parameters, k = Math.min(1, (v.videoWidth / v.videoHeight) * p.height / p.width);
+    cineScreen.scale.x = k;
+  }
+  function cineDestroy() {
+    if (cine.hls) { try { cine.hls.destroy(); } catch (e) { /* 무시 */ } cine.hls = null; }
+    if (cine.ts) { try { cine.ts.destroy(); } catch (e) { /* 무시 */ } cine.ts = null; }
+    if (cine.video) { cine.video.pause(); cine.video.removeAttribute('src'); try { cine.video.load(); } catch (e) { /* 무시 */ } }
+  }
+  function cinePlay(url, kind, title, vod) {
+    var v = cineVideo(), token = ++cine.token;
+    cineDestroy();
+    cine.title = title; cine.vod = !!vod;
+    cineMsg('여는 중... ' + title);
+    if (cineScreen) {
+      if (!cine.tex) { cine.tex = new T.VideoTexture(v); cine.tex.encoding = T.sRGBEncoding; }
+      cineScreen.material.map = cine.tex; cineScreen.material.needsUpdate = true;
+    }
+    var go = function () { var p = v.play(); if (p && p.catch) p.catch(function () { if (token === cine.token) cineMsg('▶를 눌러 재생하세요'); }); };
+    var abs = new URL(url, location.href).href;
+    if (kind === 'hls' && !(v.canPlayType('application/vnd.apple.mpegurl') && IS_SAFARI)) {
+      loadScript('https://cdn.jsdelivr.net/npm/hls.js@1.5.8/dist/hls.min.js', function () { return !!window.Hls; }).then(function () {
+        if (token !== cine.token) return;
+        if (!window.Hls.isSupported()) { v.src = abs; go(); return; }
+        var h = new window.Hls({ enableWorker: true, lowLatencyMode: false }); cine.hls = h;
+        h.on(window.Hls.Events.ERROR, function (e, d) { if (d && d.fatal && token === cine.token) cineMsg('재생 오류: ' + (d.details || d.type)); });
+        h.loadSource(abs); h.attachMedia(v); h.on(window.Hls.Events.MANIFEST_PARSED, go);
+      }).catch(function (e) { cineMsg(e.message); });
+    } else if (kind === 'ts') {
+      loadScript('https://cdn.jsdelivr.net/npm/mpegts.js@1.7.3/dist/mpegts.min.js', function () { return !!window.mpegts; }).then(function () {
+        if (token !== cine.token) return;
+        if (!window.mpegts.isSupported()) { cineMsg('이 브라우저는 MPEG-TS 생방송을 재생하지 못합니다.'); return; }
+        var p = window.mpegts.createPlayer({ type: 'mpegts', isLive: true, url: abs }, { enableStashBuffer: false, liveBufferLatencyChasing: true });
+        cine.ts = p; p.attachMediaElement(v); p.load();
+        p.on(window.mpegts.Events.ERROR, function (t, d) { if (token === cine.token) cineMsg('재생 오류: ' + t + ' ' + d); });
+        go();
+      }).catch(function (e) { cineMsg(e.message); });
+    } else if (kind === 'dash') {
+      cineMsg('DASH(.mpd) 채널은 영화관에서 아직 못 봅니다. [YMPlayer 새 탭]으로 보세요.');
+    } else { v.src = abs; go(); }
+    el('l3d-cbar').hidden = false; cineUi();
+  }
+  function cineStop() {
+    cine.token++; cineDestroy();
+    if (cineScreen && cineIdle) { cineScreen.material.map = cineIdle; cineScreen.material.needsUpdate = true; cineScreen.scale.x = 1; }
+    el('l3d-cbar').hidden = true; if (cine.video) cine.video.classList.remove('full');
+  }
+  function cineMsg(t) { el('l3d-cb-msg').textContent = t || ''; }
+  function cineUi() {
+    var v = cine.video; if (!v) return;
+    el('l3d-cb-t').textContent = cine.title;
+    el('l3d-cb-pp').textContent = v.paused ? '▶' : '❚❚';
+    var dur = isFinite(v.duration) ? v.duration : 0;
+    el('l3d-cb-time').textContent = cine.vod && dur ? fmtTime(v.currentTime) + ' / ' + fmtTime(dur) : (v.paused ? '' : '● 재생 중');
+    if (!v.paused && v.readyState > 2) cineMsg('');
+    ['l3d-cb-back', 'l3d-cb-fwd'].forEach(function (id) { el(id).style.display = cine.vod && dur ? '' : 'none'; });
+  }
+  el('l3d-cb-pp').addEventListener('click', function () { var v = cine.video; if (!v) return; if (v.paused) v.play(); else v.pause(); });
+  el('l3d-cb-back').addEventListener('click', function () { if (cine.video) cine.video.currentTime = Math.max(0, cine.video.currentTime - 10); });
+  el('l3d-cb-fwd').addEventListener('click', function () { if (cine.video) cine.video.currentTime += 30; });
+  el('l3d-cb-vol').addEventListener('input', function () { if (cine.video) { cine.video.volume = parseFloat(el('l3d-cb-vol').value); cine.video.muted = false; } });
+  el('l3d-cb-full').addEventListener('click', function () {   // 스크린 대신 화면 가득 (다시 누르면 스크린으로)
+    var v = cine.video; if (!v) return;
+    v.classList.toggle('full'); v.controls = v.classList.contains('full');
+    el('l3d-cb-full').textContent = v.classList.contains('full') ? '스크린으로' : '크게 보기';
+  });
+  el('l3d-cb-stop').addEventListener('click', cineStop);
+  el('l3d-cb-pick').addEventListener('click', function () { openCinemaPick(); });
+
+  function openCinemaPick() {
+    [setBox, aiBox, pplBox, outBox, mdlBox, staffBox, brBox, mpBox].forEach(function (b) { if (b) b.classList.remove('on'); });
+    cpBox.classList.add('on');
+    el('l3d-cp-tab').href = YMPLAYER ? YMPLAYER + '/' : '#';
+    if (cpState.sources) { cpTabs(); return; }
+    el('l3d-cp-body').textContent = 'YMPlayer에서 불러오는 중...';
+    api('api/lib3d/ym/sources').then(function (d) {
+      cpState.sources = d.sources || [];
+      if (!cpState.sources.length) { el('l3d-cp-body').textContent = 'YMPlayer에 IPTV·텔레그램 소스가 없습니다 (또는 서재용 계정이 볼 수 있는 소스가 없음).'; return; }
+      cpState.src = cpState.sources[0]; cpTabs(); cpLoad();
+    }).catch(function (e) { el('l3d-cp-body').textContent = e.message; cpState.sources = null; });
+  }
+  function cpTabs() {
+    var t = el('l3d-cp-tabs'); t.textContent = '';
+    cpState.sources.forEach(function (s) {
+      var b = document.createElement('button'); b.type = 'button'; b.className = s === cpState.src ? 'on' : '';
+      b.textContent = (s.type === 'iptv' ? '📺 ' : '✈ ') + s.name;
+      b.addEventListener('click', function () { cpState.src = s; cpState.tgCh = ''; cpState.group = ''; el('l3d-cp-q').value = ''; cpTabs(); cpLoad(); });
+      t.appendChild(b);
+    });
+    var sel = el('l3d-cp-sel'); sel.textContent = '';
+    var s = cpState.src;
+    if (s && s.type === 'telegram') {
+      [['', '모든 채널']].concat((s.channels || []).map(function (c) { return [c.id, c.title || c.id]; })).forEach(function (o) {
+        var op = document.createElement('option'); op.value = o[0]; op.textContent = o[1]; sel.appendChild(op);
+      });
+      sel.value = cpState.tgCh;
+    }
+    sel.style.display = s && (s.type === 'telegram' || cpState.groups) ? '' : 'none';
+  }
+  function cpLoad(more) {
+    var s = cpState.src, body = el('l3d-cp-body'); if (!s) return;
+    if (!more) { body.textContent = '불러오는 중...'; cpState.offset = 0; }
+    var base = 'api/lib3d/ym/' + (s.type === 'iptv' ? 'iptv/' : 'tg/') + encodeURIComponent(s.id) + '/';
+    if (s.type === 'iptv') {
+      Promise.all([api(base + 'channels'), s.has_epg ? api(base + 'epg').catch(function () { return null; }) : Promise.resolve(null)]).then(function (r) {
+        cpState.list = r[0].channels || []; cpState.epg = r[1];
+        var groups = []; cpState.list.forEach(function (c) { if (groups.indexOf(c.group) < 0) groups.push(c.group); });
+        var sel = el('l3d-cp-sel'); sel.textContent = '';
+        [''].concat(groups).forEach(function (g) { var op = document.createElement('option'); op.value = g; op.textContent = g || '모든 그룹'; sel.appendChild(op); });
+        sel.style.display = groups.length > 1 ? '' : 'none'; sel.value = cpState.group; cpState.groups = groups.length > 1;
+        cpDraw();
+      }).catch(function (e) { body.textContent = e.message; });
+      return;
+    }
+    var q = (el('l3d-cp-q').value || '').trim();
+    var url = base + 'videos?' + new URLSearchParams({ channel: cpState.tgCh, offset: cpState.offset, limit: 40, q: q, sort: 'latest', kind: 'video' });
+    api(url).then(function (d) {
+      if (!more) cpState.list = [];
+      cpState.list = cpState.list.concat(d.items || []); cpState.more = !!d.more; cpState.offset += (d.items || []).length;
+      cpDraw();
+    }).catch(function (e) { body.textContent = e.message; });
+  }
+  function nowOn(c) {   // 편성표에서 지금 방송 제목
+    var e = cpState.epg; if (!e || !e.programmes) return '';
+    var id = c.tvg_id && e.programmes[c.tvg_id] ? c.tvg_id : (e.names || {})[String(c.name || '').toLowerCase().replace(/\s+/g, '')];
+    var list = id && e.programmes[id], now = Date.now() / 1000;
+    if (!list) return '';
+    for (var i = 0; i < list.length; i++) if (list[i][0] <= now && now < list[i][1]) return list[i][2];
+    return '';
+  }
+  function cpDraw() {
+    var s = cpState.src, body = el('l3d-cp-body'), q = (el('l3d-cp-q').value || '').trim().toLowerCase();
+    body.textContent = '';
+    if (s.type === 'iptv') {
+      cpState.list.filter(function (c) { return (!cpState.group || c.group === cpState.group) && (!q || String(c.name).toLowerCase().indexOf(q) >= 0); }).slice(0, 300).forEach(function (c) {
+        var on = nowOn(c);
+        cpRow(c.logo, c.name, (c.group || '') + (on ? ' · 지금: ' + on : ''), function () {
+          var u = '/api/lib3d/ym/stream?' + new URLSearchParams(Object.assign({ url: c.url }, c.ua ? { ua: c.ua } : {}, c.referer ? { ref: c.referer } : {}));
+          var path = String(c.url).split('?')[0].toLowerCase(), kind = /[?&]output=ts/i.test(c.url) || /\.ts$/.test(path) ? 'ts' : /\.mpd$/.test(path) ? 'dash' : /\.(mp4|m4v|webm|mov|mkv)$/.test(path) ? 'direct' : 'hls';
+          cpBox.classList.remove('on'); cinePlay(u, kind, c.name, false);
+        });
+      });
+    } else {
+      cpState.list.forEach(function (v) {
+        var thumb = v.has_thumb ? 'api/lib3d/ym/tg/' + encodeURIComponent(s.id) + '/thumb/' + v.channel + '/' + v.msg : '';
+        cpRow(thumb, v.title || v.file_name || '(제목 없음)', (v.duration ? fmtTime(v.duration) + ' · ' : '') + String(v.date || '').slice(0, 10), function () { tgPlay(s, v); });
+      });
+      if (cpState.more) {
+        var mb = document.createElement('button'); mb.type = 'button'; mb.className = 'l3d-btn'; mb.textContent = '더 보기';
+        mb.addEventListener('click', function () { mb.remove(); cpLoad(true); }); body.appendChild(mb);
+      }
+    }
+    if (!body.firstChild) body.textContent = '없습니다.';
+  }
+  function cpRow(img, title, sub, onClick) {
+    var r = document.createElement('div'); r.className = 'it';
+    var im = document.createElement('img'); im.alt = ''; im.loading = 'lazy'; im.referrerPolicy = 'no-referrer';
+    if (img) { im.src = img; im.onerror = function () { im.style.visibility = 'hidden'; }; } else im.style.visibility = 'hidden';
+    var tx = document.createElement('div'); var b = document.createElement('b'); b.textContent = title;
+    var sm = document.createElement('small'); sm.textContent = sub;
+    tx.appendChild(b); tx.appendChild(sm); r.appendChild(im); r.appendChild(tx);
+    r.addEventListener('click', onClick);
+    el('l3d-cp-body').appendChild(r);
+  }
+  function tgPlay(s, v) {   // YMPlayer와 같은 판단: 원본 그대로 되면 Range 스트림, 아니면 서버 변환 (Safari는 HLS 변환)
+    cpBox.classList.remove('on');
+    var base = 'api/lib3d/ym/tg/' + encodeURIComponent(s.id) + '/', id = v.channel + '/' + v.msg, title = v.title || v.file_name || '';
+    cineMsg('여는 중... ' + title); el('l3d-cbar').hidden = false;
+    api(base + 'video/' + id + '?probe=1').then(function (d) {
+      var play = (d.item && d.item.play) || { mode: 'direct' }, mode = play.mode;
+      if (IS_SAFARI && mode === 'direct' && play.container && (play.container !== 'mp4' || String(play.video || '').split(' ')[0] !== 'h264')) mode = 'transcode';
+      if (mode === 'direct') { cinePlay('/' + base + 'stream/' + id, 'direct', title, true); return; }
+      if (IS_SAFARI) {
+        postJSON(base + 'hls/' + id + '?' + new URLSearchParams({ start: 0, mode: mode }), {}).then(function (j) { cinePlay(j.url, 'hls', title, false); })
+          .catch(function (e) { cineMsg(e.message); });
+        return;
+      }
+      cinePlay('/' + base + 'transcode/' + id + '?' + new URLSearchParams({ start: 0, mode: mode }), 'direct', title + ' (서버 변환)', false);
+    }).catch(function (e) { cineMsg(e.message); });
+  }
+  el('l3d-cp-q').addEventListener('input', function () {
+    if (!cpState.src) return;
+    if (cpState.src.type === 'iptv') cpDraw(); else { clearTimeout(cpState.qt); cpState.qt = setTimeout(function () { cpLoad(); }, 400); }
+  });
+  el('l3d-cp-sel').addEventListener('change', function () {
+    var v = el('l3d-cp-sel').value;
+    if (cpState.src.type === 'iptv') { cpState.group = v; cpDraw(); } else { cpState.tgCh = v; cpLoad(); }
+  });
+  el('l3d-cp-close').addEventListener('click', function () { cpBox.classList.remove('on'); });
 
   // ── AI 직원 (사서·도슨트 …): 서버의 상태(가려는 곳·말·가리키는 책)대로 걷고 말하고 가리킨다 + 로비 안내판 ──
   var staffNPC = {}, staffData = [], boardMesh = null, boardSig = '', pointer = null, STAFF_ON = false;
