@@ -37,7 +37,7 @@ cd /mnt/bookoasis_assistant && git pull && systemctl restart bookoasis_assistant
 
 | 키 | 기본 | 설명 |
 |---|---|---|
-| `LIB3D_PER_LIBRARY` | `120` | 보관함마다 책장에 놓을 최근 작품 수 (10~400) |
+| `LIB3D_PER_LIBRARY` | `300` | 보관함마다 책장에 놓을 최근 작품 수 (10~1500). 최근 작품부터 눈높이 표지 칸(구역마다 약 56자리)에 놓고, 나머지는 모든 책장의 책등 칸에 고르게 섞습니다(구역마다 약 1,600자리, 빈 자리는 누를 수 없는 장식 책). 많을수록 층을 여는 데 오래 걸리고 메모리를 더 씁니다 - 느리면 줄이세요 |
 | `LIB3D_BOOK_URL` | (비움) | 작품 상세 주소를 다른 형식으로 (`{id}` `{library_id}` `{db_type}` `{series}` `{bookoasis}`) |
 | `LIB3D_COVER_URL` | (비움) | BookOasis에 표지가 없을 때 쓸 표지 주소 형식 |
 

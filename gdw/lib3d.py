@@ -22,7 +22,7 @@ from urllib.request import Request, urlopen
 
 from . import bookoasis_db, config
 
-VERSION = "2.28.0"
+VERSION = "2.29.0"
 CACHE_SEC = 300
 COVER_WIDTH = 200
 _DATA = {"at": 0.0, "v": None}
@@ -37,9 +37,9 @@ def enabled():
 
 def per_library():
     try:
-        return max(10, min(400, int(config.env("LIB3D_PER_LIBRARY", "120") or 120)))
+        return max(10, min(1500, int(config.env("LIB3D_PER_LIBRARY", "300") or 300)))
     except ValueError:
-        return 120
+        return 300
 
 
 def _cover_dir():

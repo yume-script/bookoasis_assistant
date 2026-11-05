@@ -164,9 +164,10 @@
 
   // 책 (작품 하나) - 표지 진열(face), 평대(flat), 책등(spine)
   var faceGeo = new T.BoxGeometry(0.3, 0.42, 0.035);
+  var paperMat = new T.MeshStandardMaterial({ color: 0xf0ebe0, roughness: 0.9 });   // 종이 단면 (모든 책이 같이 씀)
   function makeBook(kind, s, lib) {
     var base = colorOf(s.title);
-    var side = new T.MeshStandardMaterial({ color: 0xf0ebe0, roughness: 0.9 });   // 종이 단면
+    var side = paperMat;
     var front = new T.MeshStandardMaterial({ color: base, roughness: 0.6 });
     var mesh, b = { key: lib.db_type + ':' + s.last, title: s.title || '(제목 없음)', count: s.count, lib: lib.name,
                     db: lib.db_type, front: front, base: base, state: 0, kind: kind };
@@ -200,7 +201,10 @@
   }
 
   // 책장 칸 채우기: 눈높이 칸(3번째 줄)은 표지 진열, 나머지는 책등. 작품이 모자라면 장식 책
-  function stockShelf(su, queue, lib, filler, group) {
+  // fill = { face: 표지 칸에 놓을 작품, spine: 책등 칸에 놓을 작품, left: 아직 안 채운 책등 칸 너비 합(m) }
+  //  → 책등 칸마다 '남은 작품 수 / 남은 자리 수' 확률로 고르면 작품이 모든 책장에 고르게 퍼진다
+  var SPINE_STEP = 0.055;   // 책 한 권이 차지하는 평균 너비(m)
+  function stockShelf(su, fill, lib, filler, group) {
     var w = su.width - 0.08, unit = su.unit;
     unit.updateMatrixWorld(true);
     var toGroup = new T.Matrix4().copy(group.matrixWorld).invert().multiply(unit.matrixWorld);
@@ -210,7 +214,7 @@
         var n = Math.floor(w / 0.38);
         for (var i = 0; i < n; i++) {
           var x = -w / 2 + 0.38 * (i + 0.5);
-          var s = queue.shift();
+          var s = fill.face.shift() || fill.spine.shift();
           if (s) {
             var b = makeBook('face', s, lib);
             b.mesh.position.set(x, row.y + 0.21, -0.06); b.mesh.rotation.x = -0.1;
@@ -224,10 +228,11 @@
       }
       var cx = -w / 2;
       while (cx < w / 2 - 0.05) {
-        var s2 = r() < 0.75 ? queue.shift() : null;   // 작품 사이사이에 장식 책을 섞어 실제 서가처럼
+        var want = fill.spine.length / Math.max(1, (fill.left - (cx + w / 2)) / SPINE_STEP);   // 남은 작품 / 남은 자리
+        var s2 = r() < Math.min(0.9, want) ? fill.spine.shift() : null;   // 작품이 넉넉해도 장식 책을 조금 섞어 실제 서가처럼
         if (s2) {
           var b2 = makeBook('spine', s2, lib);
-          if (cx + b2.th > w / 2) { queue.unshift(s2); books.pop(); break; }
+          if (cx + b2.th > w / 2) { fill.spine.unshift(s2); books.pop(); break; }
           b2.mesh.position.set(cx + b2.th / 2, row.y + b2.ht / 2, -0.02);
           unit.add(b2.mesh);
           cx += b2.th + 0.004;
@@ -241,6 +246,7 @@
         }
         if (r() < 0.04) cx += 0.12;   // 가끔 빈틈
       }
+      fill.left = Math.max(0, fill.left - w);
     });
   }
 
@@ -268,8 +274,10 @@
                  shelfUnit(g, BOOTH_W / 4 - 0.05, -BOOTH_D / 2 + 0.3, 0, BOOTH_W / 2 - 0.3),
                  shelfUnit(g, -BOOTH_W / 2 + 0.3, -0.3, Math.PI / 2, BOOTH_D - 1.6),
                  shelfUnit(g, BOOTH_W / 2 - 0.3, -0.3, -Math.PI / 2, BOOTH_D - 1.6)];
-    var filler = [];
-    units.forEach(function (u) { stockShelf(u, queue, lib, filler, g); });
+    var filler = [], faceN = 0, spineW = 0;
+    units.forEach(function (u) { var w = u.width - 0.08; faceN += Math.floor(w / 0.38); spineW += w * (ROW_Y.length - 1); });
+    var fill = { face: queue.slice(0, faceN), spine: queue.slice(faceN), left: spineW };   // 최근 작품은 눈높이 표지 칸부터
+    units.forEach(function (u) { stockShelf(u, fill, lib, filler, g); });
     fillerBooks(g, filler);
     // 천장에 매단 구역 간판 (검정 판, 흰 글씨)
     var sign = new T.Mesh(new T.BoxGeometry(4.2, 0.62, 0.04), [M.black, M.black, M.black, M.black,
