@@ -356,6 +356,10 @@ venv\Scripts\python app.py
 - `venv/bin/python -m wtm.backfill_all --dry-run` : 구독 작품의 빠진 과거 회차 일괄 받기 (먼저 `--dry-run`)
 - `venv/bin/python wtm/migrate_filenames.py --dry-run <폴더>` : 예전 파일 이름 형식 정리
 
+## BookOasis 3D 서재
+`/library3d` (사이드바 **BookOasis 3D 서재**, `.env`의 `LIB3D_ENABLED=true` + `BOOKOASIS_DB_URL` 필요). BookOasis 서재를 서점 건물로 지어 걸어 다니며 둘러보고 그 자리에서 읽습니다.
+켜는 법·설정(보관함·인물 수·창밖 풍경·3D 모형)·AI 손님 대화와 BookOasis MCP 질문하기·자주 막히는 곳은 **[3D 서재 가이드](docs/guide_lib3d.md)** 를 보세요.
+
 ## 미니게임
 `/games` (사이드바 **미니게임**). 게임 12종이 사이드바 서브 메뉴로 나오고, 주소의 `#게임id`(예: `/games#tetris`)로 바로 열 수 있습니다.
 - 게임은 `mini/games/<id>/`(manifest.json · template.html · style.css · game.js) 그대로이고, 서버가 읽어서 화면 하나로 묶어 줍니다.
