@@ -83,6 +83,18 @@
   .l3d-ai .body { flex: 1; overflow: auto; }
   .l3d-ppl { width: min(560px, calc(100% - 24px)); }
   .l3d-staff { width: min(620px, calc(100% - 24px)); }
+  .l3d-jazz { background: rgba(26, 20, 14, 0.96); color: #f5ead6; }
+  .l3d-jazz .sub { color: #c9b48a; opacity: 1; }
+  .l3d-jazz .jz-st { display: flex; flex-direction: column; gap: 6px; margin: 6px 0 10px; }
+  .l3d-jazz .jz-st button { text-align: left; border: 1px solid #5a4630; background: rgba(255, 255, 255, 0.04); color: inherit; border-radius: 12px; padding: 8px 12px; cursor: pointer; font: inherit; }
+  .l3d-jazz .jz-st button.on { border-color: #ffb347; background: rgba(255, 179, 71, 0.16); }
+  .l3d-jazz .jz-st small { display: block; opacity: 0.7; font-size: 0.74rem; }
+  .l3d-jazz .jz-now { display: flex; gap: 12px; align-items: center; margin-bottom: 10px; min-height: 64px; }
+  .l3d-jazz .jz-now img { width: 96px; height: 96px; object-fit: cover; border-radius: 8px; }
+  .l3d-jazz .jz-now img[hidden] { display: none; }
+  .l3d-jazz .jz-now b { display: block; font-size: 1rem; }
+  .l3d-jazz .jz-now small { display: block; opacity: 0.75; margin-top: 2px; }
+  #l3d-jz-vol { flex: 1; min-width: 100px; }
   .l3d-cbar { position: absolute; left: 50%; top: 12px; transform: translateX(-50%); z-index: 5; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; justify-content: center;
     width: max-content; max-width: calc(100% - 24px); background: rgba(12, 12, 14, 0.88); color: #f5f2ec; border-radius: 14px; padding: 6px 10px; font-size: 0.8rem; }
   .l3d-cbar[hidden] { display: none; }
@@ -440,6 +452,22 @@
       <input type="text" id="l3d-mp-q" placeholder="제목으로 찾기" autocomplete="off">
       <div class="body" id="l3d-mp-body"></div>
       <div class="row" style="margin-top:8px"><button type="button" class="l3d-btn" id="l3d-mp-close">닫기</button></div>
+    </div>
+    <div class="l3d-set l3d-ai l3d-brunch l3d-jazz" id="l3d-jazz" role="dialog" aria-label="재즈 청음실">
+      <h3>🎷 colaiuta 재즈 청음실</h3>
+      <p class="sub">인터넷 재즈 라디오 · 소리는 이 기기에서만, 청음실에서 멀어질수록 작아집니다. (참고: colaiuta77/jazzradio)</p>
+      <div class="jz-st" id="l3d-jz-st"></div>
+      <div class="jz-now"><img id="l3d-jz-art" alt="" hidden><div><b id="l3d-jz-title">멈춤</b><small id="l3d-jz-artist"></small></div></div>
+      <div class="row" style="align-items:center">
+        <button type="button" class="l3d-btn primary" id="l3d-jz-pp">▶ 듣기</button>
+        <input type="range" id="l3d-jz-vol" min="0" max="1" step="0.05" value="0.8" title="소리">
+        <span class="sub" id="l3d-jz-ios" hidden>소리는 기기 볼륨 버튼으로</span>
+      </div>
+      <p class="sub" id="l3d-jz-msg"></p>
+      <div class="row" style="margin-top:auto">
+        <a class="l3d-btn" id="l3d-jz-home" target="_blank" rel="noopener noreferrer">방송국 홈 ↗</a>
+        <button type="button" class="l3d-btn" id="l3d-jz-close">닫기</button>
+      </div>
     </div>
     <div class="l3d-set l3d-ai l3d-brunch" id="l3d-cpick" role="dialog" aria-label="영화관 - 볼 것 고르기">
       <h3>🎬 영화관 - 볼 것 고르기</h3>

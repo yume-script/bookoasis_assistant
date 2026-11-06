@@ -842,7 +842,7 @@
     pano.rotation.y = floorIdx * 1.3;
     var len = d + 120;
     var signed = { crares: false, next: 0 };
-    CRARES = null; bannerMesh = null;
+    CRARES = null; bannerMesh = null; SHOPS = {};
     [1, -1].forEach(function (side) {
       var walkX = side * (w / 2 + 2.5), roadX = side * (w / 2 + 9), farWalkX = side * (w / 2 + 15.5);
       var walk = new T.Mesh(new T.PlaneGeometry(5, len), M.pave); walk.rotation.x = -Math.PI / 2; add(walk, walkX, gy + 0.02, cz);
@@ -880,6 +880,7 @@
         if (side > 0 && !signed.crares && mid > back && mid < front) { signed.crares = true; nm = '(주)CRARES'; }
         else if (mid > back - 35 && mid < front + 35 && signed.next < SIGN_NAMES.length) nm = SIGN_NAMES[signed.next++];
         if (nm) {
+          SHOPS[nm] = { side: side, z: mid, bx: bx, bd: bd, bw: bw, bh: bh, gy: gy, bld: bld, shop: shop };   // 1층 방을 낼 수 있게
           var sw = Math.min(bw * 0.85, 11), sh = sw * 0.22, sy = gy + Math.min(bh - sh, 14), sx = bx - side * (bd / 2 + 0.2), sc0 = SIGN_COLORS[(signed.next + (side > 0 ? 0 : 3)) % SIGN_COLORS.length];
           if (nm === '(주)CRARES') {
             sc0 = ['#14181f', '#ffffff'];
@@ -1013,25 +1014,26 @@
     instBoxes(frames, EXT.metal);
     instBoxes(fins, EXT.metal);
   }
-  // ── (주)CRARES 갤러리: 길 건너 CRARES 건물 1층을 유리 상점 같은 갤러리로 - 횡단보도로 건너가 들어가면 벽마다 표지 액자 ──
-  var GALLERY = null;
+  // ── 길 건너 건물 1층 방 (상점처럼): 건물 1층을 비우고 유리 진열창·문·바닥·천장·벽을 짓는다. 횡단보도로 건너가 들어간다 ──
+  // 지금 쓰는 방: (주)CRARES 갤러리(표지 액자), colaiuta 재즈 청음실. 길 양쪽 어느 건물이든 된다(side = +1 오른쪽, -1 왼쪽).
+  var SHOPS = {}, ROOMS = [];
   var galGlass = new T.MeshStandardMaterial({ color: 0xa9c0cc, roughness: 0.05, metalness: 0.2, transparent: true, opacity: 0.22, depthWrite: false, side: T.DoubleSide });
   var galWall = new T.MeshStandardMaterial({ color: 0xf4f2ee, roughness: 0.9, side: T.DoubleSide });
   var galFloor = new T.MeshStandardMaterial({ color: 0xcfcac1, roughness: 0.35 });
   [galGlass, galWall, galFloor].forEach(function (m) { m.userData.keep = true; });
-  function addGallery(w) {
-    var C = CRARES; if (!C || !C.bld || C.side < 0) return;
-    var gy = C.gy, bd = C.bd, bw = C.bw, bx = C.bx, z = C.z, fx = bx - bd / 2, H = 3.4, seed = rnd(311);
-    // 건물 1층을 비운다 (위층만 남김)
-    C.bld.scale.y = C.bh - H; C.bld.position.y = gy + H + (C.bh - H) / 2;
+  function shopRoom(C, w, o) {   // o: {label, wall, floor, ceil, sign: [제목, 부제], signBg, signFg}
+    if (!C || !C.bld) return null;
+    var s = C.side, gy = C.gy, bd = C.bd, bw = C.bw, bx = C.bx, z = C.z, H = 3.4;
+    var fx = bx - s * bd / 2, kx = bx + s * bd / 2;   // 길 쪽 벽 / 안쪽 벽
+    C.bld.scale.y = C.bh - H; C.bld.position.y = gy + H + (C.bh - H) / 2;   // 1층을 비운다 (위층만 남김)
     if (C.shop && C.shop.parent) C.shop.parent.remove(C.shop);
-    GALLERY = { fx: fx, bx: bx, bd: bd, bw: bw, z: z, gy: gy, w: w };
-    // 바닥·천장·안쪽 벽
-    var fl = new T.Mesh(new T.PlaneGeometry(bd, bw), galFloor); fl.rotation.x = -Math.PI / 2; fl.position.set(bx, gy + 0.012, z); fl.receiveShadow = true; parent.add(fl);
-    var ce = new T.Mesh(new T.PlaneGeometry(bd, bw), galWall); ce.rotation.x = Math.PI / 2; ce.position.set(bx, gy + H - 0.02, z); parent.add(ce);
-    var bk = new T.Mesh(new T.PlaneGeometry(bw, H), galWall); bk.rotation.y = -Math.PI / 2; bk.position.set(bx + bd / 2, gy + H / 2, z); parent.add(bk);
-    [-1, 1].forEach(function (sd) { var sw0 = new T.Mesh(new T.PlaneGeometry(bd, H), galWall); sw0.position.set(bx, gy + H / 2, z + sd * bw / 2); parent.add(sw0); });
-    // 길 쪽: 유리 진열창 + 가운데 문(열린 채) + 금속 창살
+    var R = { s: s, fx: fx, kx: kx, bx: bx, bd: bd, bw: bw, z: z, gy: gy, H: H, w: w, label: o.label, inRot: -s * Math.PI / 2 };
+    var wallM = o.wall || galWall;
+    var fl = new T.Mesh(new T.PlaneGeometry(bd, bw), o.floor || galFloor); fl.rotation.x = -Math.PI / 2; fl.position.set(bx, gy + 0.012, z); fl.receiveShadow = true; parent.add(fl);
+    var ce = new T.Mesh(new T.PlaneGeometry(bd, bw), o.ceil || wallM); ce.rotation.x = Math.PI / 2; ce.position.set(bx, gy + H - 0.02, z); parent.add(ce);
+    var bk = new T.Mesh(new T.PlaneGeometry(bw, H), wallM); bk.rotation.y = R.inRot; bk.position.set(kx, gy + H / 2, z); parent.add(bk);
+    [-1, 1].forEach(function (sd) { var sw0 = new T.Mesh(new T.PlaneGeometry(bd, H), wallM); sw0.position.set(bx, gy + H / 2, z + sd * bw / 2); parent.add(sw0); });
+    // 길 쪽: 유리 진열창 + 가운데 문(열린 채) + 금속 창살 + 문 위 간판
     var dw = 2.4, dh = 2.7, side0 = (bw - dw) / 2;
     [-1, 1].forEach(function (sd) {
       var gl = new T.Mesh(new T.PlaneGeometry(side0, H), galGlass); gl.rotation.y = Math.PI / 2; gl.position.set(fx, gy + H / 2, z + sd * (dw / 2 + side0 / 2)); parent.add(gl);
@@ -1040,59 +1042,270 @@
     var lin = new T.Mesh(new T.PlaneGeometry(dw, H - dh), galGlass); lin.rotation.y = Math.PI / 2; lin.position.set(fx, gy + dh + (H - dh) / 2, z); parent.add(lin);
     var top0 = new T.Mesh(unitBox, M.black); top0.scale.set(0.1, 0.1, bw); top0.position.set(fx, gy + H, z); parent.add(top0);
     var dt0 = new T.Mesh(unitBox, M.black); dt0.scale.set(0.1, 0.08, dw); dt0.position.set(fx, gy + dh, z); parent.add(dt0);
-    var openTex = textTex(['CRARES GALLERY', '들어오세요 · 액자를 누르면 작품 카드'], 1024, 220, '#14181f', '#ffffff', 84);
-    var op = new T.Mesh(new T.PlaneGeometry(2.4, 0.52), new T.MeshBasicMaterial({ map: openTex, toneMapped: false })); op.rotation.y = -Math.PI / 2; op.position.set(fx - 0.05, gy + dh + 0.36, z); parent.add(op);
-    // 안쪽 큰 글씨 (안쪽 벽 위)
+    var openTex = textTex(o.sign, 1024, 220, o.signBg || '#14181f', o.signFg || '#ffffff', 84);
+    var op = new T.Mesh(new T.PlaneGeometry(2.4, 0.52), new T.MeshBasicMaterial({ map: openTex, toneMapped: false })); op.rotation.y = R.inRot + Math.PI; op.position.set(fx - s * 0.05, gy + dh + 0.36, z); parent.add(op);
+    // 횡단보도 (서재 쪽 보도 ↔ 건너편 보도)
+    for (var zx = w / 2 + 5.3; zx < w / 2 + 13; zx += 1.0) { var st = new T.Mesh(new T.PlaneGeometry(0.5, 3.0), new T.MeshBasicMaterial({ color: 0xf2f2ee })); st.rotation.x = -Math.PI / 2; st.position.set(s * zx, gy + 0.025, z); parent.add(st); }
+    ROOMS.push(R);
+    return R;
+  }
+  function roomAt(x, z) {   // 이 자리가 어느 방 안인지
+    if (cur !== 0) return null;
+    for (var i = 0; i < ROOMS.length; i++) {
+      var R = ROOMS[i], ax = R.s * x, fa = R.s * R.fx;
+      if (ax > fa + 0.1 && ax < fa + R.bd && Math.abs(z - R.z) < R.bw / 2) return R;
+    }
+    return null;
+  }
+  function roomWalk(x, z) {   // 횡단보도·건너편 보도·문·방 안
+    for (var i = 0; i < ROOMS.length; i++) {
+      var R = ROOMS[i], ax = R.s * x, fa = R.s * R.fx, w = R.w;
+      if (ax < 0) continue;
+      if (Math.abs(z - R.z) < 1.5 && ax >= w / 2 + 4.4 && ax <= w / 2 + 13.2) return true;                         // 횡단보도
+      if (ax >= w / 2 + 13 && ax <= fa - 0.15 && Math.abs(z - R.z) < 14) return true;                              // 건너편 보도
+      if (ax > fa - 0.3 && ax < fa + 0.6 && Math.abs(z - R.z) < 0.85) return true;                                  // 문
+      if (ax >= fa + 0.4 && ax <= fa + R.bd - 0.4 && Math.abs(z - R.z) <= R.bw / 2 - 0.4) return true;             // 방 안
+    }
+    return false;
+  }
+  function carHold(c, z) {   // 사람이 횡단보도에 있으면 다가오던 차가 앞에서 선다
+    var cx = camera.position.x, cz = camera.position.z;
+    for (var i = 0; i < ROOMS.length; i++) {
+      var R = ROOMS[i], ax = R.s * cx;
+      if (R.s * c.g.position.x < 0 || ax < R.w / 2 + 4.4 || ax > R.w / 2 + 13.2 || Math.abs(cz - R.z) > 1.8) continue;
+      var ahead = (R.z - z) * c.dir;
+      if (ahead > 2.2 && ahead < 10) return true;
+    }
+    return false;
+  }
+  // (주)CRARES 갤러리: 벽마다 서재 전체에서 무작위로 고른 표지 액자 (누르면 작품 카드)
+  function addGallery(w) {
+    var R = shopRoom(CRARES, w, { label: '(주)CRARES 갤러리 · 액자를 누르면 작품 · [입구로]는 서재 입구', sign: ['CRARES GALLERY', '들어오세요 · 액자를 누르면 작품 카드'] });
+    if (!R) return;
+    var gy = R.gy, z = R.z, H = R.H, bw = R.bw, s = R.s, seed = rnd(311);
     var inTex = textTex(['(주)CRARES 갤러리'], 1400, 180, '#f4f2ee', '#14181f', 110);
-    var inSign = new T.Mesh(new T.PlaneGeometry(3.6, 0.46), new T.MeshBasicMaterial({ map: inTex, toneMapped: false })); inSign.rotation.y = -Math.PI / 2; inSign.position.set(bx + bd / 2 - 0.02, gy + H - 0.3, z); parent.add(inSign);
-    // 표지 액자: 서재 모든 층의 작품 중 무작위 (누르면 작품 카드)
-    var pool = []; floors.forEach(function (f) { (f.libs || []).forEach(function (lib) { lib.series.forEach(function (s) { if (s.last) pool.push([lib, s]); }); }); });
+    var inSign = new T.Mesh(new T.PlaneGeometry(3.6, 0.46), new T.MeshBasicMaterial({ map: inTex, toneMapped: false })); inSign.rotation.y = R.inRot; inSign.position.set(R.kx - s * 0.02, gy + H - 0.3, z); parent.add(inSign);
+    var pool = []; floors.forEach(function (f) { (f.libs || []).forEach(function (lib) { lib.series.forEach(function (sr) { if (sr.last) pool.push([lib, sr]); }); }); });
     var PW = 1.15, PH = 1.62, fr = 0.07, slots = [];
-    for (var sz = z - bw / 2 + 1.6; sz <= z + bw / 2 - 1.6; sz += 2.1) slots.push([bx + bd / 2 - 0.03, sz, -Math.PI / 2]);   // 안쪽 벽 (글씨 아래)
-    [-1, 1].forEach(function (sd) { for (var sx2 = fx + 1.9; sx2 <= bx + bd / 2 - 1.3; sx2 += 2.1) slots.push([sx2, z + sd * (bw / 2 - 0.03), sd > 0 ? Math.PI : 0]); });
-    var lampMat = EXT.lamp;
+    for (var sz = z - bw / 2 + 1.6; sz <= z + bw / 2 - 1.6; sz += 2.1) slots.push([R.kx - s * 0.03, sz, R.inRot]);   // 안쪽 벽
+    [-1, 1].forEach(function (sd) { for (var d0 = 1.9; d0 <= R.bd - 1.3; d0 += 2.1) slots.push([R.fx + s * d0, z + sd * (bw / 2 - 0.03), sd > 0 ? Math.PI : 0]); });
     slots.forEach(function (sl) {
       var pick0 = pool.length ? pool.splice(Math.floor(seed() * pool.length), 1)[0] : null; if (!pick0) return;
-      var lib = pick0[0], s = pick0[1], base = colorOf(s.title);
+      var lib = pick0[0], sr = pick0[1], base = colorOf(sr.title);
       var mat = new T.MeshStandardMaterial({ color: base, roughness: 0.55 });
-      var b = { key: lib.db_type + ':' + s.last, title: s.title || '(제목 없음)', count: s.count, lib: lib.name, db: lib.db_type, front: mat, base: base, state: 2, kind: 'poster' };
+      var b = { key: lib.db_type + ':' + sr.last, title: sr.title || '(제목 없음)', count: sr.count, lib: lib.name, db: lib.db_type, front: mat, base: base, state: 2, kind: 'poster' };
       var g = new T.Group(); g.position.set(sl[0], gy + 1.5, sl[1]); g.rotation.y = sl[2]; parent.add(g);
       var back = new T.Mesh(unitBox, M.oak); back.scale.set(PW + fr * 2, PH + fr * 2, 0.05); back.position.z = 0.025; g.add(back);
       var mount = new T.Mesh(unitBox, galWall); mount.scale.set(PW + 0.02, PH + 0.02, 0.01); mount.position.z = 0.05; g.add(mount);
       var m = new T.Mesh(posterGeo, mat); m.scale.set(PW - 0.12, PH - 0.12, 1); m.position.z = 0.058; m.userData.book = b; g.add(m);
       var lamp = new T.Mesh(unitBox, EXT.metal); lamp.scale.set(0.5, 0.05, 0.12); lamp.position.set(0, PH / 2 + 0.24, 0.18); g.add(lamp);   // 그림 조명
-      var bulb = new T.Mesh(unitBox, lampMat); bulb.scale.set(0.44, 0.02, 0.08); bulb.position.set(0, PH / 2 + 0.21, 0.19); g.add(bulb);
+      var bulb = new T.Mesh(unitBox, EXT.lamp); bulb.scale.set(0.44, 0.02, 0.08); bulb.position.set(0, PH / 2 + 0.21, 0.19); g.add(bulb);
       b.mesh = m; books.push(b);
       loader.load('api/lib3d/cover?k=' + encodeURIComponent(b.key), function (tex) {
         tex.encoding = T.sRGBEncoding; tex.anisotropy = 8; mat.map = tex; mat.color.set(0xffffff); mat.needsUpdate = true; b.cover = true;
       }, undefined, function () { b.state = 3; titleCover(b); });
     });
-    // 가운데 의자 (안쪽 벽을 보고)
-    var bn = new T.Group(); bn.position.set(bx + 0.4, gy, z); parent.add(bn);
+    var bn = new T.Group(); bn.position.set(R.bx + s * 0.4, gy, z); parent.add(bn);   // 가운데 의자 (안쪽 벽을 보고)
     var top = new T.Mesh(unitBox, M.oak); top.scale.set(0.55, 0.06, 2.4); top.position.y = 0.45; bn.add(top);
     [-1, 1].forEach(function (o) { var lg = new T.Mesh(unitBox, M.black); lg.scale.set(0.45, 0.42, 0.06); lg.position.set(0, 0.21, o * 1.05); bn.add(lg); });
-    [-0.6, 0.6].forEach(function (o) { addSeat(bx + 0.4, z + o, Math.PI / 2, 0.48); });
-    // 횡단보도 (서재 쪽 보도 ↔ 건너편 보도)
-    var r0 = w / 2 + 5, r1 = w / 2 + 13;
-    for (var zx = r0 + 0.3; zx < r1; zx += 1.0) { var st = new T.Mesh(new T.PlaneGeometry(0.5, 3.0), new T.MeshBasicMaterial({ color: 0xf2f2ee })); st.rotation.x = -Math.PI / 2; st.position.set(zx, gy + 0.025, z); parent.add(st); }
+    [-0.6, 0.6].forEach(function (o) { addSeat(R.bx + s * 0.4, z + o, s * Math.PI / 2, 0.48); });
   }
-  function inGallery(x, z) {
-    var G = GALLERY; return !!G && cur === 0 && x > G.fx + 0.1 && x < G.bx + G.bd / 2 && Math.abs(z - G.z) < G.bw / 2;
+  // ── colaiuta 재즈 청음실: 길 건너 colaiuta 건물 1층 - 스피커·앰프·턴테이블·LP 선반·네온, 벽 화면에 지금 곡과 스펙트럼 ──
+  // 인터넷 재즈 라디오 3곳(colaiuta77/jazzradio 참고)을 서버가 이어 준다. 소리는 고른 사람에게만, 청음실에서 멀어질수록 작아진다.
+  var JZ = { room: null, audio: null, ctx: null, an: null, gain: null, data: null, st: '', playing: false, vol: 0.8, now: null, bars: null, platter: null,
+             screen: null, scrTex: null, art: null, artUrl: '', pollAt: 0, list: [] };
+  var IS_IOS = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.maxTouchPoints > 1 && /Macintosh/.test(navigator.userAgent));
+  try { JZ.vol = parseFloat(localStorage.getItem('l3d_jazz_vol') || '0.8'); JZ.st = localStorage.getItem('l3d_jazz_st') || ''; } catch (e) { /* 기본값 */ }
+  var jzBox = el('l3d-jazz');
+  function addJazzRoom(w) {
+    JZ.room = null; JZ.bars = null; JZ.platter = null; JZ.screen = null;
+    var info = SHOPS.colaiuta; if (!info) return;
+    var wallM = new T.MeshStandardMaterial({ color: 0x24352c, roughness: 0.9, side: T.DoubleSide });
+    var floorM = new T.MeshStandardMaterial({ color: 0x4a3324, roughness: 0.55 });
+    var ceilM = new T.MeshStandardMaterial({ color: 0x1b1714, roughness: 0.95, side: T.DoubleSide });
+    var R = shopRoom(info, w, { label: 'colaiuta 재즈 청음실 · 턴테이블·화면을 누르거나 의자에 앉으면 라디오', wall: wallM, floor: floorM, ceil: ceilM,
+                                sign: ['JAZZ LISTENING ROOM', 'colaiuta · 재즈 청음실 · 들어오세요'], signBg: '#1a1410', signFg: '#ffcf7a' });
+    if (!R) return;
+    JZ.room = R;
+    var s = R.s, gy = R.gy, z = R.z;
+    function P(d, lat, y) { return new T.Vector3(R.kx - s * d, gy + (y || 0), z + lat); }   // 안쪽 벽에서 d만큼 앞, 옆으로 lat
+    var wood = new T.MeshStandardMaterial({ color: 0x5a3a24, roughness: 0.6 }), dark = new T.MeshStandardMaterial({ color: 0x141414, roughness: 0.5 });
+    var brass = new T.MeshStandardMaterial({ color: 0xc8a050, roughness: 0.3, metalness: 0.8 });
+    function boxAt(mat, sx, sy, sz, p, hit) { var m = new T.Mesh(unitBox, mat); m.scale.set(sx, sy, sz); m.position.copy(p); m.rotation.y = R.inRot; m.castShadow = true; parent.add(m); if (hit) { m.userData.jazz = true; brunchHits.push(m); } return m; }
+    // 큰 스피커 둘
+    [-1, 1].forEach(function (sd) {
+      var c = P(0.45, sd * 2.7, 0.85);
+      boxAt(wood, 0.9, 1.7, 0.6, c);
+      [[0.38, 0.22], [1.0, 0.13], [1.4, 0.06]].forEach(function (cn) {
+        var cone = new T.Mesh(new T.CylinderGeometry(cn[1], cn[1] * 0.7, 0.05, 24), dark); cone.rotation.z = Math.PI / 2;
+        cone.position.copy(P(0.77, sd * 2.7, cn[0])); cone.rotation.y = R.inRot + Math.PI / 2; parent.add(cone);
+      });
+    });
+    // 턴테이블 장 + 앰프 (VU 미터)
+    boxAt(wood, 2.2, 0.8, 0.65, P(0.5, 0, 0.4), true);
+    var vuTex = canvasTex(512, 128, function (g, cw, ch) {
+      g.fillStyle = '#1a1206'; g.fillRect(0, 0, cw, ch);
+      [0, 1].forEach(function (k) { var x0 = 30 + k * 250; g.fillStyle = '#f3c26b'; g.fillRect(x0, 18, 200, 92); g.strokeStyle = '#3a2a10'; g.lineWidth = 3;
+        g.beginPath(); g.arc(x0 + 100, 120, 80, Math.PI * 1.15, Math.PI * 1.85); g.stroke(); g.fillStyle = '#3a2a10'; g.font = '700 18px ' + FONT; g.fillText('VU', x0 + 88, 70); });
+    });
+    var vu = new T.Mesh(new T.PlaneGeometry(1.2, 0.3), new T.MeshBasicMaterial({ map: vuTex, toneMapped: false }));
+    vu.position.copy(P(0.82, 0, 0.55)); vu.rotation.y = R.inRot; parent.add(vu);
+    boxAt(dark, 0.8, 0.12, 0.45, P(0.5, -0.4, 0.86), true);   // 턴테이블 몸통
+    var platter = new T.Mesh(new T.CylinderGeometry(0.17, 0.17, 0.02, 32), new T.MeshStandardMaterial({ color: 0x0c0c0c, roughness: 0.3 }));
+    platter.position.copy(P(0.5, -0.45, 0.935)); platter.userData.jazz = true; brunchHits.push(platter); parent.add(platter);
+    var label = new T.Mesh(new T.CylinderGeometry(0.05, 0.05, 0.022, 20), new T.MeshStandardMaterial({ color: 0xc0392b })); label.position.set(0, 0.002, 0.03); platter.add(label);
+    JZ.platter = platter;
+    var arm = new T.Mesh(unitBox, brass); arm.scale.set(0.02, 0.02, 0.26); arm.position.copy(P(0.42, -0.2, 0.97)); arm.rotation.y = R.inRot + 0.5; parent.add(arm);
+    // 벽 화면: 방송국·곡·커버 + 그 아래 스펙트럼 막대
+    JZ.scrTex = canvasTex(1024, 512, function (g, cw, ch) { g.fillStyle = '#100c08'; g.fillRect(0, 0, cw, ch); });
+    var scr = new T.Mesh(new T.PlaneGeometry(3.0, 1.5), new T.MeshBasicMaterial({ map: JZ.scrTex, toneMapped: false }));
+    scr.position.copy(P(0.03, 0, 2.35)); scr.rotation.y = R.inRot; scr.userData.jazz = true; brunchHits.push(scr); parent.add(scr);
+    JZ.screen = scr;
+    var barMat = new T.MeshBasicMaterial({ color: 0xffb347, toneMapped: false }), n = 28;
+    var bars = new T.InstancedMesh(unitBox, barMat, n); bars.userData.base = P(0.06, 0, 1.5); bars.userData.n = n; parent.add(bars);
+    JZ.bars = bars; JZ.levels = new Float32Array(n); setBars(0);
+    // LP 선반 (옆 벽)
+    var lps = [], cols = [], rr = rnd(77);
+    [-1, 1].forEach(function (sd) {
+      for (var row = 0; row < 3; row++) {
+        boxAt(wood, 0.32, 0.04, 2.6, new T.Vector3(R.bx + s * 0.2, gy + 0.55 + row * 0.6, z + sd * (R.bw / 2 - 0.2)).add(new T.Vector3(0, 0, 0)));
+        for (var k = 0; k < 40; k++) {
+          lps.push([R.bx + s * (0.2 - 1.25 + k * 0.064), gy + 0.73 + row * 0.6, z + sd * (R.bw / 2 - 0.2), 0.045, 0.32, 0.3]);
+          cols.push([0x1d1d1d, 0x8c3b3b, 0x2f4858, 0xd8cbb0, 0xb5793e, 0x3e5c47, 0x6b4f73][Math.floor(rr() * 7)]);
+        }
+      }
+    });
+    instBoxes(lps, EXT.spine, cols);
+    // 네온 'JAZZ' (옆 벽)
+    var neonTex = textTex(['JAZZ'], 512, 200, 'rgba(0,0,0,0)', '#ff6ec7', 170);
+    var neon = new T.Mesh(new T.PlaneGeometry(1.8, 0.7), new T.MeshBasicMaterial({ map: neonTex, transparent: true, toneMapped: false }));
+    neon.position.set(R.bx - s * 1.2, gy + 2.55, z - (R.bw / 2 - 0.05)); parent.add(neon);
+    // 안락의자 셋 (화면을 보고) + 스탠드
+    [-1.7, 0, 1.7].forEach(function (lat) {
+      var p0 = P(3.4, lat, 0), ch = new T.Group(); ch.position.copy(p0); ch.rotation.y = s * Math.PI / 2; parent.add(ch);
+      var seatM = new T.MeshStandardMaterial({ color: 0x7a2e22, roughness: 0.7 });
+      var se = new T.Mesh(unitBox, seatM); se.scale.set(0.8, 0.2, 0.7); se.position.y = 0.42; ch.add(se);
+      var bk = new T.Mesh(unitBox, seatM); bk.scale.set(0.8, 0.75, 0.16); bk.position.set(0, 0.85, -0.3); ch.add(bk);
+      [-0.36, 0.36].forEach(function (ax) { var am = new T.Mesh(unitBox, seatM); am.scale.set(0.1, 0.25, 0.66); am.position.set(ax, 0.6, 0); ch.add(am); });
+      var lg = new T.Mesh(unitBox, dark); lg.scale.set(0.7, 0.32, 0.6); lg.position.y = 0.16; ch.add(lg);
+      addSeat(p0.x, p0.z, s * Math.PI / 2, 0.52, { jazz: true });
+    });
+    var lampP = P(R.bd - 1.2, R.bw / 2 - 1.0, 0);
+    var pole = new T.Mesh(new T.CylinderGeometry(0.02, 0.02, 1.6, 8), brass); pole.position.set(lampP.x, gy + 0.8, lampP.z); parent.add(pole);
+    var shade = new T.Mesh(new T.CylinderGeometry(0.14, 0.24, 0.24, 20, 1, true), EXT.lamp); shade.position.set(lampP.x, gy + 1.65, lampP.z); parent.add(shade);
+    drawJazzScreen();
   }
-  function galleryWalk(x, z) {   // 횡단보도·건너편 보도·문·갤러리 안
-    var G = GALLERY; if (!G) return false;
-    var w = G.w;
-    if (Math.abs(z - G.z) < 1.5 && x >= w / 2 + 4.4 && x <= w / 2 + 13.2) return true;                       // 횡단보도
-    if (x >= w / 2 + 13 && x <= G.fx - 0.15 && Math.abs(z - G.z) < 14) return true;                            // 건너편 보도
-    if (x > G.fx - 0.3 && x < G.fx + 0.6 && Math.abs(z - G.z) < 0.85) return true;                             // 문
-    return x >= G.fx + 0.4 && x <= G.bx + G.bd / 2 - 0.4 && Math.abs(z - G.z) <= G.bw / 2 - 0.4;               // 갤러리 안
+  function setBars(t) {   // 스펙트럼 막대 높이 (levels 0~1)
+    var B = JZ.bars; if (!B) return;
+    var R = JZ.room, n = B.userData.n, base = B.userData.base, m4 = new T.Matrix4(), q = new T.Quaternion().setFromEuler(new T.Euler(0, R.inRot, 0)), wid = 2.8 / n;
+    for (var i = 0; i < n; i++) {
+      var h = 0.03 + JZ.levels[i] * 0.55, lat = (i - (n - 1) / 2) * wid;
+      m4.compose(new T.Vector3(base.x, base.y + h / 2, base.z + lat), q, new T.Vector3(wid * 0.7, h, 0.03)); B.setMatrixAt(i, m4);
+    }
+    B.instanceMatrix.needsUpdate = true;
   }
-  function carHold(c, z) {   // 사람이 횡단보도에 있으면 다가오던 차가 앞에서 선다
-    var G = GALLERY; if (!G || c.g.position.x < 0) return false;
-    var cx = camera.position.x, onX = cx >= G.w / 2 + 4.4 && cx <= G.w / 2 + 13.2 && Math.abs(camera.position.z - G.z) < 1.8;
-    if (!onX) return false;
-    var ahead = (G.z - z) * c.dir;
-    return ahead > 2.2 && ahead < 10;
+  function drawJazzScreen() {
+    if (!JZ.screen) return;
+    var st = JZ.list.filter(function (x) { return x.id === JZ.st; })[0], nw = JZ.now || {}, img = JZ.art;
+    var tex = canvasTex(1024, 512, function (g, cw, ch) {
+      var grd = g.createLinearGradient(0, 0, cw, ch); grd.addColorStop(0, '#1b120a'); grd.addColorStop(1, '#0b0f14'); g.fillStyle = grd; g.fillRect(0, 0, cw, ch);
+      g.fillStyle = '#ffcf7a'; g.font = '700 34px ' + FONT; g.textBaseline = 'top';
+      g.fillText(JZ.playing ? 'ON AIR · ' + (st ? st.name : '') : 'JAZZ LISTENING ROOM', 40, 34, cw - 80);
+      var x0 = 40;
+      if (img && img.complete && img.naturalWidth) { g.drawImage(img, 40, 100, 340, 340); x0 = 410; }
+      g.fillStyle = '#f5f2ec'; g.font = '700 54px ' + FONT;
+      wrapText(g, JZ.playing ? (nw.title || '곡 정보를 기다리는 중') : '턴테이블이나 이 화면을 누르세요', x0, 130, cw - x0 - 40, 64, 3);
+      g.fillStyle = '#c9b48a'; g.font = '400 38px ' + FONT;
+      g.fillText(JZ.playing ? (nw.artist || '') : '인터넷 재즈 라디오 3곳 · 의자에 앉아 들어 보세요', x0, 340, cw - x0 - 40);
+      if (st && JZ.playing) { g.fillStyle = '#8a7a5a'; g.font = '400 28px ' + FONT; g.fillText(st.sub, x0, 400, cw - x0 - 40); }
+    });
+    var m = JZ.screen.material; if (m.map && m.map !== JZ.scrTex) m.map.dispose(); m.map = tex; m.needsUpdate = true;
+  }
+  function jzLoadList() {
+    if (JZ.list.length) return Promise.resolve(JZ.list);
+    return api('api/lib3d/jazz/stations').then(function (d) { JZ.list = d.stations || []; if (!JZ.st && JZ.list[0]) JZ.st = JZ.list[0].id; return JZ.list; });
+  }
+  function jzPoll(force) {
+    if (!JZ.st || (!force && Date.now() - JZ.pollAt < 20000)) return;
+    JZ.pollAt = Date.now();
+    api('api/lib3d/jazz/now?s=' + encodeURIComponent(JZ.st)).then(function (d) {
+      var changed = !JZ.now || JZ.now.raw !== d.raw; JZ.now = d;
+      if (d.art && d.art !== JZ.artUrl) {
+        JZ.artUrl = d.art; var im = new Image(); im.onload = function () { JZ.art = im; drawJazzScreen(); jzPanel(); }; im.src = 'api/lib3d/jazz/art?u=' + encodeURIComponent(d.art);
+      } else if (!d.art) { JZ.art = null; JZ.artUrl = ''; }
+      if (changed) { drawJazzScreen(); jzPanel(); }
+    }).catch(function () {});
+  }
+  function jzPlay(id) {
+    if (id) { JZ.st = id; try { localStorage.setItem('l3d_jazz_st', id); } catch (e) { /* 무시 */ } }
+    if (!JZ.audio) {
+      JZ.audio = new Audio(); JZ.audio.preload = 'none';
+      JZ.audio.addEventListener('playing', function () { JZ.playing = true; jzPanel(); drawJazzScreen(); });
+      JZ.audio.addEventListener('pause', function () { JZ.playing = false; jzPanel(); drawJazzScreen(); });
+      JZ.audio.addEventListener('error', function () { JZ.playing = false; el('l3d-jz-msg').textContent = '방송에 연결하지 못했습니다. 다른 방송국을 골라 보세요.'; jzPanel(); });
+    }
+    if (!IS_IOS && !JZ.ctx && (window.AudioContext || window.webkitAudioContext)) {   // 소리 분석(막대)·거리에 따른 소리 크기 (iOS는 기기 볼륨)
+      try {
+        JZ.ctx = new (window.AudioContext || window.webkitAudioContext)();
+        var src = JZ.ctx.createMediaElementSource(JZ.audio);
+        JZ.an = JZ.ctx.createAnalyser(); JZ.an.fftSize = 128; JZ.data = new Uint8Array(JZ.an.frequencyBinCount);
+        JZ.gain = JZ.ctx.createGain(); src.connect(JZ.an); JZ.an.connect(JZ.gain); JZ.gain.connect(JZ.ctx.destination);
+      } catch (e) { JZ.ctx = null; }
+    }
+    if (JZ.ctx && JZ.ctx.state === 'suspended') JZ.ctx.resume();
+    el('l3d-jz-msg').textContent = '연결하는 중...';
+    JZ.audio.src = 'api/lib3d/jazz/stream?s=' + encodeURIComponent(JZ.st) + '&t=' + Date.now();
+    var p = JZ.audio.play(); if (p && p.catch) p.catch(function () { el('l3d-jz-msg').textContent = '▶를 다시 눌러 주세요 (브라우저가 자동 재생을 막음).'; });
+    JZ.now = null; JZ.art = null; JZ.artUrl = ''; jzPoll(true); jzPanel(); drawJazzScreen();
+  }
+  function jzStop() {
+    if (JZ.audio) { JZ.audio.pause(); JZ.audio.removeAttribute('src'); try { JZ.audio.load(); } catch (e) { /* 무시 */ } }
+    JZ.playing = false; jzPanel(); drawJazzScreen();
+  }
+  function jzPanel() {
+    if (!jzBox) return;
+    var list = el('l3d-jz-st'); list.textContent = '';
+    JZ.list.forEach(function (st) {
+      var b = document.createElement('button'); b.type = 'button'; b.className = st.id === JZ.st ? 'on' : '';
+      var t = document.createElement('b'); t.textContent = st.name; var sm = document.createElement('small'); sm.textContent = st.sub;
+      b.appendChild(t); b.appendChild(sm); b.addEventListener('click', function () { jzPlay(st.id); }); list.appendChild(b);
+    });
+    var nw = JZ.now || {};
+    el('l3d-jz-title').textContent = JZ.playing ? (nw.title || '곡 정보를 기다리는 중') : '멈춤';
+    el('l3d-jz-artist').textContent = JZ.playing ? (nw.artist || '') : '방송국을 고르면 바로 나옵니다';
+    var im = el('l3d-jz-art'); if (JZ.playing && JZ.art) { im.src = JZ.art.src; im.hidden = false; } else im.hidden = true;
+    el('l3d-jz-pp').textContent = JZ.playing ? '❚❚ 멈춤' : '▶ 듣기';
+    if (JZ.playing) el('l3d-jz-msg').textContent = '';
+    var st = JZ.list.filter(function (x) { return x.id === JZ.st; })[0]; el('l3d-jz-home').href = st ? st.home : '#';
+    el('l3d-jz-vol').value = String(JZ.vol); el('l3d-jz-vol').style.display = IS_IOS ? 'none' : '';
+    el('l3d-jz-ios').hidden = !IS_IOS;
+  }
+  function openJazz() {
+    [setBox, aiBox, pplBox, outBox, mdlBox, staffBox, brBox, mpBox, cpBox].forEach(function (b) { if (b) b.classList.remove('on'); });
+    jzBox.classList.add('on'); closeCard();
+    jzLoadList().then(function () { jzPanel(); jzPoll(true); }).catch(function (e) { el('l3d-jz-msg').textContent = e.message; });
+  }
+  el('l3d-jz-pp').addEventListener('click', function () { if (JZ.playing) jzStop(); else jzLoadList().then(function () { jzPlay(); }); });
+  el('l3d-jz-vol').addEventListener('input', function () { JZ.vol = parseFloat(el('l3d-jz-vol').value) || 0; try { localStorage.setItem('l3d_jazz_vol', String(JZ.vol)); } catch (e) { /* 무시 */ } });
+  el('l3d-jz-close').addEventListener('click', function () { jzBox.classList.remove('on'); });   // 닫아도 소리는 계속 (■ 멈춤)
+  function updateJazz(dt, now) {   // 거리에 따른 소리 크기, 턴테이블 회전, 스펙트럼 막대
+    if (!JZ.audio || !JZ.playing) { if (JZ.bars && JZ.levels[0] > 0.001) { for (var k = 0; k < JZ.levels.length; k++) JZ.levels[k] *= 0.9; setBars(); } return; }
+    var R = JZ.room, f = 0;
+    if (R && cur === 0) {
+      var d = Math.hypot(camera.position.x - R.bx, camera.position.z - R.z) - Math.max(R.bd, R.bw) / 2;
+      f = roomAt(camera.position.x, camera.position.z) === R ? 1 : Math.max(0, Math.min(1, 1 - d / 30)) * 0.6;   // 밖에서는 멀수록 작게
+    }
+    if (JZ.gain) JZ.gain.gain.value = JZ.vol * f;
+    else JZ.audio.muted = f <= 0.02;   // iOS: 기기 볼륨, 멀리 가면 끔
+    if (JZ.platter) JZ.platter.rotation.y += dt * 3.5;
+    if (JZ.bars) {
+      if (JZ.an) {
+        JZ.an.getByteFrequencyData(JZ.data);
+        for (var i = 0; i < JZ.levels.length; i++) { var v = JZ.data[Math.min(JZ.data.length - 1, Math.floor(i * 1.6) + 1)] / 255; JZ.levels[i] += (v - JZ.levels[i]) * Math.min(1, dt * 12); }
+      } else for (var j = 0; j < JZ.levels.length; j++) JZ.levels[j] = 0.25 + 0.25 * Math.sin(now / 180 + j * 0.7) * Math.sin(now / 410 + j * 1.3);
+      setBars();
+    }
+    jzPoll(false);
   }
   function addDoorAndPlaza(w, back, front) {
     // 문틀 + 좌우로 열리는 유리 자동문 두 짝
@@ -1108,6 +1321,7 @@
     autoDoor = { leaves: leaves, open: 0, front: front };
     addFacade(w, back, front);   // 바깥에서 본 서재 (외장·위층·책등 벽·캐노피·옥상)
     addGallery(w);               // 길 건너 (주)CRARES 갤러리
+    addJazzRoom(w);              // 길 건너 colaiuta 재즈 청음실
     // 안쪽·바깥 매트
     [front - 1.1, front + 1.1].forEach(function (mz) { var mat = new T.Mesh(new T.PlaneGeometry(3.2, 1.6), new T.MeshStandardMaterial({ color: 0x2b2d30, roughness: 1 })); mat.rotation.x = -Math.PI / 2; add(mat, 0, 0.015, mz); });
     // 앞마당 (보도블록) - 양옆 보도와 이어진다
@@ -1137,8 +1351,8 @@
     var L = layout, ax = Math.abs(x), outer = L.w / 2 + 4.6;
     if (ax < DOOR_W / 2 - 0.35 && z > hall.z1 - 0.1 && z < L.front + 1.0) return autoDoor ? autoDoor.open > 0.55 : true;   // 문이 열려야 지나간다
     if (ax <= outer && z >= L.front + 0.45 && z <= L.front + PLAZA_D) return true;    // 앞마당
-    if (ax >= L.w / 2 + 0.45 && ax <= outer && z >= L.back - 25 && z <= L.front + PLAZA_D) return true;   // 양옆 보도 (차도는 안 됨)
-    if (galleryWalk(x, z)) return true;   // 횡단보도 건너 CRARES 갤러리
+    if (ax >= L.w / 2 + 0.45 && ax <= outer && z >= L.back - 38 && z <= L.front + 38) return true;   // 양옆 보도 (차도는 안 됨)
+    if (roomWalk(x, z)) return true;   // 횡단보도 건너 방들 (CRARES 갤러리·재즈 청음실)
     return false;
   }
   function addBuilding(fl, cols, rows) {
@@ -2460,7 +2674,7 @@
   var seatHitMat = new T.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false });
   seatHitMat.userData.keep = true;
   function addSeat(x, z, rot, h, opt) {   // rot: 앉은 사람이 보는 쪽 (사람 모형 rotation.y와 같은 뜻)
-    var st = { x: x, z: z, rot: rot, h: h || 0.46, brunch: !!(opt && opt.brunch), media: !!(opt && opt.media), cinema: !!(opt && opt.cinema), arcade: opt && opt.arcade || '' };
+    var st = { x: x, z: z, rot: rot, h: h || 0.46, brunch: !!(opt && opt.brunch), media: !!(opt && opt.media), cinema: !!(opt && opt.cinema), arcade: opt && opt.arcade || '', jazz: !!(opt && opt.jazz) };
     var m = new T.Mesh(unitBox, seatHitMat); m.scale.set(0.62, 0.95, 0.62); m.position.set(x, 0.48, z);
     m.userData.seat = st; st.mesh = m; (parent || floorGroup).add(m);
     seats.push(st);
@@ -2489,6 +2703,7 @@
     sitBtn();
     if (st.brunch && BRUNCH_ON) openBrunch();
     if (st.media) openMediaPick();
+    if (st.jazz) { openJazz(); if (!JZ.playing) jzLoadList().then(function () { jzPlay(); }); }   // 앉으면 바로 라디오
     if (st.arcade) setTimeout(function () { openArcade(st.arcade); }, 650);
     if (st.cinema && !(cine.video && !cine.video.paused)) setTimeout(openCinema, 700);   // 자리에 앉은 뒤 상영관 (상영 중이면 그대로)
   }
@@ -2636,6 +2851,7 @@
     var hit = ray.intersectObjects(targets, false)[0];
     if (hit && hit.object === elevator && hit.distance < 8) { openFloors(); return; }
     if (hit && hit.object.userData.cinema && hit.distance < 40) { closeCard(); openCinema(true); return; }
+    if (hit && hit.object.userData.jazz && hit.distance < 12) { openJazz(); return; }
     if (hit && hit.object.userData.arcade && hit.distance < 10) { openArcade(hit.object.userData.arcade); return; }
     if (hit && hit.object.userData.brunch && hit.distance < 14) { closeCard(); openBrunch(); return; }
     if (hit && hit.object.userData.seat) {
@@ -3324,7 +3540,8 @@
       if (d < bd) { bd = d; best = b; }
     });
     var fl = floors[cur] ? floors[cur].label + ' · ' : '';
-    if (inGallery(camera.position.x, camera.position.z)) { whereEl.textContent = '(주)CRARES 갤러리 · 액자를 누르면 작품 · [입구로]는 서재 입구'; return; }
+    var room0 = roomAt(camera.position.x, camera.position.z);
+    if (room0) { whereEl.textContent = room0.label; return; }
     if (isOutside(camera.position.x, camera.position.z)) { whereEl.textContent = '도서관 밖 · 유리문으로 들어오면 ' + fl.replace(/ · $/, ''); return; }
     whereEl.textContent = fl + (best && bd < 9 ? best.name + ' · ' + best.count + '작품' : '로비 · 엘리베이터나 [층]으로 다른 층');
   }
@@ -3404,7 +3621,7 @@
     floorGroup = new T.Group();
     scene.add(floorGroup);
     parent = floorGroup;
-    ARC_X = null; CINE_WALL = null; GALLERY = null; if (cine.video) cineStop(); cineScreen = null; if (cine.tex) { cine.tex.dispose(); cine.tex = null; }
+    ARC_X = null; CINE_WALL = null; ROOMS = []; if (i !== 0 && JZ.playing) jzStop(); if (cine.video) cineStop(); cineScreen = null; if (cine.tex) { cine.tex.dispose(); cine.tex = null; }
     COLS = fl.cinema ? 3 : Math.max(2, Math.min(4, fl.libs.length));
     addBuilding(fl, COLS, fl.cinema ? 1 : Math.ceil(fl.libs.length / COLS));
     applyOutside.force = true; applyOutside();
@@ -4675,6 +4892,7 @@
     if (LEFT) return;
     LEFT = true;
     try { brStop(); } catch (e) { /* 무시 */ }
+    try { jzStop(); } catch (e) { /* 무시 */ }
     try { if (MED.el) { mediaSave(); mediaStop(); } } catch (e) { /* 무시 */ }
     try { if (cine.video) cineStop(); closeCinema(); closeArcade(); } catch (e) { /* 무시 */ }
     if (reading) closeReader();
@@ -4709,6 +4927,7 @@
     if (!reading) { updatePeople(dt, now); updateWeather(dt, now); updateCars(dt); for (var rn in remotes) updateRemote(remotes[rn], dt);
       for (var sn in staffNPC) updateStaff(staffNPC[sn], dt, now);
       if (narrator) updateStaff(narrator, dt, now);
+      updateJazz(dt, now);
       if (pointer) pointer.mesh.position.y = pointer.y + Math.abs(Math.sin(now / 300)) * 0.12; }
     acc += dt;
     if (acc > 0.3) { acc = 0; loadNear(); where(); sitBtn(); if (now - posSavedAt > 2000) { posSavedAt = now; savePos(); } }

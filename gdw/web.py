@@ -28,7 +28,7 @@ import zipfile
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import lib3d, lib3d_agents, lib3d_brunch, lib3d_ymp, lib3d_ai, lib3d_presence, auth, config, mcp, service
+from . import lib3d, lib3d_agents, lib3d_brunch, lib3d_jazz, lib3d_ymp, lib3d_ai, lib3d_presence, auth, config, mcp, service
 
 log = logging.getLogger("gdw.web")
 WEB_DIR = os.path.join(config.ROOT, "web")
@@ -341,6 +341,41 @@ class Handler(BaseHTTPRequestHandler):
             ctype += "; charset=utf-8"
         self._send(200, data, ctype)
 
+    def _jazz(self, rest):
+        from urllib.parse import parse_qs
+        q = {k: v[0] for k, v in parse_qs(self.path.partition("?")[2]).items() if v}
+        try:
+            if rest == "stations":
+                return self._send(200, {"success": True, "stations": lib3d_jazz.stations()})
+            if rest == "now":
+                return self._send(200, dict(lib3d_jazz.now_playing(q.get("s") or ""), success=True))
+            if rest == "art":
+                raw, ctype = lib3d_jazz.art_bytes(q.get("u"))
+                return self._send(200, raw, ctype, extra={"Cache-Control": "private, max-age=86400"})
+            if rest == "stream":   # 방송을 끊김 없이 이어 준다 (듣는 사람이 끊을 때까지)
+                r = lib3d_jazz.open_stream(q.get("s") or "")
+                self.send_response(200)
+                self.send_header("Content-Type", r.headers.get("Content-Type") or "audio/mpeg")
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("X-Content-Type-Options", "nosniff")
+                self.end_headers()
+                try:
+                    while True:
+                        chunk = r.read(16 * 1024)
+                        if not chunk:
+                            break
+                        self.wfile.write(chunk)
+                except (BrokenPipeError, ConnectionResetError, TimeoutError):
+                    pass
+                finally:
+                    r.close()
+                return None
+        except ValueError as e:
+            return self._send(400, {"success": False, "error": str(e)})
+        except Exception as e:  # noqa: BLE001 - 방송국 쪽 오류
+            return self._send(502, {"success": False, "error": "방송에 연결하지 못했습니다: %s" % e})
+        return self._send(404, {"success": False, "error": "없는 주소입니다."})
+
     def _ym(self, rest, user, post=False):
         """YMPlayer 중계 (gdw/lib3d_ymp.py) - 허용한 주소만, 스트림은 조각으로 그대로 흘려 보낸다"""
         if not lib3d_ymp.configured():
@@ -456,6 +491,8 @@ class Handler(BaseHTTPRequestHandler):
         if not mods["lib3d"]:
             return self._send(404, {"success": False, "error": "BookOasis 3D 서재가 꺼져 있습니다 (LIB3D_ENABLED)."})
         from urllib.parse import parse_qs
+        if path.startswith("/api/lib3d/jazz/"):   # 재즈 청음실 (인터넷 재즈 라디오 중계)
+            return self._jazz(path[len("/api/lib3d/jazz/"):])
         if path == "/api/lib3d/arcade":   # 오락실: 게임 하나만 띄우는 화면 (3D 서재 안 창에 넣음, #게임id)
             if not mods["mini"]:
                 return self._send(404, {"success": False, "error": "미니게임이 꺼져 있습니다 (MINI_ENABLED)."})
