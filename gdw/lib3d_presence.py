@@ -121,6 +121,13 @@ def say(username, text, floor):
     return msg
 
 
+def active_count():
+    """지금 3D 서재에 들어와 있는 사람 수 (STALE_SEC 안에 소식이 있던 사람 - 창을 숨기거나 [나가기]면 빠짐)"""
+    with _LOCK:
+        _clean(time.time())
+        return len(_STATE)
+
+
 def leave(username):
     with _LOCK:
         _STATE.pop(username, None)

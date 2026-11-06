@@ -553,7 +553,11 @@ def _loop():
     while True:
         try:
             cfg = config_get()
-            if cfg.get("autonomous") and lib3d_ai.configured():
+            nobody = lib3d_presence.active_count() == 0   # 서재에 아무도 없으면 직원·손님 모두 쉰다 (AI 호출도 없음)
+            if nobody != _IDLE["v"]:
+                _IDLE["v"] = nobody
+                log.info("3D 서재 AI 직원: %s", "아무도 없어 쉽니다" if nobody else "사람이 들어와 다시 일합니다")
+            if cfg.get("autonomous") and lib3d_ai.configured() and not nobody:
                 due = []
                 for a in agents():
                     for t in a.get("tasks", []):
@@ -584,6 +588,7 @@ def _loop():
 
 
 _STARTED = {"v": False}
+_IDLE = {"v": False}
 
 
 def start():
@@ -623,5 +628,5 @@ def public(floor):
 def admin_info():
     cfg = config_get()
     st = state()
-    return {"config": cfg, "last_run": st["last_run"], "log": st["log"][-40:][::-1], "budget": lib3d_ai.budget(),
+    return {"config": cfg, "last_run": st["last_run"], "present": lib3d_presence.active_count(), "log": st["log"][-40:][::-1], "budget": lib3d_ai.budget(),
             "notes": {k: v.get("notes", []) for k, v in st["agents"].items()}, "configured": lib3d_ai.configured()}

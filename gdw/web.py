@@ -47,7 +47,7 @@ MAX_BODY = 2 * 1024 * 1024
 # 관람자(role=viewer)가 쓸 수 있는 것: 3D 서재 보기·읽기·함께 보기와 자기 비밀번호·로그아웃
 VIEWER_GET = {"/library3d", "/library3d/", "/library3d/app.js", "/theme.css", "/shell.js", "/api/modules", "/api/auth/state"}
 VIEWER_LIB3D_ADMIN_ONLY = {"/api/lib3d/libraries", "/api/lib3d/ai/settings", "/api/lib3d/ai/test", "/api/lib3d/agents"}
-VIEWER_POST = {"/api/auth/logout", "/api/auth/password", "/api/lib3d/presence", "/api/lib3d/say", "/api/lib3d/brunch/tts"}
+VIEWER_POST = {"/api/auth/logout", "/api/auth/password", "/api/lib3d/presence", "/api/lib3d/say", "/api/lib3d/brunch/tts", "/api/lib3d/leave"}
 
 
 THEMES = ("dark", "light", "black", "navy", "auto")
@@ -602,7 +602,7 @@ class Handler(BaseHTTPRequestHandler):
         if not path.startswith(("/api/rpc/", "/api/auth/", "/api/users")) and path not in ("/api/wtm/action", "/api/ui-prefs", "/api/mcp",
                                                                                           "/api/lib3d/settings", "/api/lib3d/ai/settings", "/api/lib3d/ai/ask",
                                                                                           "/api/lib3d/presence", "/api/lib3d/say", "/api/lib3d/agents",
-                                                                                          "/api/lib3d/brunch/tts"):
+                                                                                          "/api/lib3d/brunch/tts", "/api/lib3d/leave"):
             return self._send(404, {"success": False, "error": "없는 주소입니다."})
         if (self.headers.get("Content-Type") or "").split(";")[0].strip().lower() != "application/json":
             return self._send(415, {"success": False, "error": "Content-Type은 application/json이어야 합니다."})
@@ -620,6 +620,9 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(400, {"success": False, "error": "JSON 객체를 보내세요."})
         if path.startswith(("/api/auth/", "/api/users")):
             return self._auth_post(path, context, user)
+        if path == "/api/lib3d/leave":   # 3D 서재 [나가기]: 함께 보기에서 바로 빠진다 (아무도 없으면 AI 직원도 쉼)
+            lib3d_presence.leave(user["username"])
+            return self._send(200, {"success": True})
         if path == "/api/lib3d/brunch/tts":   # 낭독 코너: Edge 음성 한 문장 → mp3
             if not modules()["lib3d"] or not lib3d_brunch.enabled():
                 return self._send(404, {"success": False, "error": "브런치 낭독 코너가 꺼져 있습니다 (LIB3D_BRUNCH)."})

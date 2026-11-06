@@ -116,6 +116,14 @@
   .l3d-mini span { opacity: 0.7; white-space: nowrap; }
   .l3d-mini button { border: 0; border-radius: 999px; background: rgba(255, 255, 255, 0.14); color: #fff; padding: 5px 10px; cursor: pointer; font: inherit; }
   #l3d-mp-q { font: inherit; padding: 7px 10px; border: 1px solid #d9d3c8; border-radius: 10px; margin-bottom: 6px; }
+  .l3d-left { position: absolute; inset: 0; z-index: 9; display: none; align-items: center; justify-content: center; background: rgba(16, 17, 19, 0.94); color: #f5f2ec; text-align: center; padding: 20px; }
+  .l3d-left.on { display: flex; }
+  .l3d-left .box { max-width: 420px; display: flex; flex-direction: column; gap: 10px; align-items: center; }
+  .l3d-left .big { font-size: 3rem; }
+  .l3d-left h3 { margin: 0; font-size: 1.2rem; }
+  .l3d-left p { margin: 0; font-size: 0.86rem; opacity: 0.75; line-height: 1.6; }
+  .l3d-left .row { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; margin-top: 6px; }
+  .l3d-left [hidden] { display: none; }
   .l3d-cine { position: absolute; inset: 0; z-index: 7; display: none; flex-direction: column; background: #0b0b0d; }
   .l3d-cine.on { display: flex; }
   .l3d-cine .top { display: flex; align-items: center; gap: 8px; padding: 8px 10px; color: #f5f2ec; }
@@ -522,6 +530,19 @@
       <button type="button" class="l3d-btn" id="l3d-home">입구로</button>
       <button type="button" class="l3d-btn" id="l3d-reload">새로고침</button>
       <button type="button" class="l3d-btn" id="l3d-set-btn">설정</button>
+      <button type="button" class="l3d-btn" id="l3d-exit" title="서재에서 나가기 (소리·재생·움직임을 모두 멈춤)">나가기</button>
+    </div>
+    <div class="l3d-left" id="l3d-left" role="dialog" aria-label="서재에서 나옴">
+      <div class="box">
+        <div class="big">📚</div>
+        <h3>서재에서 나왔습니다</h3>
+        <p>소리·재생·움직임을 모두 멈췄습니다. 다른 사람들에게도 나간 것으로 보이고, 아무도 없으면 AI 직원·손님도 쉽니다.</p>
+        <div class="row">
+          <button type="button" class="l3d-btn primary" id="l3d-left-back">다시 들어가기</button>
+          <button type="button" class="l3d-btn" id="l3d-left-home">관리 화면으로</button>
+          <button type="button" class="l3d-btn" id="l3d-left-out">로그아웃</button>
+        </div>
+      </div>
     </div>
   </div>
 </main>

@@ -2825,7 +2825,7 @@
   function stopChat() { talk = null; bubble.style.display = 'none'; }
   function chatTick() {
     var now = performance.now();
-    if (!AI.chat || !chatPair || reading || chatBusy || talk || now < chatNext || document.visibilityState !== 'visible') return;
+    if (LEFT || !AI.chat || !chatPair || reading || chatBusy || talk || now < chatNext || document.visibilityState !== 'visible') return;
     var a = chatPair[0].g.position;
     if (Math.hypot(camera.position.x - a.x, camera.position.z - a.z) > 26) return;   // 멀리 있으면 부르지 않는다(요금)
     chatBusy = true;
@@ -3392,7 +3392,7 @@
     }).join(', ');
   }
   function presenceTick() {
-    if (presBusy || !floors.length || cur < 0 || !floors[cur] || document.visibilityState !== 'visible') return;
+    if (LEFT || presBusy || !floors.length || cur < 0 || !floors[cur] || document.visibilityState !== 'visible') return;
     presBusy = true;
     var body = { floor: floors[cur].key, x: +(sitting ? sitting.x : camera.position.x).toFixed(2), z: +(sitting ? sitting.z : camera.position.z).toFixed(2),
                  yaw: +(sitting ? sitting.rot : yaw + Math.PI).toFixed(3), sit: !!sitting,
@@ -4462,9 +4462,40 @@
     staffNPC = {}; hidePointer(); boardMesh = null; boardSig = '';
   }
 
+  // ── 나가기: 소리·재생·함께 보기·그리기를 모두 멈추고 안내 화면 ([다시 들어가기]로 이어서) ──
+  var LEFT = false;
+  function leaveLibrary() {
+    if (LEFT) return;
+    LEFT = true;
+    try { brStop(); } catch (e) { /* 무시 */ }
+    try { if (MED.el) { mediaSave(); mediaStop(); } } catch (e) { /* 무시 */ }
+    try { if (cine.video) cineStop(); closeCinema(); closeArcade(); } catch (e) { /* 무시 */ }
+    if (reading) closeReader();
+    if (sitting) standUp(true);
+    keys = {}; savePos();
+    [setBox, aiBox, pplBox, outBox, mdlBox, staffBox, brBox, mpBox, cpBox].forEach(function (b) { if (b) b.classList.remove('on'); });
+    fetch('api/lib3d/leave', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: '{}', keepalive: true }).catch(function () {});
+    var viewer = ME && ME.role === 'viewer';
+    el('l3d-left-home').hidden = viewer;
+    el('l3d-left').classList.add('on');
+  }
+  function reenterLibrary() {
+    if (!LEFT) return;
+    LEFT = false; el('l3d-left').classList.remove('on');
+    last = performance.now(); requestAnimationFrame(frame); presenceTick();
+  }
+  el('l3d-exit').addEventListener('click', leaveLibrary);
+  el('l3d-left-back').addEventListener('click', reenterLibrary);
+  el('l3d-left-home').addEventListener('click', function () { location.href = '/'; });
+  el('l3d-left-out').addEventListener('click', function () {
+    fetch('api/auth/logout', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: '{}' })
+      .then(function () { location.href = '/login'; }, function () { location.href = '/login'; });
+  });
+
   // ── 그리기 ──
   var last = performance.now(), acc = 0;
   function frame(now) {
+    if (LEFT) return;   // 나간 동안은 그리지도 움직이지도 않는다
     var dt = Math.min(0.05, (now - last) / 1000);
     last = now;
     step(dt);
