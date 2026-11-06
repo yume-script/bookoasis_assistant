@@ -767,6 +767,7 @@
   function updateCars(dt) {
     for (var i = 0; i < cars.length; i++) {
       var c = cars[i], z = c.g.position.z + c.dir * c.speed * dt;
+      if (carHold(c, z)) continue;
       if (z > c.span.z1) z = c.span.z0; else if (z < c.span.z0) z = c.span.z1;
       c.g.position.z = z;
     }
@@ -882,7 +883,8 @@
           var sw = Math.min(bw * 0.85, 11), sh = sw * 0.22, sy = gy + Math.min(bh - sh, 14), sx = bx - side * (bd / 2 + 0.2), sc0 = SIGN_COLORS[(signed.next + (side > 0 ? 0 : 3)) % SIGN_COLORS.length];
           if (nm === '(주)CRARES') {
             sc0 = ['#14181f', '#ffffff'];
-            CRARES = { face: bx - side * (bd / 2), side: side, z: mid, top: sy - sh / 2 - 0.5, bottom: gy + 4.6, maxW: Math.min(bw * 0.75, 9) };
+            CRARES = { face: bx - side * (bd / 2), side: side, z: mid, top: sy - sh / 2 - 0.5, bottom: gy + 4.6, maxW: Math.min(bw * 0.75, 9),
+                       bx: bx, bd: bd, bw: bw, bh: bh, gy: gy, bld: bld, shop: shop };   // 1층 갤러리용
           }
           var sign = new T.Mesh(new T.PlaneGeometry(sw, sh), new T.MeshBasicMaterial({ map: textTex([nm], 1024, 224, sc0[0], sc0[1], nm.length > 10 ? 120 : 150), toneMapped: false }));
           sign.rotation.y = -side * Math.PI / 2; add(sign, sx, sy, mid);   // 서재 쪽을 보게
@@ -1011,6 +1013,87 @@
     instBoxes(frames, EXT.metal);
     instBoxes(fins, EXT.metal);
   }
+  // ── (주)CRARES 갤러리: 길 건너 CRARES 건물 1층을 유리 상점 같은 갤러리로 - 횡단보도로 건너가 들어가면 벽마다 표지 액자 ──
+  var GALLERY = null;
+  var galGlass = new T.MeshStandardMaterial({ color: 0xa9c0cc, roughness: 0.05, metalness: 0.2, transparent: true, opacity: 0.22, depthWrite: false, side: T.DoubleSide });
+  var galWall = new T.MeshStandardMaterial({ color: 0xf4f2ee, roughness: 0.9, side: T.DoubleSide });
+  var galFloor = new T.MeshStandardMaterial({ color: 0xcfcac1, roughness: 0.35 });
+  [galGlass, galWall, galFloor].forEach(function (m) { m.userData.keep = true; });
+  function addGallery(w) {
+    var C = CRARES; if (!C || !C.bld || C.side < 0) return;
+    var gy = C.gy, bd = C.bd, bw = C.bw, bx = C.bx, z = C.z, fx = bx - bd / 2, H = 3.4, seed = rnd(311);
+    // 건물 1층을 비운다 (위층만 남김)
+    C.bld.scale.y = C.bh - H; C.bld.position.y = gy + H + (C.bh - H) / 2;
+    if (C.shop && C.shop.parent) C.shop.parent.remove(C.shop);
+    GALLERY = { fx: fx, bx: bx, bd: bd, bw: bw, z: z, gy: gy, w: w };
+    // 바닥·천장·안쪽 벽
+    var fl = new T.Mesh(new T.PlaneGeometry(bd, bw), galFloor); fl.rotation.x = -Math.PI / 2; fl.position.set(bx, gy + 0.012, z); fl.receiveShadow = true; parent.add(fl);
+    var ce = new T.Mesh(new T.PlaneGeometry(bd, bw), galWall); ce.rotation.x = Math.PI / 2; ce.position.set(bx, gy + H - 0.02, z); parent.add(ce);
+    var bk = new T.Mesh(new T.PlaneGeometry(bw, H), galWall); bk.rotation.y = -Math.PI / 2; bk.position.set(bx + bd / 2, gy + H / 2, z); parent.add(bk);
+    [-1, 1].forEach(function (sd) { var sw0 = new T.Mesh(new T.PlaneGeometry(bd, H), galWall); sw0.position.set(bx, gy + H / 2, z + sd * bw / 2); parent.add(sw0); });
+    // 길 쪽: 유리 진열창 + 가운데 문(열린 채) + 금속 창살
+    var dw = 2.4, dh = 2.7, side0 = (bw - dw) / 2;
+    [-1, 1].forEach(function (sd) {
+      var gl = new T.Mesh(new T.PlaneGeometry(side0, H), galGlass); gl.rotation.y = Math.PI / 2; gl.position.set(fx, gy + H / 2, z + sd * (dw / 2 + side0 / 2)); parent.add(gl);
+      for (var q = 0; q <= Math.floor(side0 / 1.5); q++) { var mu = new T.Mesh(unitBox, M.black); mu.scale.set(0.08, H, 0.06); mu.position.set(fx, gy + H / 2, z + sd * (dw / 2 + q * 1.5)); parent.add(mu); }
+    });
+    var lin = new T.Mesh(new T.PlaneGeometry(dw, H - dh), galGlass); lin.rotation.y = Math.PI / 2; lin.position.set(fx, gy + dh + (H - dh) / 2, z); parent.add(lin);
+    var top0 = new T.Mesh(unitBox, M.black); top0.scale.set(0.1, 0.1, bw); top0.position.set(fx, gy + H, z); parent.add(top0);
+    var dt0 = new T.Mesh(unitBox, M.black); dt0.scale.set(0.1, 0.08, dw); dt0.position.set(fx, gy + dh, z); parent.add(dt0);
+    var openTex = textTex(['CRARES GALLERY', '들어오세요 · 액자를 누르면 작품 카드'], 1024, 220, '#14181f', '#ffffff', 84);
+    var op = new T.Mesh(new T.PlaneGeometry(2.4, 0.52), new T.MeshBasicMaterial({ map: openTex, toneMapped: false })); op.rotation.y = -Math.PI / 2; op.position.set(fx - 0.05, gy + dh + 0.36, z); parent.add(op);
+    // 안쪽 큰 글씨 (안쪽 벽 위)
+    var inTex = textTex(['(주)CRARES 갤러리'], 1400, 180, '#f4f2ee', '#14181f', 110);
+    var inSign = new T.Mesh(new T.PlaneGeometry(3.6, 0.46), new T.MeshBasicMaterial({ map: inTex, toneMapped: false })); inSign.rotation.y = -Math.PI / 2; inSign.position.set(bx + bd / 2 - 0.02, gy + H - 0.3, z); parent.add(inSign);
+    // 표지 액자: 서재 모든 층의 작품 중 무작위 (누르면 작품 카드)
+    var pool = []; floors.forEach(function (f) { (f.libs || []).forEach(function (lib) { lib.series.forEach(function (s) { if (s.last) pool.push([lib, s]); }); }); });
+    var PW = 1.15, PH = 1.62, fr = 0.07, slots = [];
+    for (var sz = z - bw / 2 + 1.6; sz <= z + bw / 2 - 1.6; sz += 2.1) slots.push([bx + bd / 2 - 0.03, sz, -Math.PI / 2]);   // 안쪽 벽 (글씨 아래)
+    [-1, 1].forEach(function (sd) { for (var sx2 = fx + 1.9; sx2 <= bx + bd / 2 - 1.3; sx2 += 2.1) slots.push([sx2, z + sd * (bw / 2 - 0.03), sd > 0 ? Math.PI : 0]); });
+    var lampMat = EXT.lamp;
+    slots.forEach(function (sl) {
+      var pick0 = pool.length ? pool.splice(Math.floor(seed() * pool.length), 1)[0] : null; if (!pick0) return;
+      var lib = pick0[0], s = pick0[1], base = colorOf(s.title);
+      var mat = new T.MeshStandardMaterial({ color: base, roughness: 0.55 });
+      var b = { key: lib.db_type + ':' + s.last, title: s.title || '(제목 없음)', count: s.count, lib: lib.name, db: lib.db_type, front: mat, base: base, state: 2, kind: 'poster' };
+      var g = new T.Group(); g.position.set(sl[0], gy + 1.5, sl[1]); g.rotation.y = sl[2]; parent.add(g);
+      var back = new T.Mesh(unitBox, M.oak); back.scale.set(PW + fr * 2, PH + fr * 2, 0.05); back.position.z = 0.025; g.add(back);
+      var mount = new T.Mesh(unitBox, galWall); mount.scale.set(PW + 0.02, PH + 0.02, 0.01); mount.position.z = 0.05; g.add(mount);
+      var m = new T.Mesh(posterGeo, mat); m.scale.set(PW - 0.12, PH - 0.12, 1); m.position.z = 0.058; m.userData.book = b; g.add(m);
+      var lamp = new T.Mesh(unitBox, EXT.metal); lamp.scale.set(0.5, 0.05, 0.12); lamp.position.set(0, PH / 2 + 0.24, 0.18); g.add(lamp);   // 그림 조명
+      var bulb = new T.Mesh(unitBox, lampMat); bulb.scale.set(0.44, 0.02, 0.08); bulb.position.set(0, PH / 2 + 0.21, 0.19); g.add(bulb);
+      b.mesh = m; books.push(b);
+      loader.load('api/lib3d/cover?k=' + encodeURIComponent(b.key), function (tex) {
+        tex.encoding = T.sRGBEncoding; tex.anisotropy = 8; mat.map = tex; mat.color.set(0xffffff); mat.needsUpdate = true; b.cover = true;
+      }, undefined, function () { b.state = 3; titleCover(b); });
+    });
+    // 가운데 의자 (안쪽 벽을 보고)
+    var bn = new T.Group(); bn.position.set(bx + 0.4, gy, z); parent.add(bn);
+    var top = new T.Mesh(unitBox, M.oak); top.scale.set(0.55, 0.06, 2.4); top.position.y = 0.45; bn.add(top);
+    [-1, 1].forEach(function (o) { var lg = new T.Mesh(unitBox, M.black); lg.scale.set(0.45, 0.42, 0.06); lg.position.set(0, 0.21, o * 1.05); bn.add(lg); });
+    [-0.6, 0.6].forEach(function (o) { addSeat(bx + 0.4, z + o, Math.PI / 2, 0.48); });
+    // 횡단보도 (서재 쪽 보도 ↔ 건너편 보도)
+    var r0 = w / 2 + 5, r1 = w / 2 + 13;
+    for (var zx = r0 + 0.3; zx < r1; zx += 1.0) { var st = new T.Mesh(new T.PlaneGeometry(0.5, 3.0), new T.MeshBasicMaterial({ color: 0xf2f2ee })); st.rotation.x = -Math.PI / 2; st.position.set(zx, gy + 0.025, z); parent.add(st); }
+  }
+  function inGallery(x, z) {
+    var G = GALLERY; return !!G && cur === 0 && x > G.fx + 0.1 && x < G.bx + G.bd / 2 && Math.abs(z - G.z) < G.bw / 2;
+  }
+  function galleryWalk(x, z) {   // 횡단보도·건너편 보도·문·갤러리 안
+    var G = GALLERY; if (!G) return false;
+    var w = G.w;
+    if (Math.abs(z - G.z) < 1.5 && x >= w / 2 + 4.4 && x <= w / 2 + 13.2) return true;                       // 횡단보도
+    if (x >= w / 2 + 13 && x <= G.fx - 0.15 && Math.abs(z - G.z) < 14) return true;                            // 건너편 보도
+    if (x > G.fx - 0.3 && x < G.fx + 0.6 && Math.abs(z - G.z) < 0.85) return true;                             // 문
+    return x >= G.fx + 0.4 && x <= G.bx + G.bd / 2 - 0.4 && Math.abs(z - G.z) <= G.bw / 2 - 0.4;               // 갤러리 안
+  }
+  function carHold(c, z) {   // 사람이 횡단보도에 있으면 다가오던 차가 앞에서 선다
+    var G = GALLERY; if (!G || c.g.position.x < 0) return false;
+    var cx = camera.position.x, onX = cx >= G.w / 2 + 4.4 && cx <= G.w / 2 + 13.2 && Math.abs(camera.position.z - G.z) < 1.8;
+    if (!onX) return false;
+    var ahead = (G.z - z) * c.dir;
+    return ahead > 2.2 && ahead < 10;
+  }
   function addDoorAndPlaza(w, back, front) {
     // 문틀 + 좌우로 열리는 유리 자동문 두 짝
     box(DOOR_W + 0.1, 0.1, 0.26, M.black, 0, DOOR_H + 0.05, front);
@@ -1024,6 +1107,7 @@
     });
     autoDoor = { leaves: leaves, open: 0, front: front };
     addFacade(w, back, front);   // 바깥에서 본 서재 (외장·위층·책등 벽·캐노피·옥상)
+    addGallery(w);               // 길 건너 (주)CRARES 갤러리
     // 안쪽·바깥 매트
     [front - 1.1, front + 1.1].forEach(function (mz) { var mat = new T.Mesh(new T.PlaneGeometry(3.2, 1.6), new T.MeshStandardMaterial({ color: 0x2b2d30, roughness: 1 })); mat.rotation.x = -Math.PI / 2; add(mat, 0, 0.015, mz); });
     // 앞마당 (보도블록) - 양옆 보도와 이어진다
@@ -1046,7 +1130,7 @@
     autoDoor.open += ((near ? 1 : 0) - autoDoor.open) * Math.min(1, dt * 3.5);
     autoDoor.leaves.forEach(function (l) { l.g.position.x = l.sd * (DOOR_W / 4 + (DOOR_W / 2 - 0.1) * autoDoor.open); });
   }
-  function isOutside(x, z) { return cur === 0 && layout && z > layout.front + 0.2; }
+  function isOutside(x, z) { return cur === 0 && layout && (z > layout.front + 0.2 || Math.abs(x) > layout.w / 2 + 0.2); }
   function walkable(x, z) {   // 걸어 다닐 수 있는 곳: 서재 안 + (1층이면) 문 + 앞마당 + 양옆 보도
     if (x >= hall.x0 && x <= hall.x1 && z >= hall.z0 && z <= hall.z1) return !(CINE_WALL != null && Math.abs(z - CINE_WALL) < 0.4 && Math.abs(x) > 2.6);   // 영화관 칸막이
     if (cur !== 0 || !layout) return false;
@@ -1054,6 +1138,7 @@
     if (ax < DOOR_W / 2 - 0.35 && z > hall.z1 - 0.1 && z < L.front + 1.0) return autoDoor ? autoDoor.open > 0.55 : true;   // 문이 열려야 지나간다
     if (ax <= outer && z >= L.front + 0.45 && z <= L.front + PLAZA_D) return true;    // 앞마당
     if (ax >= L.w / 2 + 0.45 && ax <= outer && z >= L.back - 25 && z <= L.front + PLAZA_D) return true;   // 양옆 보도 (차도는 안 됨)
+    if (galleryWalk(x, z)) return true;   // 횡단보도 건너 CRARES 갤러리
     return false;
   }
   function addBuilding(fl, cols, rows) {
@@ -3239,6 +3324,7 @@
       if (d < bd) { bd = d; best = b; }
     });
     var fl = floors[cur] ? floors[cur].label + ' · ' : '';
+    if (inGallery(camera.position.x, camera.position.z)) { whereEl.textContent = '(주)CRARES 갤러리 · 액자를 누르면 작품 · [입구로]는 서재 입구'; return; }
     if (isOutside(camera.position.x, camera.position.z)) { whereEl.textContent = '도서관 밖 · 유리문으로 들어오면 ' + fl.replace(/ · $/, ''); return; }
     whereEl.textContent = fl + (best && bd < 9 ? best.name + ' · ' + best.count + '작품' : '로비 · 엘리베이터나 [층]으로 다른 층');
   }
@@ -3318,7 +3404,7 @@
     floorGroup = new T.Group();
     scene.add(floorGroup);
     parent = floorGroup;
-    ARC_X = null; CINE_WALL = null; if (cine.video) cineStop(); cineScreen = null; if (cine.tex) { cine.tex.dispose(); cine.tex = null; }
+    ARC_X = null; CINE_WALL = null; GALLERY = null; if (cine.video) cineStop(); cineScreen = null; if (cine.tex) { cine.tex.dispose(); cine.tex = null; }
     COLS = fl.cinema ? 3 : Math.max(2, Math.min(4, fl.libs.length));
     addBuilding(fl, COLS, fl.cinema ? 1 : Math.ceil(fl.libs.length / COLS));
     applyOutside.force = true; applyOutside();
