@@ -30,7 +30,7 @@ BookOasis 세션(일반·성인·오디오북·비디오)마다 한 층, 보관�
 | 4층 비디오 | 영상 (여기서 보기) | **입구 오른쪽** 시청 부스 | - |
 | 맨 위 영화관 | - | 상영관 (큰 스크린 + 좌석 6줄) - YMPlayer의 IPTV·텔레그램 상영 | `LIB3D_YMPLAYER_*` |
 
-어느 층이든: 함께 보는 사람·채팅, AI 직원(사서·도슨트)과 AI 손님(AI 설정 시), 창밖 풍경(시간·계절·날씨), 표지 포스터, 의자에 앉기.
+어느 층이든: 손님들(사람·스톰트루퍼·엘프·**로봇 손님**), 함께 보는 사람·채팅, AI 직원(사서·도슨트)과 AI 손님(AI 설정 시), 창밖 풍경(시간·계절·날씨), 표지 포스터, 의자에 앉기.
 
 ---
 
@@ -131,7 +131,7 @@ search = https://내-검색-mcp-주소/mcp
 
 ### 3-2. AI 직원 · AI 손님
 
-AI 연결을 마치면 자동으로 나옵니다. 끄고 켜기·성격·업무는 [3D 서재 > AI 직원]에서 정합니다(자세한 쓰는 법은 [6-5](#6-5-ai-직원과-ai-손님)).
+AI 연결을 마치면 자동으로 나옵니다. 끄고 켜기·성격·업무는 [3D 서재 > AI 직원]에서 정합니다(자세한 쓰는 법은 [6-6](#6-6-ai-직원과-ai-손님)).
 
 - **자율 업무**: 사용자가 없어도 서버가 30초마다 살펴 때가 된 업무를 하나씩 합니다(직원: 추천 도서·서재 점검·구역 순찰, 손님: 방문).
 - 오늘 호출을 한도의 **70% 넘게** 썼으면 AI 손님은 오지 않습니다(사용자 몫을 남김). 한도를 다 쓰면 직원 업무도 다음 날로 미룹니다.
@@ -278,7 +278,14 @@ LIB3D_YMPLAYER_VIEWERS=true                        # 관람자 계정도 영화�
 - [오락실로] 또는 **Esc**(게임 중에도)로 닫으면 게임이 끝납니다. 창이 열린 동안 방향키는 게임에만 갑니다.
 - 건물 폭이 좁으면(보관함이 적을 때) 오락실을 만들지 않습니다.
 
-### 6-5. AI 직원과 AI 손님
+### 6-5. 로봇 손님
+
+three.js 예제(webgl_animation_skinning_morph)의 노란 로봇이 층마다 한 대(기본, [인물 수]에서 0~20) 통로를 걸어 다닙니다.
+- 걷다가 자주 멈춰 **손 흔들기·고개 끄덕·엄지척·춤·점프·고개 젓기** 중 하나를 합니다.
+- 가까이(약 3m) 가면 이쪽을 돌아보며 손을 흔들거나 엄지를 들고, 잠깐 **놀란 표정**(얼굴 모핑)을 짓습니다(같은 로봇은 25초에 한 번).
+- 모형은 jsdelivr에서 처음 한 번 받습니다(받기 전에는 나오지 않음).
+
+### 6-6. AI 직원과 AI 손님
 
 | 누구 | 자리 | 부르는 말 | 혼자 하는 일 (기본) |
 |---|---|---|---|
@@ -301,7 +308,7 @@ LIB3D_YMPLAYER_VIEWERS=true                        # 관람자 계정도 영화�
 | 메뉴 | 정하는 것 | 저장 |
 |---|---|---|
 | **설정** | 보여 줄 보관함(세션별 묶음, [전부 보기]) | `lib3d.json` `libraries` |
-| **인물 수** | 층 × 인물 종류마다 0~20명(비우면 자동): 걷는·책 고르는·서서 읽는·벤치·대화 손님, 안내 직원, 스톰트루퍼, 엘프, 숨은 인물 | `people` |
+| **인물 수** | 층 × 인물 종류마다 0~20명(비우면 자동): 걷는·책 고르는·서서 읽는·벤치·대화 손님, 안내 직원, 스톰트루퍼, 엘프, 로봇 손님, 숨은 인물 | `people` |
 | **창밖 풍경** | 시간(자동·낮·노을·밤) · 계절(자동·봄·여름·가을·겨울) · 날씨(맑음·흐림·비·눈·자동) | `outside` |
 | **창밖 풍경 > CRARES 현수막** | 없음 / 그림 주소(서버가 받아 둠, 6시간마다 갱신, 15MB까지) / 보관함 표지(정한 간격마다 무작위, 누르면 작품 카드) | `banner`, `banner_lib`, `banner_sec` |
 | **3D 모형** | 라운지 소파·의자·화분·차를 '지금 그대로'(가벼움) 또는 '3D 모형 파일'(약 14MB) | `models` |
@@ -383,4 +390,4 @@ LIB3D_YMPLAYER_VIEWERS=true                        # 관람자 계정도 영화�
 
 ---
 
-**출처** - 3D 모형 파일: GlamVelvetSofa·ChairDamaskPurplegold (© Wayfair, Eric Chadwick, CC BY 4.0), DiffuseTransmissionPlant (© Darmstadt Graphics Group, CC BY 4.0) - Khronos glTF Sample Assets / Ferrari 458 Italia (vicent091036, three.js 예제). 사람 모형: three.js 예제의 Xbot·Michelle·readyplayer.me·스톰트루퍼·엘프.
+**출처** - 3D 모형 파일: GlamVelvetSofa·ChairDamaskPurplegold (© Wayfair, Eric Chadwick, CC BY 4.0), DiffuseTransmissionPlant (© Darmstadt Graphics Group, CC BY 4.0) - Khronos glTF Sample Assets / Ferrari 458 Italia (vicent091036, three.js 예제). 사람 모형: three.js 예제의 Xbot·Michelle·readyplayer.me·스톰트루퍼·엘프. 로봇 손님: RobotExpressive (Tomás Laulhé / Quaternius, CC0, 표정·동작 Don McCurdy) - three.js 예제.

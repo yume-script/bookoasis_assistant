@@ -1161,6 +1161,50 @@
       respawn();
     }, undefined, function (e) { console.warn('3D 서재 엘프:', e); });
   }
+  function robotHuman(r) {   // 걷다 멈추면 손 흔들기·엄지척·춤 같은 동작, 가까이 오면 손을 흔들며 놀란 표정
+    var model = T.SkeletonUtils.clone(HUMAN.robot.scene);
+    model.scale.setScalar(HUMAN.robotScale);
+    var face = null;
+    model.traverse(function (o) { if (o.isMesh) { o.castShadow = true; o.frustumCulled = false; if (o.morphTargetDictionary && !face) face = o; } });
+    var g = new T.Group(); g.add(model);
+    var mixer = new T.AnimationMixer(model), C = HUMAN.robotClips, acts = {};
+    if (C.Idle) { acts.idle = mixer.clipAction(C.Idle); acts.idle.play(); }
+    if (C.Walking) { acts.walk = mixer.clipAction(C.Walking); acts.walk.play(); acts.walk.setEffectiveWeight(0); }
+    mixer.update(r() * 2);
+    return { g: g, mixer: mixer, acts: acts, clips: C, model: model, r: r, phase: r() * 6, sc: 1, walkW: 0, robot: true, face: face, greetAt: 0, walkRate: 1.1 };
+  }
+  function robotEmote(p, name, sec) {   // 한 번만 하는 동작 (그동안은 서 있는다)
+    var clip = p.clips[name]; if (!clip) return;
+    if (p.emote) p.emote.act.fadeOut(0.2);
+    var a = p.mixer.clipAction(clip); a.reset(); a.setLoop(name === 'Dance' ? T.LoopRepeat : T.LoopOnce, 1); a.clampWhenFinished = true;
+    a.setEffectiveWeight(1); a.fadeIn(0.25); a.play();
+    var len = sec || clip.duration;
+    p.emote = { act: a, left: len }; p.pause = Math.max(p.pause || 0, len + 0.3);
+  }
+  function robotMood(p, key, v) {   // 얼굴 표정 (morph: Angry·Surprised·Sad)
+    if (!p.face) return;
+    var i = p.face.morphTargetDictionary[key]; if (i == null) return;
+    p.face.morphTargetInfluences[i] += (v - p.face.morphTargetInfluences[i]) * 0.15;
+  }
+  function updateRobot(p, dt, now) {
+    var cx = camera.position.x - p.g.position.x, cz = camera.position.z - p.g.position.z, near = Math.hypot(cx, cz) < 3.2;
+    if (near && now - p.greetAt > 25000 && !reading) {   // 가까이 온 사람에게 인사
+      p.greetAt = now; p.greet = 2.2; robotEmote(p, p.r() < 0.5 ? 'Wave' : 'ThumbsUp');
+    }
+    if (p.greet > 0) {
+      p.greet -= dt;
+      var want = Math.atan2(cx, cz), c0 = p.g.rotation.y;
+      p.g.rotation.y = c0 + Math.atan2(Math.sin(want - c0), Math.cos(want - c0)) * Math.min(1, dt * 5);
+    }
+    robotMood(p, 'Surprised', p.greet > 1.2 ? 1 : 0);
+    if (p.emote) {
+      p.emote.left -= dt;
+      if (p.emote.left <= 0) { p.emote.act.fadeOut(0.3); p.emote = null; }
+    } else if (p.pause > 0.8 && p.r() < dt * 0.6) {   // 멈춰 있을 때 가끔 한 가지 동작
+      var pick = ['Wave', 'Yes', 'ThumbsUp', 'Dance', 'Jump', 'No'][Math.floor(p.r() * 6)];
+      robotEmote(p, pick, pick === 'Dance' ? 3.5 : null);
+    }
+  }
   function trooperHuman(r) {   // 총을 든 채 걷는 동작 하나뿐이라 멈추지 않고 계속 순찰한다
     var model = T.SkeletonUtils.clone(HUMAN.trooper);
     model.traverse(function (o) { if (o.isMesh) { o.castShadow = true; o.frustumCulled = false; } });
@@ -1411,6 +1455,14 @@
     loadCollada();
     if (!T.GLTFLoader || !T.SkeletonUtils) return;
     var loader = new T.GLTFLoader();
+    // 로봇 손님: three.js 예제 webgl_animation_skinning_morph의 RobotExpressive (Tomás Laulhé/Quaternius, CC0)
+    loader.load(MODEL_BASE + 'RobotExpressive/RobotExpressive.glb', function (rg) {
+      rg.scene.traverse(function (o) { if (o.geometry) o.geometry.userData.shared = true; (Array.isArray(o.material) ? o.material : o.material ? [o.material] : []).forEach(function (m) { m.userData.keep = true; }); });
+      var box = new T.Box3().setFromObject(rg.scene);
+      HUMAN.robot = rg; HUMAN.robotScale = 1.3 / Math.max(0.1, box.max.y - box.min.y);   // 키 1.3m쯤 (사람보다 조금 작게)
+      HUMAN.robotClips = {}; rg.animations.forEach(function (c) { HUMAN.robotClips[c.name] = c; });
+      respawn();
+    }, undefined, function (e) { console.warn('3D 서재 로봇 손님 모형:', e && e.message); });
     loader.load(MODEL_BASE + 'Xbot.glb', function (gltf) {
       gltf.scene.traverse(function (o) { if (o.geometry) o.geometry.userData.shared = true; });
       var raw = {};
@@ -1938,7 +1990,7 @@
   var PEOPLE_KINDS = [
     { k: 'walk', label: '걷는 손님' }, { k: 'browse', label: '책 고르는 손님' }, { k: 'read', label: '서서 읽는 손님' },
     { k: 'sit', label: '벤치 손님' }, { k: 'chat', label: '대화하는 손님(쌍)' }, { k: 'staff', label: '안내 직원' },
-    { k: 'trooper', label: '스톰트루퍼' }, { k: 'elf', label: '엘프' }, { k: 'beach', label: '숨은 인물(산타 토끼)' },
+    { k: 'trooper', label: '스톰트루퍼' }, { k: 'elf', label: '엘프' }, { k: 'robot', label: '로봇 손님' }, { k: 'beach', label: '숨은 인물(산타 토끼)' },
   ];
   var PEOPLE_MAX = 20;
   function spawnPeople(fl, seed) {
@@ -2021,6 +2073,11 @@
       for (i = 0; i < troops; i++) walker(trooperHuman(rnd(seed * 131 + 9 + i * 19)), 0.85, i === 0 ? 1 : undefined);
     }
     // 엘프: 로비에서 시작해 통로를 걷는다 (뼈대를 못 심었으면 로비에 피규어로)
+    // 로봇 손님: 통로를 걷다 멈추면 이런저런 동작, 가까이 가면 인사 (모형을 받은 뒤)
+    if (HUMAN.robot) {
+      var robots = cnt('robot', 1);
+      for (i = 0; i < robots; i++) walker(robotHuman(rnd(seed * 173 + 29 + i * 31)), 1.05, i === 0 ? 0 : undefined);
+    }
     var elves = cnt('elf', 1);
     for (i = 0; i < elves; i++) {
       if (HUMAN.elfRig && HUMAN.gltf) walker(elfWalker(rnd(seed * 163 + 17 + i * 23)), 1.0, i === 0 ? 0 : undefined);
@@ -2045,7 +2102,7 @@
     var o = opts[Math.floor(p.r() * opts.length)];
     p.prev = p.node; p.node = o;
     p.tx = L.lanes[o[0]] + (p.r() - 0.5) * 1.2; p.tz = L.rowsZ[o[1]] + (p.r() - 0.5) * 1.2;
-    if (!p.alwaysWalk && p.r() < 0.18) p.pause = 1 + p.r() * 3;   // 가끔 멈춰 두리번
+    if (!p.alwaysWalk && p.r() < (p.robot ? 0.35 : 0.18)) p.pause = 1 + p.r() * 3;   // 가끔 멈춰 두리번 (로봇은 자주 멈춰 동작)
   }
 
   function updateHuman(p, dt, now) {
@@ -2066,9 +2123,11 @@
     }
     // 걷기 ↔ 서 있기를 부드럽게 섞는다
     if (p.alwaysWalk) { p.mixer.update(dt * 0.9); return; }
+    if (p.robot) updateRobot(p, dt, now);
     p.walkW += ((moving ? 1 : 0) - p.walkW) * Math.min(1, dt * 4);
-    if (p.acts.walk) { p.acts.walk.setEffectiveWeight(p.walkW); p.acts.walk.timeScale = p.speed / 1.25; }
-    if (p.acts.idle) p.acts.idle.setEffectiveWeight(1 - p.walkW);
+    var ew = p.emote ? p.emote.act.getEffectiveWeight() : 0;   // 로봇이 동작 중이면 그만큼 서 있기를 덜 섞는다
+    if (p.acts.walk) { p.acts.walk.setEffectiveWeight(p.walkW * (1 - ew)); p.acts.walk.timeScale = p.speed / 1.25 * (p.walkRate || 1); }
+    if (p.acts.idle) p.acts.idle.setEffectiveWeight((1 - p.walkW) * (1 - ew));
     p.mixer.update(dt);
     applyLook(p, now);
   }

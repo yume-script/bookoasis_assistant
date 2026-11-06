@@ -22,7 +22,7 @@ from urllib.request import Request, urlopen
 
 from . import bookoasis_db, config
 
-VERSION = "2.36.1"
+VERSION = "2.37.0"
 CACHE_SEC = 300
 COVER_WIDTH = 200
 _DATA = {"at": 0.0, "v": None}
@@ -100,7 +100,7 @@ def save_settings(libraries):
     return data_
 
 
-PEOPLE_KINDS = ("walk", "browse", "read", "sit", "chat", "staff", "trooper", "elf", "beach")
+PEOPLE_KINDS = ("walk", "browse", "read", "sit", "chat", "staff", "trooper", "elf", "robot", "beach")
 PEOPLE_MAX = 20
 
 
