@@ -2499,11 +2499,26 @@
             info: null, idx: 0, list: [], scroll: false, vi: 0, rtl: false, busy: false, pages: 0, html: '' };
   var book = el('l3d-book'), pgL = el('l3d-pg-l'), pgR = el('l3d-pg-r'), leaf = el('l3d-leaf');
   var leafF = leaf.querySelector('.front'), leafB = leaf.querySelector('.back');
-  function api(url) {
-    return fetch(url, { credentials: 'same-origin' }).then(function (r) { return r.json(); }).then(function (d) {
-      if (!d.success) throw new Error(d.error || '불러오지 못했습니다');
-      return d;
+  // 응답 읽기: JSON이 아니면(앞단 프록시의 502·504 오류 화면 등) 알아보기 쉬운 말로
+  function readJSON(r) {
+    return r.text().then(function (t) {
+      try { return JSON.parse(t); } catch (e) {
+        var title = (t.match(/<title>([^<]*)<\/title>/i) || [])[1] || (t.match(/<h1>([^<]*)<\/h1>/i) || [])[1] || '';
+        var err = new Error('서버 대신 앞단(프록시)이 응답했습니다: ' + r.status + (title ? ' ' + title.trim().replace(/^\d{3}\s*/, '') : '') +
+          ' - 서버를 다시 시작하는 중이거나 잠시 연결이 끊겼을 수 있습니다. 잠시 뒤 다시 해 보세요.');
+        err.status = r.status; err.proxy = true; throw err;
+      }
     });
+  }
+  function busy(e) { return e && e.proxy && (e.status === 502 || e.status === 503 || e.status === 504); }
+  function api(url) {
+    var once = function () {
+      return fetch(url, { credentials: 'same-origin' }).then(readJSON).then(function (d) {
+        if (!d.success) throw new Error(d.error || '불러오지 못했습니다');
+        return d;
+      });
+    };
+    return once().catch(function (e) { if (!busy(e)) throw e; return new Promise(function (ok) { setTimeout(ok, 1500); }).then(once); });   // 502·503·504는 한 번 더
   }
   function note(t) { var m = el('l3d-r-msg'); m.textContent = t || ''; m.hidden = !t; }
   function spread() { return R.box.clientWidth > 900 && R.info && R.info.kind !== 'pdf'; }
@@ -2757,9 +2772,12 @@
     chatIn.placeholder = AI.ask ? '채팅 (Enter) · @사서 / @도슨트 + 할 말 → AI 직원이 답하고 움직여요' : '채팅 (Enter로 보내기)';
   }
   function postJSON(url, body) {
-    return fetch(url, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
-      .then(function (r) { return r.json(); })
-      .then(function (d) { if (!d.success) throw new Error(d.error || '실패'); return d; });
+    var once = function () {
+      return fetch(url, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+        .then(readJSON)
+        .then(function (d) { if (!d.success) throw new Error(d.error || '실패'); return d; });
+    };
+    return once().catch(function (e) { if (!busy(e)) throw e; return new Promise(function (ok) { setTimeout(ok, 1500); }).then(once); });   // 502·503·504는 한 번 더
   }
   var aiBox = el('l3d-ai');
   function aiProvider() {   // 연결 방식에 따라 주소 칸·모델 예시·패키지 안내를 바꾼다
