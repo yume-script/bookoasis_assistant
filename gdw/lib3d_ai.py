@@ -9,7 +9,7 @@ LLM은 두 가지로 부른다:
 
 설정은 .env에 저장한다 (save_env는 파일 권한 0600):
   LIB3D_AI_PROVIDER     openai(기본) | anthropic
-  LIB3D_AI_BASE_URL     OpenAI 호환 API 주소 (예: http://192.168.0.26:4000/v1)
+  LIB3D_AI_BASE_URL     OpenAI 호환 API 주소 (예: http://192.168.0.10:4000/v1)
   LIB3D_AI_API_KEY      API 키 (anthropic에서 비우면 ANTHROPIC_API_KEY 등 SDK 기본 인증)
   LIB3D_AI_MODEL        모델 (openai는 필수, anthropic 기본 claude-opus-5-5)
   LIB3D_AI_CHAT         손님 대화 켜기 (기본 false)

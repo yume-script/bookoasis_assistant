@@ -772,8 +772,8 @@
       c.g.position.z = z;
     }
   }
-  // CRARES 건물 현수막: 설정에 그림 주소가 있으면 간판 아래 벽에 건다 (그림은 서버가 받아 둔 것을 쓴다)
-  var CRARES = null, bannerMesh = null, BANNER = { url: '', v: '' };
+  // 현수막 건물([거리] 설정의 현수막 건물): 설정에 그림 주소가 있으면 간판 아래 벽에 건다 (그림은 서버가 받아 둔 것을 쓴다)
+  var BANNER_B = null, bannerMesh = null, BANNER = { url: '', v: '' };
   var bannerTimer = null;
   function clearBanner() {
     if (bannerMesh && bannerMesh.parent) {
@@ -785,7 +785,7 @@
   }
   function hangBanner(tex, book) {   // 그림을 비율대로 간판 아래 벽에 (위아래 봉)
     clearBanner();
-    var spot = CRARES;
+    var spot = BANNER_B;
     tex.encoding = T.sRGBEncoding; tex.anisotropy = 8;
     var iw = tex.image.width || 1, ih = tex.image.height || 1, maxH = Math.max(2, spot.top - spot.bottom);
     var w = spot.maxW, h = w * ih / iw;
@@ -805,9 +805,9 @@
   function placeBanner() {
     clearTimeout(bannerTimer); bannerTimer = null;
     clearBanner();
-    if (!CRARES || !floorGroup) return;
-    var spot = CRARES, holder = floorGroup;
-    function stale() { return spot !== CRARES || holder !== floorGroup; }   // 그새 층이 바뀜
+    if (!BANNER_B || !floorGroup) return;
+    var spot = BANNER_B, holder = floorGroup;
+    function stale() { return spot !== BANNER_B || holder !== floorGroup; }   // 그새 층이 바뀜
     if (BANNER.mode === 'library') {
       var next = function () {
         if (stale()) return;
@@ -830,8 +830,9 @@
       hangBanner(tex, null);
     }, undefined, function () { console.warn('3D 서재 현수막 그림을 불러오지 못했습니다.'); });
   }
-  // 건너편 건물 간판 이름 (오른쪽 서재 옆 건물은 (주)CRARES)
-  var SIGN_NAMES = ['betty2859', 'C-Rhapsody', 'colaiuta', 'daydreamrabbit', 'grandfoxx', 'javara999', 'madnite1', 'venushoon'];
+  // 건너편 건물 간판 이름: [창밖 풍경 > 거리] 설정 (공개 저장소라 기본은 중립 이름 - gdw/lib3d.py STREET_DEFAULT)
+  // 서재 옆 오른쪽 건물들에 갤러리·청음실, 왼쪽에 사무실, 나머지 건물엔 간판 이름을 차례로. 현수막은 정한 건물에.
+  var STREET = { signs: ['BOOK CAFE', 'FLOWER', 'BAKERY', 'STUDIO', 'MARKET', 'PHOTO', 'TEA HOUSE', 'ATELIER'], gallery: 'GALLERY', jazz: 'RECORDS', office: 'OFFICE', banner: 'GALLERY' };
   var SIGN_COLORS = [['#1d3557', '#f1faee'], ['#7a1f2b', '#fff4e6'], ['#f4f1ea', '#1d1e20'], ['#2d6a4f', '#ffffff'], ['#f2b705', '#1d1e20'],
                      ['#3a0ca3', '#ffffff'], ['#222222', '#ffd166'], ['#e76f51', '#ffffff']];
   function addOutside(w, back, front, floorIdx) {
@@ -841,8 +842,8 @@
     add(pano, 0, EYE - 110 * 0.3 + 110 / 2, cz);   // 그림의 지평선(아래에서 30%)을 눈높이에 맞춘다
     pano.rotation.y = floorIdx * 1.3;
     var len = d + 120;
-    var signed = { crares: false, next: 0 };
-    CRARES = null; bannerMesh = null; SHOPS = {};
+    var signed = { gallery: false, jazz: false, office: false, next: 0 };
+    BANNER_B = null; bannerMesh = null; SHOPS = {};
     [1, -1].forEach(function (side) {
       var walkX = side * (w / 2 + 2.5), roadX = side * (w / 2 + 9), farWalkX = side * (w / 2 + 15.5);
       var walk = new T.Mesh(new T.PlaneGeometry(5, len), M.pave); walk.rotation.x = -Math.PI / 2; add(walk, walkX, gy + 0.02, cz);
@@ -876,15 +877,18 @@
         var aw = new T.Mesh(unitBox, M.awning[Math.floor(r() * M.awning.length)]); aw.scale.set(1.4, 0.12, bw * 0.8);   // 차양
         aw.rotation.z = side * 0.25; add(aw, bx - side * (bd / 2 + 0.6), gy + 3.6, bz + bw / 2);
         var cap = new T.Mesh(unitBox, M.parapet); cap.scale.set(bd + 0.3, 0.5, bw + 0.3); add(cap, bx, gy + bh + 0.25, bz + bw / 2);   // 옥상 난간
-        var mid = bz + bw / 2, nm = null;   // 간판: 오른쪽 서재 옆 건물엔 (주)CRARES, 나머지 건물엔 이름 간판을 차례로
-        if (side > 0 && !signed.crares && mid > back && mid < front) { signed.crares = true; nm = '(주)CRARES'; }
-        else if (mid > back - 35 && mid < front + 35 && signed.next < SIGN_NAMES.length) nm = SIGN_NAMES[signed.next++];
+        var mid = bz + bw / 2, nm = null, near = mid > back && mid < front;   // 걸어갈 수 있는 서재 옆 건물
+        var plain = STREET.signs.filter(function (n) { return [STREET.gallery, STREET.jazz, STREET.office].indexOf(n) < 0; });
+        if (near && side > 0 && STREET.gallery && !signed.gallery) { signed.gallery = true; nm = STREET.gallery; }
+        else if (near && side > 0 && STREET.jazz && !signed.jazz) { signed.jazz = true; nm = STREET.jazz; }
+        else if (near && side < 0 && STREET.office && !signed.office) { signed.office = true; nm = STREET.office; }
+        else if (mid > back - 35 && mid < front + 35 && signed.next < plain.length) nm = plain[signed.next++];
         if (nm) {
           SHOPS[nm] = { side: side, z: mid, bx: bx, bd: bd, bw: bw, bh: bh, gy: gy, bld: bld, shop: shop };   // 1층 방을 낼 수 있게
           var sw = Math.min(bw * 0.85, 11), sh = sw * 0.22, sy = gy + Math.min(bh - sh, 14), sx = bx - side * (bd / 2 + 0.2), sc0 = SIGN_COLORS[(signed.next + (side > 0 ? 0 : 3)) % SIGN_COLORS.length];
-          if (nm === '(주)CRARES') {
+          if (nm === STREET.banner) {   // 현수막 건물: 검은 간판
             sc0 = ['#14181f', '#ffffff'];
-            CRARES = { face: bx - side * (bd / 2), side: side, z: mid, top: sy - sh / 2 - 0.5, bottom: gy + 4.6, maxW: Math.min(bw * 0.75, 9),
+            BANNER_B = { face: bx - side * (bd / 2), side: side, z: mid, top: sy - sh / 2 - 0.5, bottom: gy + 4.6, maxW: Math.min(bw * 0.75, 9),
                        bx: bx, bd: bd, bw: bw, bh: bh, gy: gy, bld: bld, shop: shop };   // 1층 갤러리용
           }
           var sign = new T.Mesh(new T.PlaneGeometry(sw, sh), new T.MeshBasicMaterial({ map: textTex([nm], 1024, 224, sc0[0], sc0[1], nm.length > 10 ? 120 : 150), toneMapped: false }));
@@ -1015,7 +1019,7 @@
     instBoxes(fins, EXT.metal);
   }
   // ── 길 건너 건물 1층 방 (상점처럼): 건물 1층을 비우고 유리 진열창·문·바닥·천장·벽을 짓는다. 횡단보도로 건너가 들어간다 ──
-  // 지금 쓰는 방: (주)CRARES 갤러리(표지 액자), colaiuta 재즈 청음실. 길 양쪽 어느 건물이든 된다(side = +1 오른쪽, -1 왼쪽).
+  // 지금 쓰는 방([거리] 설정의 건물): 갤러리(표지 액자), 재즈 청음실, 사무실. 길 양쪽 어느 건물이든 된다(side = +1 오른쪽, -1 왼쪽).
   var SHOPS = {}, ROOMS = [];
   var galGlass = new T.MeshStandardMaterial({ color: 0xa9c0cc, roughness: 0.05, metalness: 0.2, transparent: true, opacity: 0.22, depthWrite: false, side: T.DoubleSide });
   var galWall = new T.MeshStandardMaterial({ color: 0xf4f2ee, roughness: 0.9, side: T.DoubleSide });
@@ -1078,12 +1082,12 @@
     }
     return false;
   }
-  // (주)CRARES 갤러리: 벽마다 서재 전체에서 무작위로 고른 표지 액자 (누르면 작품 카드)
+  // 갤러리: 벽마다 서재 전체에서 무작위로 고른 표지 액자 (누르면 작품 카드)
   function addGallery(w) {
-    var R = shopRoom(CRARES, w, { label: '(주)CRARES 갤러리 · 액자를 누르면 작품 · [입구로]는 서재 입구', sign: ['CRARES GALLERY', '들어오세요 · 액자를 누르면 작품 카드'] });
+    var gn = STREET.gallery, R = gn && shopRoom(SHOPS[gn], w, { label: gn + ' 갤러리 · 액자를 누르면 작품 · [입구로]는 서재 입구', sign: [gn + ' GALLERY', '들어오세요 · 액자를 누르면 작품 카드'] });
     if (!R) return;
     var gy = R.gy, z = R.z, H = R.H, bw = R.bw, s = R.s, seed = rnd(311);
-    var inTex = textTex(['(주)CRARES 갤러리'], 1400, 180, '#f4f2ee', '#14181f', 110);
+    var inTex = textTex([gn + ' 갤러리'], 1400, 180, '#f4f2ee', '#14181f', 110);
     var inSign = new T.Mesh(new T.PlaneGeometry(3.6, 0.46), new T.MeshBasicMaterial({ map: inTex, toneMapped: false })); inSign.rotation.y = R.inRot; inSign.position.set(R.kx - s * 0.02, gy + H - 0.3, z); parent.add(inSign);
     var pool = []; floors.forEach(function (f) { (f.libs || []).forEach(function (lib) { lib.series.forEach(function (sr) { if (sr.last) pool.push([lib, sr]); }); }); });
     var PW = 1.15, PH = 1.62, fr = 0.07, slots = [];
@@ -1110,7 +1114,7 @@
     [-1, 1].forEach(function (o) { var lg = new T.Mesh(unitBox, M.black); lg.scale.set(0.45, 0.42, 0.06); lg.position.set(0, 0.21, o * 1.05); bn.add(lg); });
     [-0.6, 0.6].forEach(function (o) { addSeat(R.bx + s * 0.4, z + o, s * Math.PI / 2, 0.48); });
   }
-  // ── colaiuta 재즈 청음실: 길 건너 colaiuta 건물 1층 - 스피커·앰프·턴테이블·LP 선반·네온, 벽 화면에 지금 곡과 스펙트럼 ──
+  // ── 재즈 청음실: 길 건너 [거리] 설정의 청음실 건물 1층 - 스피커·앰프·턴테이블·LP 선반·네온, 벽 화면에 지금 곡과 스펙트럼 ──
   // 인터넷 재즈 라디오 3곳(colaiuta77/jazzradio 참고)을 서버가 이어 준다. 소리는 고른 사람에게만, 청음실에서 멀어질수록 작아진다.
   var JZ = { room: null, audio: null, ctx: null, an: null, gain: null, data: null, st: '', playing: false, vol: 0.8, now: null, bars: null, platter: null,
              screen: null, scrTex: null, art: null, artUrl: '', pollAt: 0, list: [] };
@@ -1119,12 +1123,12 @@
   var jzBox = el('l3d-jazz');
   function addJazzRoom(w) {
     JZ.room = null; JZ.bars = null; JZ.platter = null; JZ.screen = null;
-    var info = SHOPS.colaiuta; if (!info) return;
+    var jn = STREET.jazz, info = jn && SHOPS[jn]; if (!info) return;
     var wallM = new T.MeshStandardMaterial({ color: 0x24352c, roughness: 0.9, side: T.DoubleSide });
     var floorM = new T.MeshStandardMaterial({ color: 0x4a3324, roughness: 0.55 });
     var ceilM = new T.MeshStandardMaterial({ color: 0x1b1714, roughness: 0.95, side: T.DoubleSide });
-    var R = shopRoom(info, w, { label: 'colaiuta 재즈 청음실 · 턴테이블·화면을 누르거나 의자에 앉으면 라디오', wall: wallM, floor: floorM, ceil: ceilM,
-                                sign: ['JAZZ LISTENING ROOM', 'colaiuta · 재즈 청음실 · 들어오세요'], signBg: '#1a1410', signFg: '#ffcf7a' });
+    var R = shopRoom(info, w, { label: jn + ' 재즈 청음실 · 턴테이블·화면을 누르거나 의자에 앉으면 라디오', wall: wallM, floor: floorM, ceil: ceilM,
+                                sign: ['JAZZ LISTENING ROOM', jn + ' · 재즈 청음실 · 들어오세요'], signBg: '#1a1410', signFg: '#ffcf7a' });
     if (!R) return;
     JZ.room = R;
     var s = R.s, gy = R.gy, z = R.z;
@@ -1307,6 +1311,55 @@
     }
     jzPoll(false);
   }
+  // ── 사무실: 길 건너 왼쪽 [거리] 설정의 사무실 건물 1층 - 큰 책상과 모니터, 책장, 손님용 소파, 회사 이름 ──
+  var OFFICE = null;
+  function addOffice(w) {
+    OFFICE = null;
+    var on = STREET.office, info = on && SHOPS[on]; if (!info) return;
+    var wallM = new T.MeshStandardMaterial({ color: 0xe9e4da, roughness: 0.9, side: T.DoubleSide });
+    var floorM = new T.MeshStandardMaterial({ color: 0x8a6a4a, roughness: 0.5 });
+    var R = shopRoom(info, w, { label: on + ' 사무실 · [입구로]는 서재 입구', wall: wallM, floor: floorM, sign: [on, '사무실 · 들어오세요'], signBg: '#1d2a3a', signFg: '#ffffff' });
+    if (!R) return;
+    OFFICE = R;
+    var s = R.s, gy = R.gy, z = R.z;
+    function P(d, lat, y) { return new T.Vector3(R.kx - s * d, gy + (y || 0), z + lat); }
+    function boxAt(mat, sx, sy, sz, p) { var m = new T.Mesh(unitBox, mat); m.scale.set(sx, sy, sz); m.position.copy(p); m.rotation.y = R.inRot; m.castShadow = true; parent.add(m); return m; }
+    var wood = new T.MeshStandardMaterial({ color: 0x5b3f2a, roughness: 0.55 }), dark = new T.MeshStandardMaterial({ color: 0x1f2226, roughness: 0.5 });
+    // 회사 이름 (안쪽 벽)
+    var nTex = textTex([on], 1400, 220, '#1d2a3a', '#ffffff', 140);
+    var nm = new T.Mesh(new T.PlaneGeometry(3.4, 0.55), new T.MeshBasicMaterial({ map: nTex, toneMapped: false })); nm.rotation.y = R.inRot; nm.position.copy(P(0.02, 0, 2.75)); parent.add(nm);
+    // 큰 책상 + 모니터 둘 + 의자 (안쪽 벽을 등지고 문 쪽을 봄)
+    boxAt(wood, 0.9, 0.06, 2.4, P(1.6, 0, 0.76));
+    [-1, 1].forEach(function (sd) { boxAt(dark, 0.8, 0.72, 0.06, P(1.6, sd * 1.15, 0.37)); });
+    [-0.45, 0.45].forEach(function (lat) {
+      boxAt(dark, 0.05, 0.38, 0.62, P(1.85, lat, 1.03));
+      var sc = new T.Mesh(new T.PlaneGeometry(0.58, 0.34), new T.MeshBasicMaterial({ color: 0x2a5d8a, toneMapped: false }));
+      sc.rotation.y = R.inRot + Math.PI; sc.position.copy(P(1.82, lat, 1.03)); parent.add(sc);
+    });
+    var ch = new T.Group(); ch.position.copy(P(0.8, 0, 0)); ch.rotation.y = -s * Math.PI / 2; parent.add(ch);
+    var seat = new T.Mesh(unitBox, dark); seat.scale.set(0.55, 0.1, 0.55); seat.position.y = 0.48; ch.add(seat);
+    var back = new T.Mesh(unitBox, dark); back.scale.set(0.55, 0.75, 0.08); back.position.set(0, 0.9, -0.26); ch.add(back);
+    var leg = new T.Mesh(new T.CylinderGeometry(0.04, 0.04, 0.45, 8), M.pole); leg.position.y = 0.23; ch.add(leg);
+    OFFICE.chief = { x: P(0.8, 0, 0).x, z: P(0.8, 0, 0).z, rot: -s * Math.PI / 2 };   // 사장 자리 (2단계에서 AI 직원이 앉음)
+    // 손님 의자 둘 (책상을 보고)
+    [-0.6, 0.6].forEach(function (lat) {
+      var p0 = P(2.6, lat, 0), g = new T.Group(); g.position.copy(p0); g.rotation.y = s * Math.PI / 2; parent.add(g);
+      var se = new T.Mesh(unitBox, wood); se.scale.set(0.5, 0.06, 0.5); se.position.y = 0.46; g.add(se);
+      var bk = new T.Mesh(unitBox, wood); bk.scale.set(0.5, 0.45, 0.05); bk.position.set(0, 0.72, -0.23); g.add(bk);
+      addSeat(p0.x, p0.z, s * Math.PI / 2, 0.48);
+    });
+    // 책장 (옆 벽) + 소파·탁자 (앞쪽) + 화분
+    [-1, 1].forEach(function (sd) {
+      var bx0 = R.bx + s * 0.3, zz = z + sd * (R.bw / 2 - 0.25);
+      var sh = new T.Mesh(unitBox, wood); sh.scale.set(2.4, 2.2, 0.4); sh.position.set(bx0, gy + 1.1, zz); parent.add(sh);
+      var lps = [], cols = [], rr = rnd(sd > 0 ? 41 : 43);
+      for (var row = 0; row < 4; row++) for (var k = 0; k < 18; k++) { lps.push([bx0 - 1.1 + k * 0.12, gy + 0.35 + row * 0.5, zz - sd * 0.12, 0.08, 0.36, 0.25]); cols.push(PALETTE[Math.floor(rr() * PALETTE.length)]); }
+      instBoxes(lps, EXT.spine, cols);
+    });
+    sofa(R.fx + s * 1.6, z + R.bw / 2 - 2.0, s * Math.PI / 2, 2, FURN.leather);
+    coffeeTable(R.fx + s * 2.7, z + R.bw / 2 - 2.0, 0);
+    plant(R.kx - s * 0.6, z - R.bw / 2 + 0.7, 1.1, 51);
+  }
   function addDoorAndPlaza(w, back, front) {
     // 문틀 + 좌우로 열리는 유리 자동문 두 짝
     box(DOOR_W + 0.1, 0.1, 0.26, M.black, 0, DOOR_H + 0.05, front);
@@ -1320,8 +1373,9 @@
     });
     autoDoor = { leaves: leaves, open: 0, front: front };
     addFacade(w, back, front);   // 바깥에서 본 서재 (외장·위층·책등 벽·캐노피·옥상)
-    addGallery(w);               // 길 건너 (주)CRARES 갤러리
-    addJazzRoom(w);              // 길 건너 colaiuta 재즈 청음실
+    addGallery(w);               // 길 건너 갤러리 ([거리] 설정)
+    addJazzRoom(w);              // 길 건너 재즈 청음실 ([거리] 설정)
+    addOffice(w);                // 길 건너 왼쪽 사무실 ([거리] 설정)
     // 안쪽·바깥 매트
     [front - 1.1, front + 1.1].forEach(function (mz) { var mat = new T.Mesh(new T.PlaneGeometry(3.2, 1.6), new T.MeshStandardMaterial({ color: 0x2b2d30, roughness: 1 })); mat.rotation.x = -Math.PI / 2; add(mat, 0, 0.015, mz); });
     // 앞마당 (보도블록) - 양옆 보도와 이어진다
@@ -1352,7 +1406,7 @@
     if (ax < DOOR_W / 2 - 0.35 && z > hall.z1 - 0.1 && z < L.front + 1.0) return autoDoor ? autoDoor.open > 0.55 : true;   // 문이 열려야 지나간다
     if (ax <= outer && z >= L.front + 0.45 && z <= L.front + PLAZA_D) return true;    // 앞마당
     if (ax >= L.w / 2 + 0.45 && ax <= outer && z >= L.back - 38 && z <= L.front + 38) return true;   // 양옆 보도 (차도는 안 됨)
-    if (roomWalk(x, z)) return true;   // 횡단보도 건너 방들 (CRARES 갤러리·재즈 청음실)
+    if (roomWalk(x, z)) return true;   // 횡단보도 건너 방들 (갤러리·재즈 청음실·사무실)
     return false;
   }
   function addBuilding(fl, cols, rows) {
@@ -3188,7 +3242,7 @@
     var claude = el('l3d-ai-provider').value === 'anthropic';
     el('l3d-ai-base-f').hidden = claude;
     el('l3d-ai-sdk').hidden = !claude || aiSdk;
-    el('l3d-ai-model').placeholder = claude ? 'claude-opus-5-5' : '예: gemini-free3_1';
+    el('l3d-ai-model').placeholder = claude ? 'claude-opus-5-5' : '예: my-model';
     var dl = el('l3d-ai-models'); dl.textContent = '';
     (claude ? ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'] : []).forEach(function (m) {
       var o = document.createElement('option'); o.value = m; dl.appendChild(o);
@@ -3329,7 +3383,25 @@
     el('l3d-out-bmode').value = BANNER.mode || ''; el('l3d-out-banner-sec').value = BANNER.sec || 30; bannerModeUI(); bannerLibs();
     el('l3d-out-time').value = OUTSIDE.time; el('l3d-out-season').value = OUTSIDE.season; el('l3d-out-weather').value = OUTSIDE.weather;
     el('l3d-out-msg').textContent = '';
+    streetForm();
   }
+  // [거리]: 길 건너 간판 이름과 갤러리·청음실·사무실·현수막 건물
+  function streetForm() {
+    el('l3d-st-signs').value = (STREET.signs || []).join('\n');
+    ['gallery', 'jazz', 'office'].forEach(function (k) { el('l3d-st-' + k).value = STREET[k] || ''; });
+    var sel = el('l3d-st-banner'), names = [STREET.gallery, STREET.jazz, STREET.office].concat(STREET.signs || []).filter(function (n, i, a) { return n && a.indexOf(n) === i; });
+    sel.textContent = ''; [''].concat(names).forEach(function (n) { var o = document.createElement('option'); o.value = n; o.textContent = n || '없음'; sel.appendChild(o); });
+    sel.value = STREET.banner || '';
+  }
+  el('l3d-st-save').addEventListener('click', function () {
+    var body = { signs: el('l3d-st-signs').value, gallery: el('l3d-st-gallery').value, jazz: el('l3d-st-jazz').value, office: el('l3d-st-office').value, banner: el('l3d-st-banner').value };
+    el('l3d-out-msg').textContent = '저장 중...';
+    postJSON('api/lib3d/settings', { street: body }).then(function (d) {
+      STREET = d.street; streetForm();
+      el('l3d-out-msg').textContent = '거리를 저장했습니다. 1층에서 다시 지어 바로 보여 줍니다.';
+      if (cur === 0) buildFloor(0);
+    }).catch(function (e) { el('l3d-out-msg').textContent = e.message; });
+  });
   function outsideForm() { return { time: el('l3d-out-time').value, season: el('l3d-out-season').value, weather: el('l3d-out-weather').value }; }
   ['l3d-out-time', 'l3d-out-season', 'l3d-out-weather'].forEach(function (id) {
     el(id).addEventListener('change', function () { OUTSIDE = outsideForm(); applyOutside.force = true; applyOutside(); el('l3d-out-msg').textContent = '미리 보기 중 - 저장해야 남습니다.'; });
@@ -3365,8 +3437,8 @@
       .then(function () { return api('api/lib3d/data'); })
       .then(function (d) {
         BANNER = d.banner || BANNER; placeBanner();
-        el('l3d-out-msg').textContent = BANNER.mode === 'library' ? '저장했습니다. CRARES 건물 현수막에 그 보관함 표지가 ' + BANNER.sec + '초마다 바뀌어 걸립니다.'
-          : BANNER.mode === 'url' ? '저장했습니다. 오른쪽 창밖 CRARES 건물에 걸었습니다.' : '현수막을 내렸습니다.';
+        el('l3d-out-msg').textContent = BANNER.mode === 'library' ? '저장했습니다. ' + (STREET.banner || '현수막') + ' 건물 현수막에 그 보관함 표지가 ' + BANNER.sec + '초마다 바뀌어 걸립니다.'
+          : BANNER.mode === 'url' ? '저장했습니다. 창밖 ' + (STREET.banner || '현수막') + ' 건물에 걸었습니다.' : '현수막을 내렸습니다.';
       }).catch(function (e) { el('l3d-out-msg').textContent = e.message; });
   });
   el('l3d-set-out').addEventListener('click', openOutside);
@@ -3662,6 +3734,7 @@
         if (d.outside) OUTSIDE = Object.assign({ time: 'auto', season: 'auto', weather: 'clear' }, d.outside);
         floors = makeFloors(libs);
         ARCADE = d.arcade || [];
+        if (d.street) STREET = d.street;
         YMPLAYER = d.ymplayer || ''; YM_EMBED = d.ymplayer_embed || 'auto'; YMPROXY = !!d.ymproxy;
         if (YMPLAYER || YMPROXY) floors.push({ key: 'cinema', label: (floors.length + 1) + '층 영화관', libs: [], total: 0, booths: [], cinema: true });
         floors.forEach(function (f, i) {

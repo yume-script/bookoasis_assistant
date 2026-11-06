@@ -65,7 +65,7 @@ LIB3D_PUBLIC_URL=http://192.168.0.10:5930
 ### 2-3. 적용 · 업데이트
 
 ```bash
-cd /mnt/bookoasis_assistant && git pull && systemctl restart bookoasis_assistant
+cd /opt/bookoasis_assistant && git pull && systemctl restart bookoasis_assistant
 # 도커: cd /opt/bookoasis_assistant && git pull && docker compose up -d --build
 ```
 
@@ -99,9 +99,9 @@ cd /mnt/bookoasis_assistant && git pull && systemctl restart bookoasis_assistant
 | 항목 | `.env` 키 | 설명 |
 |---|---|---|
 | 연결 방식 | `LIB3D_AI_PROVIDER` | `openai`(기본) = OpenAI 호환 `/chat/completions` (LiteLLM·Ollama·LM Studio·OpenAI, 추가 패키지 없음) / `anthropic` = Claude API (`pip install anthropic`) |
-| API 주소 | `LIB3D_AI_BASE_URL` | OpenAI 호환일 때. 예 `http://192.168.0.26:4000/v1` |
+| API 주소 | `LIB3D_AI_BASE_URL` | OpenAI 호환일 때. 예 `http://192.168.0.10:4000/v1` |
 | API 키 | `LIB3D_AI_API_KEY` | anthropic에서 비우면 `ANTHROPIC_API_KEY` |
-| 모델 | `LIB3D_AI_MODEL` | 게이트웨이에 등록된 이름 그대로 (예 `gemini-free3_1`). anthropic은 비우면 `claude-opus-5-5` |
+| 모델 | `LIB3D_AI_MODEL` | 게이트웨이에 등록된 이름 그대로 (예 `my-model`). anthropic은 비우면 `claude-opus-5-5` |
 | 하루 호출 한도 | `LIB3D_AI_DAILY` (1000) | 손님 대화·직원 응대·자율 업무를 합친 하루(자정 기준) 호출 수. 0이면 없음. [AI 설정]에 오늘 쓴 횟수 |
 | 손님 대화 | `LIB3D_AI_CHAT`, `LIB3D_AI_CHAT_SEC` (60) | 두 손님이 무작위 책 한 권을 두고 나누는 말풍선. 가까이 있고 탭이 보일 때만 부름 |
 | AI 직원 응대 | `LIB3D_AI_ASK` | 채팅의 `@사서`·`@도슨트`에 답하기 (모델이 도구 호출을 지원해야 함) |
@@ -147,15 +147,15 @@ AI 연결을 마치면 자동으로 나옵니다. 끄고 켜기·성격·업무�
 systemctl cat bookoasis_assistant | grep ExecStart        # 서비스가 쓰는 파이썬 확인
 
 # A) …/venv/bin/python 이면 그 venv에
-/mnt/bookoasis_assistant/venv/bin/pip install edge-tts
+/opt/bookoasis_assistant/venv/bin/pip install edge-tts
 systemctl restart bookoasis_assistant
 
 # B) /usr/bin/python3 (시스템 파이썬)이면 - 우분투 24.04·데비안 12는 pip가 막힘(externally-managed-environment)
 #   권장: venv를 만들고 서비스를 그쪽으로
-cd /mnt/bookoasis_assistant
+cd /opt/bookoasis_assistant
 apt install -y python3-venv                                 # venv가 없다는 오류가 나면
 python3 -m venv venv && venv/bin/pip install -r requirements.txt edge-tts
-systemctl edit --full bookoasis_assistant                   # ExecStart=/mnt/bookoasis_assistant/venv/bin/python /mnt/bookoasis_assistant/app.py
+systemctl edit --full bookoasis_assistant                   # ExecStart=/opt/bookoasis_assistant/venv/bin/python /opt/bookoasis_assistant/app.py
 systemctl daemon-reload && systemctl restart bookoasis_assistant
 #   간단히: pip install --break-system-packages edge-tts && systemctl restart bookoasis_assistant
 ```
@@ -169,7 +169,7 @@ systemctl daemon-reload && systemctl restart bookoasis_assistant
 브라우저는 서재 주소만 쓰므로 https/http 섞임이나 로그인 쿠키 문제가 없습니다.
 
 ```env
-LIB3D_YMPLAYER_URL=http://192.168.0.26:8899        # 브라우저에서 열리는 YMPlayer 주소 ([YMPlayer 새 탭] 버튼, 영화관 층을 만듦)
+LIB3D_YMPLAYER_URL=http://192.168.0.10:8899        # 브라우저에서 열리는 YMPlayer 주소 ([YMPlayer 새 탭] 버튼, 영화관 층을 만듦)
 LIB3D_YMPLAYER_INTERNAL=http://127.0.0.1:8899      # 이 서버가 부를 주소 (같은 서버면 127.0.0.1, 비우면 위와 같음)
 LIB3D_YMPLAYER_USER=library                        # 서재용 YMPlayer 계정
 LIB3D_YMPLAYER_PASSWORD=비밀번호
@@ -220,9 +220,11 @@ LIB3D_YMPLAYER_VIEWERS=true                        # 관람자 계정도 영화�
 - **이어서 시작**: 마지막 층·자리·방향에서 다시 시작합니다(배치가 바뀌어 갈 수 없는 자리면 입구).
 - **앉기**: 의자·소파·벤치를 누르거나(5m 안) 가까이(2m 안)에서 아래 [앉기]. 눈높이가 낮아지고 의자 쪽을 봅니다. 걷기 키나 [일어나기]로 일어납니다. 다른 사람에게는 앉은 모습으로 보이고, 누가 앉은 자리는 못 앉습니다.
 - **나가기**: 아래 [나가기]를 누르면 소리(낭독·오디오북·영화관)·게임·움직임·그리기를 모두 멈추고 "서재에서 나왔습니다" 화면이 됩니다. 다른 사람에게도 바로 나간 것으로 보입니다. [다시 들어가기]로 그 자리에서 이어서, [관리 화면으로](관리자만), [로그아웃].
-- **도서관 밖 (1층)**: 유리 자동문으로 나가면 앞마당(벤치)과 건물 양옆 보도를 걸을 수 있습니다(차도는 막힘). 건너편 (주)CRARES·이름 간판 건물, 가로수, 차를 가까이서 봅니다. 2층부터는 문이 그림입니다.
-- **(주)CRARES 갤러리**: 1층 밖 오른쪽 보도에서 **횡단보도**를 건너면(건너는 동안 차가 섭니다) 건너편 (주)CRARES 건물 1층이 유리 진열창 갤러리입니다. 문으로 들어가면 벽마다 서재 작품 표지 **액자**(그림 조명 포함)가 걸려 있고, 누르면 작품 카드(여기서 읽기·BookOasis 뷰어)가 열립니다. 액자는 층에 들어올 때마다 서재 전체(볼 수 있는 층)에서 무작위로 바뀌고, 가운데 의자에 앉아 볼 수 있습니다.
-- **colaiuta 재즈 청음실**: 오른쪽 보도에서 colaiuta 간판 건물 앞 횡단보도를 건너면 1층이 유리 진열창의 청음실입니다 → [6-7](#6-7-colaiuta-재즈-청음실).
+- **도서관 밖 (1층)**: 유리 자동문으로 나가면 앞마당(벤치)과 건물 양옆 보도를 걸을 수 있습니다(차도는 막힘). 건너편 간판 건물들(이름은 [창밖 풍경 > 거리]), 가로수, 차를 가까이서 봅니다. 2층부터는 문이 그림입니다.
+- **갤러리**: 1층 밖 오른쪽 보도에서 **횡단보도**를 건너면(건너는 동안 차가 섭니다) 건너편 갤러리 건물(기본 간판 GALLERY) 1층이 유리 진열창 갤러리입니다. 문으로 들어가면 벽마다 서재 작품 표지 **액자**(그림 조명 포함)가 걸려 있고, 누르면 작품 카드(여기서 읽기·BookOasis 뷰어)가 열립니다. 액자는 층에 들어올 때마다 서재 전체(볼 수 있는 층)에서 무작위로 바뀌고, 가운데 의자에 앉아 볼 수 있습니다.
+- **재즈 청음실**: 오른쪽 보도에서 청음실 건물(기본 간판 RECORDS) 앞 횡단보도를 건너면 1층이 유리 진열창의 청음실입니다 → [6-7](#6-7-재즈-청음실).
+- **사무실**: 왼쪽 보도에서 사무실 건물(기본 간판 OFFICE) 앞 횡단보도를 건너면 1층이 사무실입니다(큰 책상·모니터·책장·손님 의자·소파, 안쪽 벽에 회사 이름).
+- **거리 설정**: 간판 이름과 갤러리·청음실·사무실·현수막 건물은 [창밖 풍경 > 거리]에서 정합니다(관리자). 공개 기본값은 중립 이름이라, 자기 가게·회사 이름으로 바꿔 쓰세요.
 - **서재 외관**: 돌 받침과 문 양옆 유리 커튼월, 금속 문틀, 원목 처마의 캐노피('BookOasis 3D 서재' 간판·아래 조명), 옆면은 돌 기둥 사이 창과 금속 핀, 위층은 층 수만큼 돌 띠 + 띠창 + 세로 핀, 앞 왼쪽 모서리에 층을 꿰뚫는 **책등 벽**(색색의 거대한 책), 옥상 난간·화단·'BookOasis' 간판. 밤에는 유리가 따뜻하게 빛나고 캐노피 조명이 켜집니다. 바깥에만 덧씌운 외장이라 서재 안은 그대로입니다.
 
 ### 5-2. 책 고르기
@@ -293,9 +295,9 @@ three.js 예제(webgl_animation_skinning_morph)의 노란 로봇이 층마다 �
 - 가까이(약 3m) 가면 이쪽을 돌아보며 손을 흔들거나 엄지를 들고, 잠깐 **놀란 표정**(얼굴 모핑)을 짓습니다(같은 로봇은 25초에 한 번).
 - 모형은 jsdelivr에서 처음 한 번 받습니다(받기 전에는 나오지 않음).
 
-### 6-7. colaiuta 재즈 청음실
+### 6-7. 재즈 청음실
 
-길 건너 colaiuta 간판 건물 1층. 큰 스피커 둘, 앰프(VU 미터)와 턴테이블, LP 선반, 네온 'JAZZ', 안락의자 셋, 벽 화면(지금 곡·앨범 커버·스펙트럼 막대).
+길 건너 청음실 건물([창밖 풍경 > 거리]의 '재즈 청음실 건물', 기본 RECORDS) 1층. 큰 스피커 둘, 앰프(VU 미터)와 턴테이블, LP 선반, 네온 'JAZZ', 안락의자 셋, 벽 화면(지금 곡·앨범 커버·스펙트럼 막대).
 
 - **턴테이블·화면을 누르거나 의자에 앉으면** 오른쪽에 패널: 방송국 3곳(RelaxingJazz · Radio Swiss Jazz · Jazz24), 지금 곡(가수·곡·커버), ▶ 듣기 / ❚❚ 멈춤, 소리, 방송국 홈. 의자에 앉으면 바로 틀어 줍니다.
 - 듣는 동안 턴테이블이 돌고, 벽 화면 아래 막대가 실제 소리에 맞춰 움직입니다.
@@ -328,7 +330,8 @@ three.js 예제(webgl_animation_skinning_morph)의 노란 로봇이 층마다 �
 | **설정** | 보여 줄 보관함(세션별 묶음, [전부 보기]) | `lib3d.json` `libraries` |
 | **인물 수** | 층 × 인물 종류마다 0~20명(비우면 자동): 걷는·책 고르는·서서 읽는·벤치·대화 손님, 안내 직원, 스톰트루퍼, 엘프, 로봇 손님, 숨은 인물 | `people` |
 | **창밖 풍경** | 시간(자동·낮·노을·밤) · 계절(자동·봄·여름·가을·겨울) · 날씨(맑음·흐림·비·눈·자동) | `outside` |
-| **창밖 풍경 > CRARES 현수막** | 없음 / 그림 주소(서버가 받아 둠, 6시간마다 갱신, 15MB까지) / 보관함 표지(정한 간격마다 무작위, 누르면 작품 카드) | `banner`, `banner_lib`, `banner_sec` |
+| **창밖 풍경 > 거리** | 길 건너 간판 이름(한 줄에 하나), 갤러리·재즈 청음실·사무실·현수막 건물 이름 (비우면 그 공간 없음) | `street` |
+| **창밖 풍경 > 현수막** | 없음 / 그림 주소(서버가 받아 둠, 6시간마다 갱신, 15MB까지) / 보관함 표지(정한 간격마다 무작위, 누르면 작품 카드) | `banner`, `banner_lib`, `banner_sec` |
 | **3D 모형** | 라운지 소파·의자·화분·차를 '지금 그대로'(가벼움) 또는 '3D 모형 파일'(약 14MB) | `models` |
 | **AI 직원** | 자율 업무 켜기, 직원·손님마다 켜기·이름·직업·목표·성격·부르는 말·업무(주기·지시문)·[지금 실행], 활동 기록·메모, [기본값으로] | `lib3d_agents.json` |
 | **AI 설정** | 연결·모델·하루 한도·손님 대화·직원 응대·MCP | `.env` `LIB3D_AI_*` |
@@ -369,7 +372,7 @@ three.js 예제(webgl_animation_skinning_morph)의 노란 로봇이 층마다 �
 |---|---|
 | `lib3d.json` | 보관함·인물 수·창밖 풍경·현수막·3D 모형 설정 |
 | `lib3d_covers/` | 줄여 둔 표지 (지워도 다시 받음) |
-| `lib3d_banner.bin` | CRARES 현수막 그림 (그림 주소 모드) |
+| `lib3d_banner.bin` | 현수막 그림 (그림 주소 모드) |
 | `lib3d_agents.json` | AI 직원·손님 설정 |
 | `lib3d_agents_state.json` | 직원·손님 위치·기억·활동 기록·소식판 |
 | `lib3d_ai_budget.json` | 오늘 AI 호출 수 |

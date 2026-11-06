@@ -22,7 +22,7 @@ from urllib.request import Request, urlopen
 
 from . import bookoasis_db, config
 
-VERSION = "2.42.0"
+VERSION = "2.43.0"
 CACHE_SEC = 300
 COVER_WIDTH = 200
 _DATA = {"at": 0.0, "v": None}
@@ -160,9 +160,57 @@ def save_models(value):
     return clean
 
 
-# ── CRARES 건물 현수막 그림: 등록한 주소의 그림을 서버가 받아 두었다가 내려준다 (브라우저 CORS 제한을 피함) ──
+# ── 현수막 건물([거리] 설정) 그림: 등록한 주소의 그림을 서버가 받아 두었다가 내려준다 (브라우저 CORS 제한을 피함) ──
 BANNER_MAX = 15 * 1024 * 1024
 BANNER_TTL = 6 * 3600
+
+
+# ── 거리 (1층 밖 길 건너 건물 간판): 공개 저장소라 기본은 중립 이름, 각자 [창밖 풍경 > 거리]에서 바꾼다 ──
+STREET_DEFAULT = {
+    "signs": ["BOOK CAFE", "FLOWER", "BAKERY", "STUDIO", "MARKET", "PHOTO", "TEA HOUSE", "ATELIER"],
+    "gallery": "GALLERY",    # 1층이 표지 액자 갤러리인 건물 (길 오른쪽)
+    "jazz": "RECORDS",       # 1층이 재즈 청음실인 건물 (길 오른쪽)
+    "office": "OFFICE",      # 1층이 사무실인 건물 (길 왼쪽)
+    "banner": "GALLERY",     # 현수막을 거는 건물 (위 이름 중 하나)
+}
+STREET_NAME_MAX = 24
+
+
+def _street_name(v):
+    return re.sub(r"[\x00-\x1f<>]", "", " ".join(str(v or "").split()))[:STREET_NAME_MAX]
+
+
+def street():
+    """거리 설정 (빈 값은 기본값)"""
+    st = load_settings().get("street") or {}
+    out = dict(STREET_DEFAULT)
+    if isinstance(st.get("signs"), list):
+        out["signs"] = [n for n in (_street_name(x) for x in st["signs"]) if n][:16]
+    for k in ("gallery", "jazz", "office", "banner"):
+        if k in st:
+            out[k] = _street_name(st[k])   # 비우면 그 공간을 만들지 않는다
+    return out
+
+
+def save_street(body):
+    """{signs: [이름…] 또는 줄바꿈 글, gallery, jazz, office, banner}"""
+    cur = street()
+    signs = body.get("signs", cur["signs"])
+    if isinstance(signs, str):
+        signs = re.split(r"[\n,]+", signs)
+    clean = {"signs": [n for n in (_street_name(x) for x in signs or []) if n][:16]}
+    for k in ("gallery", "jazz", "office", "banner"):
+        clean[k] = _street_name(body.get(k, cur[k]))
+    names = [clean[k] for k in ("gallery", "jazz", "office") if clean[k]]
+    if len(names) != len(set(names)):
+        raise ValueError("갤러리·청음실·사무실은 서로 다른 건물 이름이어야 합니다.")
+    data_ = dict(load_settings(), street=clean)
+    os.makedirs(config.data_dir(), exist_ok=True)
+    tmp = _settings_path() + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data_, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, _settings_path())
+    return street()
 
 
 def save_banner(url):

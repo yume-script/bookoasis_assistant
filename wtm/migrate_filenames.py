@@ -9,7 +9,7 @@ webtoon_manager 플러그인이 그동안 여러 번 파일 저장 방식을 바
 
 사용법 (저장소 폴더에서 실행, 표준 라이브러리만 사용):
 
-    venv/bin/python wtm/migrate_filenames.py "/mnt/zeeps_member/zeepsmember/naverwebtoon"
+    venv/bin/python wtm/migrate_filenames.py "/mnt/my_remote/webtoon/naverwebtoon"
 
 옵션:
     --dry-run   실제로 지우거나 이름을 바꾸지 않고 무엇을 할지만 출력합니다.

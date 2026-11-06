@@ -528,7 +528,7 @@ class Handler(BaseHTTPRequestHandler):
                                             people=lib3d.load_settings().get("people") or {},
                                             outside=lib3d.load_settings().get("outside") or {},
                                             models=lib3d.load_settings().get("models") or "basic",
-                                            banner=lib3d.banner_info(), ymplayer=lib3d.ymplayer_url(), ymproxy=lib3d_ymp.configured(), arcade=arcade_menu(mods), ymplayer_embed=lib3d.ymplayer_embed(), success=True))
+                                            banner=lib3d.banner_info(), street=lib3d.street(), ymplayer=lib3d.ymplayer_url(), ymproxy=lib3d_ymp.configured(), arcade=arcade_menu(mods), ymplayer_embed=lib3d.ymplayer_embed(), success=True))
             if path.startswith("/api/lib3d/brunch/"):   # 1층 브런치 연재 낭독 코너 (브런치 공개 글이라 관람자도)
                 return self._brunch_get(path, {k: v[0] for k, v in q.items() if v})
             if path == "/api/lib3d/banner_pick":   # 현수막에 띄울 무작위 작품 (보관함 표지 모드)
@@ -536,7 +536,7 @@ class Handler(BaseHTTPRequestHandler):
                 if not adult and pick.get("db") == "adult":
                     return self._send(404, {"success": False, "error": "현수막 보관함을 볼 수 없는 계정입니다."})
                 return self._send(200, dict(pick, success=True))
-            if path == "/api/lib3d/banner":   # CRARES 건물 현수막 그림 (서버가 받아 둔 것)
+            if path == "/api/lib3d/banner":   # 현수막 건물 그림 (서버가 받아 둔 것)
                 raw, ctype = lib3d.banner_image(force=bool(q.get("force")))
                 return self._send(200, raw, ctype, extra={"Cache-Control": "private, max-age=600"})
             # AI: 손님 대화 / 설정 / BookOasis MCP 연결 시험
@@ -711,7 +711,7 @@ class Handler(BaseHTTPRequestHandler):
                     return self._send(400, {"success": False, "error": str(e), "banner": lib3d.banner_info()})
                 except Exception as e:  # noqa: BLE001 - DB 접속 실패 등
                     return self._send(400, {"success": False, "error": "보관함을 읽지 못했습니다: %s" % e, "banner": lib3d.banner_info()})
-            if "banner" in context and "libraries" not in context:   # CRARES 현수막 그림 주소만 저장
+            if "banner" in context and "libraries" not in context:   # 현수막 그림 주소만 저장
                 try:
                     url = lib3d.save_banner(context.get("banner"))
                     if url:
@@ -719,6 +719,11 @@ class Handler(BaseHTTPRequestHandler):
                     return self._send(200, {"success": True, "banner": lib3d.banner_info()})
                 except ValueError as e:
                     return self._send(400, {"success": False, "error": str(e), "banner": lib3d.banner_info()})
+            if "street" in context and "libraries" not in context:   # 거리 간판·특별한 건물 이름
+                try:
+                    return self._send(200, {"success": True, "street": lib3d.save_street(context["street"] if isinstance(context["street"], dict) else {})})
+                except ValueError as e:
+                    return self._send(400, {"success": False, "error": str(e)})
             if "models" in context and "libraries" not in context:   # 3D 모형 선택만 저장
                 return self._send(200, {"success": True, "models": lib3d.save_models(context.get("models"))})
             if "outside" in context and "libraries" not in context:   # 창밖 풍경만 저장

@@ -334,11 +334,11 @@
             <option value="anthropic">Claude API (Anthropic)</option>
           </select></label>
         <label class="f" id="l3d-ai-base-f">API 주소 (Base URL)
-          <input type="text" id="l3d-ai-base" placeholder="http://192.168.0.26:4000/v1"></label>
+          <input type="text" id="l3d-ai-base" placeholder="http://192.168.0.10:4000/v1"></label>
         <p class="sub warn" id="l3d-ai-sdk" hidden>서버에 anthropic 패키지가 없습니다. <code>pip install anthropic</code> 후 다시 시작하세요.</p>
         <label class="f">API 키 <input type="password" id="l3d-ai-key" autocomplete="off" placeholder="sk-..."></label>
         <label class="c"><input type="checkbox" id="l3d-ai-clear"> 저장된 키 지우기</label>
-        <label class="f">모델 이름 <input type="text" id="l3d-ai-model" list="l3d-ai-models" placeholder="예: gemini-free3_1"></label>
+        <label class="f">모델 이름 <input type="text" id="l3d-ai-model" list="l3d-ai-models" placeholder="예: my-model"></label>
         <datalist id="l3d-ai-models"></datalist>
         <label class="c"><input type="checkbox" id="l3d-ai-chat"> 손님 대화 (층마다 두 손님이 책 한 권을 두고 이야기)</label>
         <label class="f">대화 사이 최소 간격(초) <input type="number" id="l3d-ai-sec" min="15" max="3600" step="5"></label>
@@ -378,7 +378,16 @@
         <label class="f">시간 <select id="l3d-out-time"><option value="auto">자동 (시계)</option><option value="day">낮</option><option value="dusk">노을</option><option value="night">밤</option></select></label>
         <label class="f">계절 <select id="l3d-out-season"><option value="auto">자동 (지금 달)</option><option value="spring">봄 (벚꽃)</option><option value="summer">여름</option><option value="autumn">가을 (단풍)</option><option value="winter">겨울 (눈 덮임)</option></select></label>
         <label class="f">날씨 <select id="l3d-out-weather"><option value="clear">맑음</option><option value="cloudy">흐림</option><option value="rain">비</option><option value="snow">눈</option><option value="auto">자동 (날마다)</option></select></label>
-        <label class="f">CRARES 건물 현수막
+        <h4 style="margin:12px 0 4px">거리 (1층 밖 길 건너 건물)</h4>
+        <p class="sub">간판 이름과, 1층에 들어갈 수 있는 건물을 정합니다. 갤러리·청음실은 서재 옆 오른쪽, 사무실은 왼쪽 건물에 생깁니다. 비우면 그 공간은 만들지 않습니다.</p>
+        <label class="f">간판 이름 (한 줄에 하나, 16개까지) <textarea id="l3d-st-signs" rows="4"></textarea></label>
+        <label class="f">갤러리 건물 (표지 액자) <input type="text" id="l3d-st-gallery" maxlength="24"></label>
+        <label class="f">재즈 청음실 건물 <input type="text" id="l3d-st-jazz" maxlength="24"></label>
+        <label class="f">사무실 건물 <input type="text" id="l3d-st-office" maxlength="24"></label>
+        <label class="f">현수막을 거는 건물 <select id="l3d-st-banner"></select></label>
+        <div class="row"><button type="button" class="l3d-btn" id="l3d-st-save">거리 저장</button></div>
+        <h4 style="margin:12px 0 4px">현수막</h4>
+        <label class="f">현수막
           <select id="l3d-out-bmode"><option value="">없음</option><option value="url">그림 주소</option><option value="library">보관함 표지 (무작위로 바뀜)</option></select></label>
         <label class="f" id="l3d-out-burl"><span>그림 주소 (jpg·png·gif·webp)</span>
           <input type="text" id="l3d-out-banner" placeholder="https://example.com/banner.jpg"></label>
@@ -456,8 +465,8 @@
       <div class="row" style="margin-top:8px"><button type="button" class="l3d-btn" id="l3d-mp-close">닫기</button></div>
     </div>
     <div class="l3d-set l3d-ai l3d-brunch l3d-jazz" id="l3d-jazz" role="dialog" aria-label="재즈 청음실">
-      <h3>🎷 colaiuta 재즈 청음실</h3>
-      <p class="sub">인터넷 재즈 라디오 · 소리는 이 기기에서만, 청음실에서 멀어질수록 작아집니다. (참고: colaiuta77/jazzradio)</p>
+      <h3>🎷 재즈 청음실</h3>
+      <p class="sub">인터넷 재즈 라디오 · 소리는 이 기기에서만, 청음실에서 멀어질수록 작아집니다. (방송국 목록 참고: colaiuta77/jazzradio)</p>
       <div class="jz-st" id="l3d-jz-st"></div>
       <div class="jz-now"><img id="l3d-jz-art" alt="" hidden><div><b id="l3d-jz-title">멈춤</b><small id="l3d-jz-artist"></small></div></div>
       <div class="row" style="align-items:center">

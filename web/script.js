@@ -516,7 +516,7 @@
                 cells.push(field('감지', detect), field('비교 주기(초)', input(r, 'local_interval', { type: 'number', min: 30 })),
                     field('감시할 폴더 (컨테이너 기준)', input(r, 'local_root', { placeholder: '/mnt/nas/책' })), el('span'));
             } else {
-                cells.push(field('rclone 리모트', input(r, 'source_remote', { list: 'gdw-remotes', placeholder: 'zeeps_member' })),
+                cells.push(field('rclone 리모트', input(r, 'source_remote', { list: 'gdw-remotes', placeholder: 'my_remote' })),
                     field('Drive 폴더 ID', input(r, 'root_id', { placeholder: '1AbC…' })),
                     field('로컬 경로', input(r, 'local_root', { placeholder: '/mnt/gds/책' })));
                 if (r.mode === 'drivepoll') {

@@ -291,7 +291,7 @@
             (up.error ? '확인 실패' : '확인 중') })]));
         if (up.available) {
           list.appendChild(h('p', { class: 'muted', text: '업데이트: 설치 폴더에서 git pull 후 서비스 재시작 ' +
-            '(예: cd /mnt/bookoasis_assistant && git pull && systemctl restart bookoasis_assistant)' }));
+            '(예: cd /opt/bookoasis_assistant && git pull && systemctl restart bookoasis_assistant)' }));
         }
         return h('div', {}, [list, h('p', { class: 'muted', text: '모듈 켜기/끄기와 경로·토큰 같은 실행 환경은 .env에서 바꿉니다 (WTM_ENABLED / GDW_ENABLED / MINI_ENABLED). ' +
           '드라이브 변경 감시는 리눅스 전용이라 윈도우에서는 사용할 수 없습니다.' })]);
