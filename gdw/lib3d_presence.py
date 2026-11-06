@@ -3,6 +3,7 @@
 화면이 0.4초마다 자기 위치를 보내면(POST /api/lib3d/presence) 같은 층의 다른 사람 위치와 새 채팅을 돌려준다.
 몇 명~십여 명 규모를 생각한 짧은 주기 요청 방식이다.
 """
+import re
 import threading
 import time
 
@@ -30,18 +31,36 @@ def _clean(now):
         _STATE.pop(name, None)
 
 
-def update(username, body):
-    """내 위치를 남기고 {others, online, chat, chat_id}를 돌려준다"""
+NICK_MAX = 16
+
+
+def clean_nick(v):
+    """화면에 보일 이름: 공백 정리, 제어 문자·앞의 @ 빼기, 16자까지"""
+    v = re.sub(r"[\x00-\x1f\x7f<>]", "", " ".join(str(v or "").split())).lstrip("@").strip()
+    return v[:NICK_MAX]
+
+
+def ident(username, body, allow_nick):
+    """(key, name): key는 이 브라우저(계정 + 창 id - 같은 손님 계정을 여럿이 써도 따로), name은 화면에 보일 이름"""
+    cid = re.sub(r"[^A-Za-z0-9]", "", str(body.get("cid") or ""))[:16]
+    key = "%s#%s" % (username, cid) if cid else username
+    nick = clean_nick(body.get("nick")) if allow_nick else ""
+    return key, (nick or username)
+
+
+def update(key, body, name=None):
+    """내 위치를 남기고 {others, online, chat, chat_id, me}를 돌려준다 (key: ident()의 key)"""
     now = time.time()
     floor = str(body.get("floor") or "")[:40]
     reading = body.get("reading")
     with _LOCK:
-        _STATE[username] = {"floor": floor, "x": _num(body.get("x")), "z": _num(body.get("z")), "yaw": _num(body.get("yaw"), -100, 100),
-                            "moving": bool(body.get("moving")), "reading": str(reading)[:80] if reading else "",
-                            "sit": bool(body.get("sit")), "t": now}
+        _STATE[key] = {"floor": floor, "x": _num(body.get("x")), "z": _num(body.get("z")), "yaw": _num(body.get("yaw"), -100, 100),
+                       "moving": bool(body.get("moving")), "reading": str(reading)[:80] if reading else "",
+                       "sit": bool(body.get("sit")), "name": name or key.split("#")[0], "t": now}
         _clean(now)
-        others = [dict(v, user=k) for k, v in _STATE.items() if k != username and v["floor"] == floor]
-        online = [{"user": k, "floor": v["floor"], "reading": v["reading"]} for k, v in sorted(_STATE.items())]
+        others = [dict(v, user=v["name"], id=k) for k, v in _STATE.items() if k != key and v["floor"] == floor]
+        online = [{"user": v["name"], "id": k, "floor": v["floor"], "reading": v["reading"]} for k, v in sorted(_STATE.items(), key=lambda kv: kv[1]["name"])]
+        username = key
         try:
             since = int(body.get("since") or 0)
         except (TypeError, ValueError):
@@ -52,7 +71,8 @@ def update(username, body):
             chat = mine[-10:]
     for o in others:
         o.pop("t", None)
-    return {"others": others, "online": online, "chat": chat, "chat_id": _SEQ["chat"]}
+        o.pop("name", None)
+    return {"others": others, "online": online, "chat": chat, "chat_id": _SEQ["chat"], "me": key}
 
 
 def post(user, text, floor="", to=None, books=None):
@@ -105,17 +125,17 @@ def ask_in_chat(username, question, floor, ask_fn):
     _t.Thread(target=run, daemon=True).start()
 
 
-def say(username, text, floor):
+def say(key, text, floor, name=None):
     text = " ".join(str(text or "").split())[:CHAT_MAX_LEN]
     if not text:
         raise ValueError("할 말을 적어 주세요.")
     now = time.time()
     with _LOCK:
-        if now - _LAST_SAY.get(username, 0) < CHAT_MIN_GAP:
+        if now - _LAST_SAY.get(key, 0) < CHAT_MIN_GAP:
             raise ValueError("너무 빨리 보냈습니다. 잠시 뒤에 다시 보내 주세요.")
-        _LAST_SAY[username] = now
+        _LAST_SAY[key] = now
         _SEQ["chat"] += 1
-        msg = {"id": _SEQ["chat"], "user": username, "floor": str(floor or "")[:40], "text": text, "t": now}
+        msg = {"id": _SEQ["chat"], "user": name or key.split("#")[0], "floor": str(floor or "")[:40], "text": text, "t": now}
         _CHAT.append(msg)
         del _CHAT[:-CHAT_KEEP]
     return msg
@@ -128,6 +148,8 @@ def active_count():
         return len(_STATE)
 
 
-def leave(username):
+def leave(key):
+    """[나가기]: 그 창만 / 로그아웃: 계정 이름을 주면 그 계정의 창 모두"""
     with _LOCK:
-        _STATE.pop(username, None)
+        for k in [k for k in _STATE if k == key or k.startswith(key + "#")]:
+            _STATE.pop(k, None)

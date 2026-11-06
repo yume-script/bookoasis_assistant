@@ -341,6 +341,15 @@ class Handler(BaseHTTPRequestHandler):
             ctype += "; charset=utf-8"
         self._send(200, data, ctype)
 
+    def _pres_ident(self, user, context):
+        """함께 보기에서의 나: (창마다 다른 key, 보일 이름). 관람자(손님 계정)는 들어올 때 적은 이름을 쓴다.
+        다른 계정 이름과 같으면 '(손님)'을 붙여 흉내를 막는다."""
+        viewer = not auth.is_admin(user)
+        key, name = lib3d_presence.ident(user["username"], context, viewer)
+        if viewer and name != user["username"] and auth.find_user(name):
+            name = "%s (손님)" % name
+        return key, name
+
     def _jazz(self, rest):
         from urllib.parse import parse_qs
         q = {k: v[0] for k, v in parse_qs(self.path.partition("?")[2]).items() if v}
@@ -658,7 +667,7 @@ class Handler(BaseHTTPRequestHandler):
         if path.startswith(("/api/auth/", "/api/users")):
             return self._auth_post(path, context, user)
         if path == "/api/lib3d/leave":   # 3D 서재 [나가기]: 함께 보기에서 바로 빠진다 (아무도 없으면 AI 직원도 쉼)
-            lib3d_presence.leave(user["username"])
+            lib3d_presence.leave(self._pres_ident(user, context)[0])
             return self._send(200, {"success": True})
         if path == "/api/lib3d/brunch/tts":   # 낭독 코너: Edge 음성 한 문장 → mp3
             if not modules()["lib3d"] or not lib3d_brunch.enabled():
@@ -676,16 +685,17 @@ class Handler(BaseHTTPRequestHandler):
             if not auth.adult_ok(user) and str(context.get("floor") or "") == "adult":
                 context["floor"] = ""
             try:
+                key, name = self._pres_ident(user, context)
                 if path == "/api/lib3d/presence":
-                    return self._send(200, dict(lib3d_presence.update(user["username"], context),
+                    return self._send(200, dict(lib3d_presence.update(key, context, name),
                                                 staff=lib3d_agents.public(str(context.get("floor") or "")), success=True))
                 ag, question = lib3d_agents.match_call(context.get("text"))
                 if ag:   # 채팅에서 AI 직원 부르기 (@사서·@도슨트…): 문답은 부른 사람에게만, 직원의 말은 그 층 모두에게
                     if not lib3d_ai.flags()["ask"]:
                         return self._send(400, {"success": False, "error": "AI 직원과의 대화가 꺼져 있습니다 - 3D 서재 설정 > AI 설정의 'AI 직원'."})
-                    lib3d_agents.talk(ag, user["username"], question, context.get("floor"), auth.is_admin(user), auth.adult_ok(user))
+                    lib3d_agents.talk(ag, key, question, context.get("floor"), auth.is_admin(user), auth.adult_ok(user), display=name)
                     return self._send(200, {"success": True, "ask": True})
-                return self._send(200, {"success": True, "msg": lib3d_presence.say(user["username"], context.get("text"), context.get("floor"))})
+                return self._send(200, {"success": True, "msg": lib3d_presence.say(key, context.get("text"), context.get("floor"), name)})
             except ValueError as e:
                 return self._send(400, {"success": False, "error": str(e)})
         if path == "/api/lib3d/settings":  # 3D 서재 설정: 보여 줄 보관함 ({"libraries": [키…] 또는 null=전부})

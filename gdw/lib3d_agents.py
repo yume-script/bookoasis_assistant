@@ -458,7 +458,7 @@ def match_call(text):
     return None, None
 
 
-def talk(a, username, question, floor, admin, adult):
+def talk(a, username, question, floor, admin, adult, display=None):
     """이용자가 부름: 질문·답은 부른 사람에게만(채팅 귓속말), 직원의 say는 그 층 모두에게"""
     if not lib3d_ai.configured():
         raise ValueError("AI 설정(연결 방식·주소·모델)을 먼저 해 주세요 - 3D 서재 설정 > AI 설정.")
@@ -470,7 +470,7 @@ def talk(a, username, question, floor, admin, adult):
             raise ValueError("%s이(가) 앞 이야기에 답하는 중입니다. 잠시만요." % a["name"])
         _BUSY.add(key)
     who = "%s (%s)" % (a["name"], _short(a["job"]))
-    lib3d_presence.post(username, a["call"][0] + " " + question, floor, to=username)
+    lib3d_presence.post(display or username, a["call"][0] + " " + question, floor, to=username)
     lib3d_presence.post(who, "…", floor, to=username)
 
     def run():
@@ -478,7 +478,7 @@ def talk(a, username, question, floor, admin, adult):
         books = None
         try:
             hist = state()["users"].get(username, {}).get("hist", {}).get(a["id"], [])
-            out = lib3d_ai.ask(question, hist, system=_system(a, floor, username, not admin),
+            out = lib3d_ai.ask(question, hist, system=_system(a, floor, display or username, not admin),
                                extra=[WorldTools(a["id"], floor, found, username)], allow=_allow(not admin), check=_check(adult), need_flag=False, found=found)
             answer = out.get("answer") or "(답이 비어 있습니다)"
             books = out.get("books") or None
@@ -490,7 +490,7 @@ def talk(a, username, question, floor, admin, adult):
                 _save_state()
             acts = [t for t in out.get("tools", []) if t in ("move_to", "say", "point_at_book", "set_board")]
             if acts:
-                add_log(a["id"], "%s님 응대" % username, question[:60] + " → " + answer[:160], books, private=True)
+                add_log(a["id"], "%s님 응대" % (display or username), question[:60] + " → " + answer[:160], books, private=True)
         except Exception as error:  # noqa: BLE001
             answer = "죄송해요, 지금은 답하지 못했어요: %s" % error
         finally:

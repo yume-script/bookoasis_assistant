@@ -3753,11 +3753,13 @@
   function syncRemotes(list) {
     var seen = {};
     list.forEach(function (o) {
-      seen[o.user] = true;
-      var p = remotes[o.user];
-      if (p && p.g.parent !== floorGroup) { dropRemote(o.user); p = null; }   // 층을 다시 지었으면 새로
+      var rid = o.id || o.user;   // 같은 손님 계정을 여럿이 써도 창마다 따로
+      seen[rid] = true;
+      var p = remotes[rid];
+      if (p && p.g.parent !== floorGroup) { dropRemote(rid); p = null; }   // 층을 다시 지었으면 새로
+      if (p && p.remote !== o.user) { setTag(p, o.user, ''); p.remote = o.user; }   // 이름을 바꿨으면
       if (!p) {
-        p = remotes[o.user] = makeRemote(o.user);
+        p = remotes[rid] = makeRemote(o.user);
         p.g.position.set(o.x, 0, o.z); p.g.rotation.y = o.yaw;
         floorGroup.add(p.g);
         dimEnv(p.g);
@@ -3809,26 +3811,26 @@
     return f ? f.label.split(' ')[0] : (FLOOR_NAMES[key] || key || '?');
   }
   function onlineChip() {
-    var chip = el('l3d-online'), others = onlineList.filter(function (o) { return !ME || o.user !== ME.username; });
+    var chip = el('l3d-online'), others = onlineList.filter(function (o) { return o.id ? o.id !== MYKEY : (!ME || o.user !== ME.username); });
     chip.hidden = !others.length;
     chip.textContent = '함께 보는 사람 ' + others.length + ' · ' + others.map(function (o) {
       return o.user + '(' + floorLabel(o.floor) + (o.reading ? ' · 읽는 중' : '') + ')';
     }).join(', ');
   }
   function presenceTick() {
-    if (LEFT || presBusy || !floors.length || cur < 0 || !floors[cur] || document.visibilityState !== 'visible') return;
+    if (LEFT || NICK_ASK || presBusy || !floors.length || cur < 0 || !floors[cur] || document.visibilityState !== 'visible') return;
     presBusy = true;
     var body = { floor: floors[cur].key, x: +(sitting ? sitting.x : camera.position.x).toFixed(2), z: +(sitting ? sitting.z : camera.position.z).toFixed(2),
                  yaw: +(sitting ? sitting.rot : yaw + Math.PI).toFixed(3), sit: !!sitting,
                  moving: !!(keys.w || keys.s || keys.a || keys.d || keys.arrowup || keys.arrowdown || moveStick.x || moveStick.y),
-                 reading: reading ? el('l3d-r-title').textContent : null, since: chatSince };
+                 reading: reading ? el('l3d-r-title').textContent : null, since: chatSince, cid: CID, nick: NICK };
     fetch('api/lib3d/presence', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
       .then(function (r) { return r.json(); })
       .then(function (d) {
         if (!d.success) return;
         syncRemotes(d.others || []);
         if (STAFF_ON) syncStaff(d.staff);
-        onlineList = d.online || []; onlineChip();
+        MYKEY = d.me || MYKEY; onlineList = d.online || []; onlineChip();
         (d.chat || []).forEach(function (m) { if (m.id > chatSince) chatLine(m); });
         chatSince = Math.max(chatSince, d.chat_id || 0);
       }).catch(function (e) { console.warn('3D 서재 함께 보기:', e && e.message); })
@@ -3840,15 +3842,39 @@
     if (e.key !== 'Enter' || e.isComposing) return;
     var text = chatIn.value.trim(); if (!text || !floors[cur]) return;
     chatIn.value = '';
-    postJSON('api/lib3d/say', { text: text, floor: floors[cur].key }).then(function () { presenceTick(); setTimeout(presenceTick, 300); })
+    postJSON('api/lib3d/say', { text: text, floor: floors[cur].key, cid: CID, nick: NICK }).then(function () { presenceTick(); setTimeout(presenceTick, 300); })
       .catch(function (er) { var m = { user: '알림', text: er.message, t: Date.now() / 1000 }; chatLine(m); });
   });
   new MutationObserver(function () { el('l3d-chat').classList.toggle('hide', map.classList.contains('on')); })   // 층·지도 목록과 겹치지 않게
     .observe(map, { attributes: true, attributeFilter: ['class'] });
   el('l3d-chat-toggle').addEventListener('click', function () { el('l3d-chat').classList.toggle('min'); });
+  // 함께 보기의 나: 창(브라우저)마다 id, 손님(관람자) 계정은 들어올 때 이름을 적는다 (같은 guest 계정을 여럿이 써도 구별)
+  var CID = '', NICK = '', NICK_ASK = false, MYKEY = '';
+  try { CID = localStorage.getItem('l3d_cid') || ''; if (!CID) { CID = Math.random().toString(36).slice(2, 12); localStorage.setItem('l3d_cid', CID); } } catch (e) { CID = Math.random().toString(36).slice(2, 12); }
+  try { CID += (sessionStorage.getItem('l3d_tab') || (function () { var t = Math.random().toString(36).slice(2, 5); sessionStorage.setItem('l3d_tab', t); return t; })()); } catch (e) { /* 창 구별 없이 */ }
+  function askNick() {
+    var box = el('l3d-nick'), inp = el('l3d-nick-in');
+    try { inp.value = localStorage.getItem('l3d_nick') || ''; } catch (e) { inp.value = ''; }
+    NICK_ASK = true; box.classList.add('on'); keys = {};
+    setTimeout(function () { inp.focus(); inp.select(); }, 50);
+  }
+  function setNick(v) {
+    NICK = String(v || '').replace(/\s+/g, ' ').replace(/^@+/, '').trim().slice(0, 16);
+    try { localStorage.setItem('l3d_nick', NICK); } catch (e) { /* 이번 한 번만 */ }
+    NICK_ASK = false; el('l3d-nick').classList.remove('on');
+    el('l3d-nick-btn').textContent = '✎ ' + (NICK || (ME && ME.username) || '이름');
+    presenceTick();
+  }
+  el('l3d-nick-ok').addEventListener('click', function () { setNick(el('l3d-nick-in').value); });
+  el('l3d-nick-skip').addEventListener('click', function () { setNick(''); });
+  el('l3d-nick-in').addEventListener('keydown', function (e) { e.stopPropagation(); if (e.key === 'Enter' && !e.isComposing) setNick(el('l3d-nick-in').value); });
+  el('l3d-nick-btn').addEventListener('click', askNick);
   function applyMe(me) {   // 관람자: 설정 버튼·질문하기를 숨긴다 (서버도 막음)
+    var first = !ME;
     ME = me || null;
     var viewer = ME && ME.role === 'viewer';
+    el('l3d-nick-btn').hidden = !viewer;
+    if (viewer && first) askNick();   // 손님 계정으로 들어오면 먼저 이름부터
     ['l3d-set-btn'].forEach(function (id) { el(id).hidden = viewer; });
     if (viewer) ['l3d-set', 'l3d-ai', 'l3d-ppl', 'l3d-out', 'l3d-mdl', 'l3d-staff'].forEach(function (id) { el(id).classList.remove('on'); });
   }
@@ -4899,7 +4925,7 @@
     if (sitting) standUp(true);
     keys = {}; savePos();
     [setBox, aiBox, pplBox, outBox, mdlBox, staffBox, brBox, mpBox, cpBox].forEach(function (b) { if (b) b.classList.remove('on'); });
-    fetch('api/lib3d/leave', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: '{}', keepalive: true }).catch(function () {});
+    fetch('api/lib3d/leave', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ cid: CID }), keepalive: true }).catch(function () {});
     var viewer = ME && ME.role === 'viewer';
     el('l3d-left-home').hidden = viewer;
     el('l3d-left').classList.add('on');
