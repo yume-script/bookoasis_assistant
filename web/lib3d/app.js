@@ -527,6 +527,9 @@
     if (hemi) { hemi.intensity = (night ? 0.5 : grey ? 0.7 : 0.6) * (scene.environment ? 0.5 : 1); hemi.color.setHex(night ? 0xfff1dc : 0xffffff); }
     if (weatherFx) { weatherFx.rain.visible = o.weather === 'rain'; weatherFx.snow.visible = o.weather === 'snow'; }
     M.glassPane.opacity = o.weather === 'rain' ? 0.22 : night ? 0.08 : 0.12;
+    tint(EXT.stone, 0xe6e0d4); tint(EXT.metal, 0x2a2e34); tint(EXT.glass, 0x23374a); tint(EXT.soffit, 0xb98a5a); tint(EXT.spine, 0xffffff);
+    [EXT.stone, EXT.metal, EXT.glass, EXT.soffit, EXT.spine].forEach(function (m) { m.envMapIntensity = m === EXT.glass ? envOut * 2.4 : envOut; m.userData.envSet = true; });
+    extNight(night, dusk);
   }
   setInterval(function () { applyOutside(); }, 60000);   // 자동(시간·계절·날씨)이면 1분마다 확인
 
@@ -897,6 +900,117 @@
   var DOOR_W = 3.6, DOOR_H = 2.9, PLAZA_D = 9, autoDoor = null, CINE_WALL = null;
   var glassDoorMat = new T.MeshStandardMaterial({ color: 0xcfe3ee, roughness: 0.05, metalness: 0.2, transparent: true, opacity: 0.28, depthWrite: false, side: T.DoubleSide });
   glassDoorMat.userData.keep = true;
+  // ── 바깥에서 본 서재 (1층에서 나갔을 때만): 현대 건축풍 외장 ──
+  // 안쪽 벽 바로 바깥에 얇은 외장을 한 겹 씌운다 → 서재 안은 그대로, 창·문 위치도 그대로 맞는다.
+  // 1층: 돌 받침 + 문 양옆 커튼월(짙은 유리 + 금속 멀리언), 금속 문틀, 원목 처마의 캐노피와 간판, 옆벽은 돌 기둥 사이 창 + 금속 핀
+  // 위층: 층마다 돌 띠 + 띠창, 둘레를 도는 세로 핀, 앞 왼쪽 모서리엔 층을 꿰뚫는 '책등' 벽(색색의 거대한 책), 옥상 난간·화단·간판
+  var EXT = {
+    stone: new T.MeshStandardMaterial({ color: 0xe6e0d4, roughness: 0.85 }),
+    metal: new T.MeshStandardMaterial({ color: 0x2a2e34, roughness: 0.38, metalness: 0.6 }),
+    glass: new T.MeshStandardMaterial({ color: 0x23374a, roughness: 0.06, metalness: 0.55, emissive: 0x000000 }),
+    soffit: new T.MeshStandardMaterial({ color: 0xb98a5a, roughness: 0.7 }),
+    lamp: new T.MeshStandardMaterial({ color: 0xfff4dc, emissive: 0x000000 }),
+    spine: new T.MeshStandardMaterial({ color: 0xffffff, roughness: 0.7 })
+  };
+  Object.keys(EXT).forEach(function (k) { EXT[k].userData.keep = true; });
+  function extNight(night, dusk) {   // applyOutside에서: 밤엔 유리 안쪽이 따뜻하게, 캐노피 조명 켜짐
+    EXT.glass.emissive.setHex(night ? 0x120c05 : dusk ? 0x080502 : 0x000000);
+    EXT.lamp.emissive.setHex(night || dusk ? 0xffe2a8 : 0x000000);
+  }
+  function instBoxes(list, mat, colors) {   // [x, y, z, sx, sy, sz] 여러 개를 InstancedMesh 하나로
+    if (!list.length) return null;
+    var im = new T.InstancedMesh(unitBox, mat, list.length), m4 = new T.Matrix4(), q = new T.Quaternion(), c = new T.Color();
+    list.forEach(function (b, i) {
+      m4.compose(new T.Vector3(b[0], b[1], b[2]), q, new T.Vector3(b[3], b[4], b[5])); im.setMatrixAt(i, m4);
+      if (colors) im.setColorAt(i, c.setHex(colors[i]));
+    });
+    im.castShadow = true; im.receiveShadow = true; parent.add(im);
+    return im;
+  }
+  function addFacade(w, back, front) {
+    var d = front - back, cz = (front + back) / 2, up = Math.max(1, floors.length) - 1, fh = 4.5, top = CEIL + up * fh;
+    var fins = [], frames = [], stones = [];
+    // ── 1층 앞면: 돌 받침·머리띠, 문 양옆 커튼월 ──
+    stones.push([0, 0.15, front + 0.13, w + 0.5, 0.3, 0.06], [0, 4.95, front + 0.13, w + 0.5, 0.9, 0.06]);
+    [-1, 1].forEach(function (sd) {
+      var x0 = DOOR_W / 2 + 0.6, x1 = w / 2 + 0.2, cw = x1 - x0, cx = sd * (x0 + cw / 2);
+      var gl = new T.Mesh(unitBox, EXT.glass); gl.scale.set(cw, 4.2, 0.05); gl.position.set(cx, 2.4, front + 0.13); parent.add(gl);
+      for (var mx = x0; mx <= x1 + 0.01; mx += 1.6) frames.push([sd * mx, 2.4, front + 0.18, 0.07, 4.2, 0.1]);   // 세로 멀리언
+      frames.push([cx, 3.3, front + 0.18, cw, 0.06, 0.1]);   // 가로 띠
+      stones.push([sd * (DOOR_W / 2 + 0.3), 2.4, front + 0.13, 0.6, 4.2, 0.06]);   // 문 옆 돌 기둥
+    });
+    // 금속 문틀 (앞으로 튀어나온 액자)
+    frames.push([0, DOOR_H + 0.18, front + 0.25, DOOR_W + 0.9, 0.26, 0.3]);
+    [-1, 1].forEach(function (sd) { frames.push([sd * (DOOR_W / 2 + 0.32), (DOOR_H + 0.3) / 2, front + 0.25, 0.26, DOOR_H + 0.3, 0.3]); });
+    // ── 캐노피: 원목 처마 + 금속 테두리 + 간판 + 아래 조명, 가는 기둥 둘 ──
+    var cw2 = 9.5, cd = 3.2, cy = 3.65;
+    var slab = new T.Mesh(unitBox, EXT.metal); slab.scale.set(cw2, 0.46, cd); slab.position.set(0, cy, front + cd / 2); slab.castShadow = true; parent.add(slab);
+    var sof = new T.Mesh(new T.PlaneGeometry(cw2 - 0.2, cd - 0.1), EXT.soffit); sof.rotation.x = Math.PI / 2; sof.position.set(0, cy - 0.235, front + cd / 2); parent.add(sof);
+    for (var li = 0; li < 6; li++) {
+      var lp = new T.Mesh(new T.CircleGeometry(0.11, 16), EXT.lamp); lp.rotation.x = Math.PI / 2;
+      lp.position.set((li % 3 - 1) * 2.6, cy - 0.24, front + 1 + Math.floor(li / 3) * 1.4); parent.add(lp);
+    }
+    [-1, 1].forEach(function (sd) { var col = new T.Mesh(new T.CylinderGeometry(0.07, 0.07, cy, 12), EXT.metal); col.position.set(sd * (cw2 / 2 - 0.4), cy / 2, front + cd - 0.3); col.castShadow = true; parent.add(col); });
+    var outTex = textTex(['BookOasis 3D 서재'], 1800, 84, '#2a2e34', '#f5f2ec', 58);   // 캐노피 앞면 간판 (판과 같은 비율)
+    var outSign = new T.Mesh(new T.PlaneGeometry(cw2, 0.44), new T.MeshBasicMaterial({ map: outTex, toneMapped: false }));
+    outSign.position.set(0, cy, front + cd + 0.006); parent.add(outSign);
+    // ── 옆면: 창 사이 돌 기둥, 창틀, 세로 핀 ──
+    var wins = []; for (var wz0 = front - 6; wz0 > back + 3; wz0 -= 7) wins.push(wz0);
+    [-1, 1].forEach(function (sd) {
+      var x = sd * (w / 2 + 0.13);
+      stones.push([x, 0.25, cz, 0.06, 0.5, d + 0.26], [x, (CEIL + 4.1) / 2, cz, 0.06, CEIL - 4.1, d + 0.26]);
+      var edges = [back - 0.13]; wins.slice().sort(function (a, b) { return a - b; }).forEach(function (wz) { edges.push(wz - 2.7, wz + 2.7); }); edges.push(front + 0.13);
+      for (var i = 0; i < edges.length; i += 2) if (edges[i + 1] - edges[i] > 0.01) stones.push([x, 2.3, (edges[i] + edges[i + 1]) / 2, 0.06, 3.6, edges[i + 1] - edges[i]]);
+      wins.forEach(function (wz) {
+        frames.push([x + sd * 0.06, 0.47, wz, 0.16, 0.06, 5.5], [x + sd * 0.06, 4.13, wz, 0.16, 0.06, 5.5]);   // 창 위·아래 금속 테
+        [-2.75, 2.75].forEach(function (o) { fins.push([x + sd * 0.17, 2.3, wz + o, 0.3, 4.6, 0.08]); });     // 창 양옆 세로 핀
+      });
+    });
+    // 뒷면
+    stones.push([0, CEIL / 2, back - 0.13, w + 0.5, CEIL, 0.06]);
+    // ── 위층: 돌 몸통 + 층마다 띠창 + 둘레 세로 핀 ──
+    for (var k = 1; k <= up; k++) {
+      var y0 = CEIL + 0.03 + (k - 1) * fh;   // 천장과 겹쳐 깜빡이지 않게 살짝 위
+      add(new T.Mesh(new T.BoxGeometry(w + 0.4, fh, d + 0.4), EXT.stone), 0, y0 + fh / 2, cz);
+      add(new T.Mesh(new T.BoxGeometry(w + 0.46, 2.7, d + 0.46), EXT.glass), 0, y0 + 2.05, cz);
+      frames.push([0, y0 + 0.02, cz, w + 0.6, 0.12, d + 0.6]);   // 층 경계 금속 띠
+      for (var fx = -w / 2 + 0.9; fx <= w / 2 - 0.9; fx += 1.8) { fins.push([fx, y0 + 2.05, front + 0.3, 0.07, 2.7, 0.16], [fx, y0 + 2.05, back - 0.3, 0.07, 2.7, 0.16]); }
+      for (var fz = back + 0.9; fz <= front - 0.9; fz += 1.8) [-1, 1].forEach(function (sd) { fins.push([sd * (w / 2 + 0.3), y0 + 2.05, fz, 0.16, 2.7, 0.07]); });
+    }
+    // ── 앞 왼쪽 모서리: 위층을 꿰뚫는 '책등' 벽 (서재의 얼굴) ──
+    if (up >= 1) {
+      var sx0 = -w / 2 + 0.6, sx1 = Math.min(-w / 2 + 9.5, -DOOR_W), spines = [], cols = [], rr = rnd(97);
+      add(new T.Mesh(new T.BoxGeometry(sx1 - sx0 + 0.6, top - CEIL + 0.4, 0.5), EXT.metal), (sx0 + sx1) / 2, (CEIL + top) / 2, front + 0.45);
+      for (var fl2 = 0; fl2 < up; fl2++) {
+        var by = CEIL + 0.25 + fl2 * fh, xx = sx0 + 0.15;
+        frames.push([(sx0 + sx1) / 2, by - 0.12, front + 0.85, sx1 - sx0 + 0.4, 0.12, 0.5]);   // 선반
+        while (xx < sx1 - 0.2) {
+          var bw = 0.3 + rr() * 0.45, bh = fh * (0.62 + rr() * 0.3);
+          if (xx + bw > sx1) break;
+          spines.push([xx + bw / 2, by + bh / 2, front + 0.82, bw - 0.03, bh, 0.55 + rr() * 0.12]); cols.push(PALETTE[Math.floor(rr() * PALETTE.length)]);
+          xx += bw + (rr() < 0.08 ? 0.25 : 0.02);
+        }
+      }
+      instBoxes(spines, EXT.spine, cols);
+    }
+    // ── 옥상: 금속 난간, 화단, 옥상 간판 ──
+    frames.push([0, top + 0.35, front + 0.25, w + 0.7, 0.7, 0.12], [0, top + 0.35, back - 0.25, w + 0.7, 0.7, 0.12]);
+    [-1, 1].forEach(function (sd) { frames.push([sd * (w / 2 + 0.3), top + 0.35, cz, 0.12, 0.7, d + 0.6]); });
+    add(new T.Mesh(new T.BoxGeometry(w + 0.4, 0.1, d + 0.4), M.parapet), 0, top + 0.05, cz);
+    for (var pi = 0; pi < 4; pi++) {
+      var px = (pi - 1.5) * Math.min(8, w / 5), pz = front - 4;
+      add(new T.Mesh(new T.BoxGeometry(3, 0.6, 1.2), EXT.metal), px, top + 0.4, pz);
+      for (var lf = 0; lf < 5; lf++) { var bush = new T.Mesh(new T.IcosahedronGeometry(0.35 + (lf % 2) * 0.12, 0), M.leaf[(pi + lf) % M.leaf.length]); bush.position.set(px - 1.1 + lf * 0.55, top + 0.95, pz); parent.add(bush); }
+    }
+    var roofTex = textTex(['BookOasis'], 1400, 260, 'rgba(0,0,0,0)', '#f5f2ec', 200);
+    var roofSign = new T.Mesh(new T.PlaneGeometry(12, 2.2), new T.MeshBasicMaterial({ map: roofTex, transparent: true, toneMapped: false }));
+    roofSign.position.set(w / 4, top + 1.9, front - 0.6); parent.add(roofSign);
+    [-5, 0, 5].forEach(function (o) { frames.push([w / 4 + o, top + 1.0, front - 0.75, 0.08, 2, 0.08]); });
+    frames.push([w / 4, top + 0.85, front - 0.75, 12, 0.06, 0.08]);
+    instBoxes(stones, EXT.stone);
+    instBoxes(frames, EXT.metal);
+    instBoxes(fins, EXT.metal);
+  }
   function addDoorAndPlaza(w, back, front) {
     // 문틀 + 좌우로 열리는 유리 자동문 두 짝
     box(DOOR_W + 0.1, 0.1, 0.26, M.black, 0, DOOR_H + 0.05, front);
@@ -909,24 +1023,13 @@
       return { g: g, sd: sd };
     });
     autoDoor = { leaves: leaves, open: 0, front: front };
-    // 바깥에서 본 건물: 층 수만큼 위층 (흰 벽 + 층마다 띠창) - 천장 위라 안에서는 보이지 않는다
-    var d = front - back, cz = (front + back) / 2, up = Math.max(1, floors.length) - 1, fh = 4.5;
-    for (var k = 1; k <= up; k++) {
-      var y0 = CEIL + 0.03 + (k - 1) * fh;   // 천장과 겹쳐 깜빡이지 않게 살짝 위
-      add(new T.Mesh(new T.BoxGeometry(w + 0.2, fh, d + 0.2), M.wall), 0, y0 + fh / 2, cz);
-      add(new T.Mesh(new T.BoxGeometry(w + 0.24, 2.0, d + 0.24), CAR.glass), 0, y0 + 2.2, cz);
-    }
-    var roof = new T.Mesh(new T.BoxGeometry(w + 0.5, 0.5, d + 0.5), M.parapet); add(roof, 0, CEIL + up * fh + 0.25, cz);
+    addFacade(w, back, front);   // 바깥에서 본 서재 (외장·위층·책등 벽·캐노피·옥상)
     // 안쪽·바깥 매트
     [front - 1.1, front + 1.1].forEach(function (mz) { var mat = new T.Mesh(new T.PlaneGeometry(3.2, 1.6), new T.MeshStandardMaterial({ color: 0x2b2d30, roughness: 1 })); mat.rotation.x = -Math.PI / 2; add(mat, 0, 0.015, mz); });
     // 앞마당 (보도블록) - 양옆 보도와 이어진다
     var pw = w + 10, plaza = new T.Mesh(new T.PlaneGeometry(pw, PLAZA_D), M.pave); plaza.rotation.x = -Math.PI / 2; plaza.receiveShadow = true;
     add(plaza, 0, 0.02, front + PLAZA_D / 2 + 0.1);
     var curb = new T.Mesh(unitBox, M.pole); curb.scale.set(pw, 0.12, 0.25); add(curb, 0, 0.06, front + PLAZA_D + 0.2);
-    // 바깥 간판 (문 위, 바깥을 보게)
-    var outTex = textTex(['BookOasis 3D 서재'], 1400, 220, '#1d1e20', '#f5f2ec', 120);
-    var outSign = new T.Mesh(new T.PlaneGeometry(7, 1.1), new T.MeshBasicMaterial({ map: outTex, toneMapped: false }));
-    add(outSign, 0, DOOR_H + 1.15, front + 0.12);
     // 문 옆 화분 + 바깥 벤치 (앉을 수 있음)
     [-1, 1].forEach(function (sd) { plant(sd * (DOOR_W / 2 + 1.1), front + 0.9, 1.1, 21 + (sd > 0 ? 1 : 0)); });
     [-1, 1].forEach(function (sd) {
