@@ -213,6 +213,12 @@ def file_ready(path):
         telegram_upload.enqueue(path)
     except Exception:  # noqa: BLE001
         pass
+    if config.env_bool("LIB3D_ENABLED", False):   # 3D 서재: 배달원이 받은 작품을 상자에 담아 가져온다 (모아서 한 번에)
+        try:
+            from gdw import lib3d_events
+            lib3d_events.from_webtoon(path)
+        except Exception:  # noqa: BLE001
+            pass
     try:   # 날짜별 받은 회차 수·용량 (download_stats.json)
         from . import download_stats
         download_stats.record(path)

@@ -3481,6 +3481,16 @@
     body.appendChild(info);
     var auto = staffInput('input', d.config.autonomous, { type: 'checkbox', 'data-k': 'autonomous' });
     body.appendChild(labeled('자율 업무 - 이용자가 없어도 직원은 정해진 주기로 혼자 일하고, AI 손님도 찾아옴', auto));
+    var dl = d.config.delivery || {}, dfs = document.createElement('fieldset'); dfs.dataset.delivery = '1';
+    var dlg = document.createElement('legend'); dlg.textContent = '배달 (책·영상·웹툰이 들어오면 배달원이 1층 안내 데스크로)'; dfs.appendChild(dlg);
+    dfs.appendChild(labeled('배달 받기', staffInput('input', dl.enabled !== false, { type: 'checkbox', 'data-d': 'enabled' })));
+    dfs.appendChild(labeled('웹툰 다운로더가 받은 회차도 (잠잠해질 때까지 모아 한 상자로)', staffInput('input', dl.webtoon !== false, { type: 'checkbox', 'data-d': 'webtoon' })));
+    dfs.appendChild(labeled('배달원 이름 (바깥 프로그램이 이름을 보내면 그 이름)', staffInput('input', dl.name || '배달원', { type: 'text', 'data-d': 'name' })));
+    var dsub = document.createElement('p'); dsub.className = 'sub';
+    dsub.textContent = (d.events_on ? '바깥 프로그램 알림 켜짐: POST /api/lib3d/events (Authorization: Bearer LIB3D_EVENT_TOKEN).' : '바깥 프로그램(디스코드 봇 등)에서 보내려면 .env에 LIB3D_EVENT_TOKEN을 넣으세요.') +
+      ' 최근: ' + ((d.deliveries || []).slice(0, 3).map(function (x) { return new Date(x.t * 1000).toLocaleString() + ' ' + (x.from || (x.src === 'webtoon' ? '웹툰 다운로더' : '')) + ' - ' + x.text; }).join(' / ') || '없음');
+    dfs.appendChild(dsub);
+    body.appendChild(dfs);
     var gh = false;
     d.config.agents.forEach(function (a) {
       var guest = a.kind === 'guest';
@@ -3499,6 +3509,10 @@
         fs.appendChild(labeled(guest && f[0] === 'goal' ? '찾는 것' : guest && f[0] === 'job' ? '소개' : f[1], staffInput(f[0] === 'goal' || f[0] === 'personality' ? 'textarea' : 'input', a[f[0]], { type: 'text', 'data-f': f[0] })));
       });
       if (!guest) fs.appendChild(labeled('부르는 말 (쉼표로)', staffInput('input', (a.call || []).join(', '), { type: 'text', 'data-f': 'call' })));
+      if (!guest) {   // 전화: 이 직원의 생각을 바깥 AI(예: 디스코드 봇 캐릭터)가 맡는다
+        fs.appendChild(labeled('바깥 AI 주소 (비우면 이 서버의 AI · 넣으면 질문·보고를 그 주소로 전화하고 자율 업무는 쉼)', staffInput('input', a.remote_url || '', { type: 'url', 'data-f': 'remote_url', placeholder: 'https://…/call' })));
+        fs.appendChild(labeled('바깥 AI 토큰 (Bearer)', staffInput('input', '', { type: 'password', 'data-f': 'remote_token', placeholder: a.remote_token_set ? '저장됨 - 바꿀 때만 입력' : '없음', autocomplete: 'new-password' })));
+      }
       (a.tasks || []).forEach(function (t) {
         var row = document.createElement('div'); row.className = 'task'; row.dataset.task = t.id;
         row.appendChild(staffInput('input', t.enabled !== false, { type: 'checkbox', 'data-t': 'enabled', title: '이 업무 켜기' }));
@@ -3541,7 +3555,8 @@
       .catch(function (e) { el('l3d-staff-msg').textContent = e.message; });
   });
   el('l3d-staff-save').addEventListener('click', function () {
-    var body = { action: 'save', autonomous: staffBox.querySelector('[data-k=autonomous]').checked, agents: [] };
+    var body = { action: 'save', autonomous: staffBox.querySelector('[data-k=autonomous]').checked, agents: [], delivery: {} };
+    Array.prototype.forEach.call(staffBox.querySelectorAll('[data-d]'), function (i) { body.delivery[i.dataset.d] = i.type === 'checkbox' ? i.checked : i.value; });
     Array.prototype.forEach.call(staffBox.querySelectorAll('fieldset[data-agent]'), function (fs) {
       var a = { id: fs.dataset.agent, tasks: [] };
       Array.prototype.forEach.call(fs.querySelectorAll('[data-f]'), function (i) { a[i.dataset.f] = i.type === 'checkbox' ? i.checked : i.value; });
@@ -4869,16 +4884,22 @@
     p.tx = home[0]; p.tz = home[1]; p.face = home[2];
     floorGroup.add(p.g); dimEnv(p.g);
     if (p.mixer) setLook(p, 'calm');
+    if (s.kind === 'courier') {   // 두 손으로 든 택배 상자
+      var bx = new T.Group(), cb = new T.Mesh(unitBox, new T.MeshStandardMaterial({ color: 0xb8865a, roughness: 0.9 }));
+      cb.scale.set(0.5, 0.36, 0.38); bx.add(cb);
+      var tp = new T.Mesh(unitBox, new T.MeshStandardMaterial({ color: 0xe8dcc0, roughness: 0.7 })); tp.scale.set(0.51, 0.02, 0.08); tp.position.y = 0.18; bx.add(tp);
+      bx.position.set(0, 1.05, 0.36); p.g.add(bx);
+    }
     return p;
   }
   function setStaffTag(p, s, msg) {   // 직원은 청록, AI 손님은 호박색 이름표
     if (p.tag) { p.g.remove(p.tag); p.tag.material.map.dispose(); p.tag.material.dispose(); }
-    p.tag = nameTag(s.name + ' · ' + s.job, msg, s.kind === 'guest' ? '#ffcf7a' : s.post === 'office' ? '#ffd166' : (s.post === 'gallery' || s.post === 'jazz') ? '#9fd3ff' : '#7ee0c3');
+    p.tag = nameTag(s.name + ' · ' + s.job, msg, s.kind === 'guest' ? '#ffcf7a' : s.kind === 'courier' ? '#ff9f6b' : s.post === 'office' ? '#ffd166' : (s.post === 'gallery' || s.post === 'jazz') ? '#9fd3ff' : '#7ee0c3');
     p.tag.position.y = 2.15 + (msg ? 0.2 : 0); p.g.add(p.tag);
   }
   function syncStaff(d) {
     if (!d || !floorGroup || !layout) return;
-    staffData = d.agents || [];
+    staffData = (d.agents || []).concat(cur === 0 ? d.deliveries || [] : []);   // 배달원은 1층 입구로 와서 안내 데스크에 상자를 놓고 간다
     Object.keys(staffNPC).forEach(function (k) {   // 나간 손님(목록에서 빠진 사람)은 지운다
       if (staffData.some(function (s) { return s.id === k; })) return;
       var gone = staffNPC[k]; if (gone.g.parent) gone.g.parent.remove(gone.g); disposeGroup(gone.g); delete staffNPC[k];

@@ -325,6 +325,38 @@ three.js 예제(webgl_animation_skinning_morph)의 노란 로봇이 층마다 �
 - **길 건너 사람들**(대표·큐레이터·청음실 주인)은 자기 건물이 있는 1층에서만 보이고, 2층부터는 나들이로 서재에 들어왔을 때만 보입니다. [창밖 풍경 > 거리]에서 그 건물을 비우면(이름 없음) 서재 안에 있을 때만 나옵니다.
 - 이미 쓰던 설정에는 업데이트 후 처음 열 때 세 사람과 보고 업무가 한 번만 추가됩니다(지우면 다시 생기지 않음).
 
+### 6-8. 배달과 바깥 AI (전화)
+
+**배달**: 서재에 책·영상·웹툰이 들어오면 배달원(주황 이름표)이 상자를 들고 1층 입구로 들어와 안내 데스크에 놓고 나갑니다(약 50초, 한 번에 한 명씩 차례로). 데스크에 닿으면 1층 채팅과 소식판 '최근 활동'에 "📦 웹툰 4편(작품A·작품B) 왔습니다!"처럼 알립니다.
+- **웹툰 다운로더**가 받은 회차는 자동으로 배달됩니다. 회차마다 오지 않고, 90초 안에 이어 온 회차를 모아 잠잠해지면(20초) 한 상자로 가져옵니다.
+- **바깥 프로그램**(디스코드 봇 등)은 이벤트 주소로 보냅니다. `.env`에 `LIB3D_EVENT_TOKEN`(긴 무작위 문자열)을 넣어야 켜집니다.
+- [AI 직원] 맨 위 **배달** 칸: 배달 받기, 웹툰도 받기, 배달원 이름(기본 '배달원', 바깥 프로그램이 `from`을 보내면 그 이름).
+- 6시간보다 오래된 배달은 오지 않습니다(서버를 오래 꺼 두었다 켜도 몰려오지 않음).
+
+```bash
+# 배달 (kind: book·webtoon·video·audio·comic, items는 제목 문자열만 넣어도 됨, note는 배달원이 할 말)
+curl -X POST http://서버:포트/api/lib3d/events -H "Authorization: Bearer $LIB3D_EVENT_TOKEN" -H "Content-Type: application/json" \
+  -d '{"type": "delivery", "from": "택배 기사", "items": [{"title": "새 책", "kind": "book"}], "note": "새 책 왔어요"}'
+# 직원이 말하기·움직이기 (agent는 직원 id: librarian·docent·boss·curator·dj, place는 넣지 않아도 됨)
+curl -X POST http://서버:포트/api/lib3d/events -H "Authorization: Bearer $LIB3D_EVENT_TOKEN" -H "Content-Type: application/json" \
+  -d '{"type": "say", "agent": "boss", "text": "오늘도 수고 많아요!", "place": "office"}'
+```
+
+**바깥 AI (전화)**: 직원 한 명의 생각을 다른 프로그램의 AI(예: 디스코드 봇 캐릭터)가 맡게 할 수 있습니다. [AI 직원]에서 그 직원의 **바깥 AI 주소**(와 토큰)를 넣으면:
+- 채팅에서 그 직원을 부르면(`@대표 …`) 질문을 그 주소로 보내 받은 답을 보여 줍니다(이 서버의 AI 호출을 쓰지 않음).
+- 부하 직원의 보고(`report`)는 전화로 바로 전해지고, 받은 답은 부하 직원의 메모에 "[대표의 답] …"으로 남아 다음 일에 참고합니다.
+- AI 손님이 그 직원에게 묻는 것도 그 주소로 갑니다.
+- 그 직원의 자율 업무는 이 서버에서 하지 않습니다(바깥 AI가 이벤트 `say`로 직접 움직임).
+
+바깥 AI 쪽에서 받는 요청 (POST, JSON, 토큰을 넣었으면 `Authorization: Bearer 토큰`, 45초 안에 답):
+
+| `type` | 함께 오는 것 | 돌려줄 것 |
+|---|---|---|
+| `ask` | `user`(부른 사람 이름), `question`, `floor`, `guest`(AI 손님이 물었으면 true) | `{"text": "답", "say": "말풍선(선택)", "place": "갈 곳(선택)"}` |
+| `report` | `from` `{id, name, job}`, `text` | `{"text": "보고에 대한 답(선택)"}` |
+
+두 경우 모두 `agent` `{id, name, job}`(맡은 직원), `server: "bookoasis_lib3d"`가 함께 옵니다.
+
 ---
 
 ## 7. 관리자 설정 메뉴
@@ -339,7 +371,7 @@ three.js 예제(webgl_animation_skinning_morph)의 노란 로봇이 층마다 �
 | **창밖 풍경 > 거리** | 길 건너 간판 이름(한 줄에 하나), 갤러리·재즈 청음실·사무실·현수막 건물 이름 (비우면 그 공간 없음) | `street` |
 | **창밖 풍경 > 현수막** | 없음 / 그림 주소(서버가 받아 둠, 6시간마다 갱신, 15MB까지) / 보관함 표지(정한 간격마다 무작위, 누르면 작품 카드) | `banner`, `banner_lib`, `banner_sec` |
 | **3D 모형** | 라운지 소파·의자·화분·차를 '지금 그대로'(가벼움) 또는 '3D 모형 파일'(약 14MB) | `models` |
-| **AI 직원** | 자율 업무 켜기, 직원·손님마다 켜기·이름·직업·목표·성격·부르는 말·업무(주기·지시문)·[지금 실행], 활동 기록·메모, [기본값으로] | `lib3d_agents.json` |
+| **AI 직원** | 자율 업무 켜기, 배달(받기·웹툰·배달원 이름), 직원마다 바깥 AI 주소·토큰, 직원·손님마다 켜기·이름·직업·목표·성격·부르는 말·업무(주기·지시문)·[지금 실행], 활동 기록·메모, [기본값으로] | `lib3d_agents.json` |
 | **AI 설정** | 연결·모델·하루 한도·손님 대화·직원 응대·MCP | `.env` `LIB3D_AI_*` |
 
 ---
@@ -366,6 +398,7 @@ three.js 예제(webgl_animation_skinning_morph)의 노란 로봇이 층마다 �
 | `LIB3D_AI_CHAT` / `_CHAT_SEC` | `false` / `60` | 손님 대화 |
 | `LIB3D_AI_ASK` | `false` | AI 직원 응대 |
 | `LIB3D_MCP_COMMAND` / `LIB3D_MCP_SERVERS` / `LIB3D_AI_BUILTIN` | - / - / `true` | AI 도구 |
+| `LIB3D_EVENT_TOKEN` | (비움) | 바깥 프로그램이 배달·직원의 말을 보내는 `POST /api/lib3d/events` 토큰 ([6-8](#6-8-배달과-바깥-ai-전화)) |
 | `MINI_ENABLED` / `MINI_COVERS_DIR` | `true` / - | 미니게임(오락실) / 그림 땅따먹기 표지 폴더 |
 
 ---
@@ -382,6 +415,7 @@ three.js 예제(webgl_animation_skinning_morph)의 노란 로봇이 층마다 �
 | `lib3d_agents.json` | AI 직원·손님 설정 |
 | `lib3d_agents_state.json` | 직원·손님 위치·기억·활동 기록·소식판 |
 | `lib3d_ai_budget.json` | 오늘 AI 호출 수 |
+| `lib3d_deliveries.jsonl` | 배달 기록 (웹툰 다운로더·바깥 프로그램이 한 줄씩 덧붙임) |
 | `users.json` | 계정 (관리자·관람자, 성인 층 허용) |
 
 브라우저(사람마다)에 기억하는 것: 마지막 자리, 읽던 쪽·듣던 위치, 낭독 목소리·속도.

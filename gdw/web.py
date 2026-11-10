@@ -14,6 +14,7 @@
   GET  /api/auth/state   POST /api/auth/login · setup · logout · password
   GET  /api/users        POST /api/users (추가) · /api/users/password (다른 사용자 비밀번호) · /api/users/delete
   POST /mcp              MCP 서버 (gdw/mcp.py, Authorization: Bearer MCP_TOKEN) · GET/POST /api/mcp 설정 > MCP
+  POST /api/lib3d/events 3D 서재에 배달·외부 AI의 말 알리기 (Authorization: Bearer LIB3D_EVENT_TOKEN)
 
 인증: YMPlayer와 같은 로그인 화면 + 서명한 세션 쿠키 (gdw/auth.py). 로그인 안 했으면 화면은 /login으로, API는 401.
 RPC는 Content-Type: application/json만 받는다 → 다른 사이트의 폼 전송(CSRF)으로는 호출할 수 없다.
@@ -28,7 +29,7 @@ import zipfile
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import lib3d, lib3d_agents, lib3d_brunch, lib3d_jazz, lib3d_ymp, lib3d_ai, lib3d_presence, auth, config, mcp, service
+from . import lib3d, lib3d_agents, lib3d_brunch, lib3d_events, lib3d_jazz, lib3d_ymp, lib3d_ai, lib3d_presence, auth, config, mcp, service
 
 log = logging.getLogger("gdw.web")
 WEB_DIR = os.path.join(config.ROOT, "web")
@@ -628,12 +629,48 @@ class Handler(BaseHTTPRequestHandler):
         wake_watcher(self.headers.get("User-Agent") or "")
         return self._send(200, {"success": True, "message": "드라이브 변경을 지금 확인합니다.", "count": _wake["count"]})
 
+    def _events(self):
+        """POST /api/lib3d/events - Authorization: Bearer <LIB3D_EVENT_TOKEN>. 바깥 프로그램(디스코드 봇 등)이 3D 서재에 알린다.
+          {"type": "delivery", "from": "배달원 이름", "items": [{"title": "제목", "kind": "book|webtoon|video|audio|comic"}], "note": "할 말"}
+          {"type": "say", "agent": "boss", "text": "할 말", "place": "office"}   (직원 id, 장소는 넣지 않아도 됨)"""
+        if not config.env("LIB3D_EVENT_TOKEN", "").strip() or not modules()["lib3d"]:
+            return self._send(404, {"success": False, "error": "3D 서재 이벤트 받기가 꺼져 있습니다 (.env의 LIB3D_EVENT_TOKEN)."})
+        if not lib3d_events.token_ok(self.headers.get("Authorization")):
+            return self._send(401, {"success": False, "error": "토큰이 맞지 않습니다."})
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            length = 0
+        if length > MAX_BODY:
+            return self._send(413, {"success": False, "error": "요청이 너무 큽니다."})
+        try:
+            body = json.loads(self.rfile.read(length) or b"{}") if length else {}
+        except ValueError:
+            return self._send(400, {"success": False, "error": "JSON 형식이 아닙니다."})
+        if not isinstance(body, dict):
+            return self._send(400, {"success": False, "error": "JSON 객체를 보내세요."})
+        try:
+            kind = body.get("type")
+            if kind == "delivery":
+                row = lib3d_events.add(body.get("items"), body.get("from"), body.get("note"), src="api")
+                if not row:
+                    return self._send(409, {"success": False, "error": "배달이 꺼져 있습니다 ([AI 직원] > 배달)."})
+                return self._send(200, {"success": True, "id": row["id"]})
+            if kind == "say":
+                lib3d_agents.remote_act(str(body.get("agent") or ""), " ".join(str(body.get("text") or "").split())[:160], str(body.get("place") or ""))
+                return self._send(200, {"success": True})
+            return self._send(400, {"success": False, "error": "type은 delivery·say 중 하나입니다."})
+        except ValueError as e:
+            return self._send(400, {"success": False, "error": str(e)})
+
     def do_POST(self):
         path = self.path.split("?", 1)[0]
         if path == "/mcp":
             return self._mcp()
         if path == "/api/gdw/wake":
             return self._wake()
+        if path == "/api/lib3d/events":
+            return self._events()
         user = self._user()
         if not user and path not in PUBLIC:
             return self._deny(path)

@@ -18,8 +18,9 @@ import random
 import re
 import threading
 import time
+import urllib.request
 
-from . import config, lib3d, lib3d_ai, lib3d_presence
+from . import config, lib3d, lib3d_ai, lib3d_events, lib3d_presence
 
 log = logging.getLogger("gdw.lib3d_agents")
 
@@ -156,6 +157,10 @@ def config_get():
                         if not any(t.get("id") == "report" for t in a.get("tasks") or []):
                             a["tasks"] = list(a.get("tasks") or []) + [copy.deepcopy(_REPORT_TASK)]
                 v["street_v1"] = True
+            dl = v.setdefault("delivery", {})
+            dl.setdefault("enabled", True)
+            dl.setdefault("webtoon", True)
+            dl.setdefault("name", "배달원")
             _CFG["v"] = v
         return _CFG["v"]
 
@@ -204,6 +209,13 @@ def save_config(body):
     cfg = copy.deepcopy(config_get())
     if "autonomous" in body:
         cfg["autonomous"] = bool(body["autonomous"])
+    if isinstance(body.get("delivery"), dict):
+        dl, du = cfg.setdefault("delivery", {}), body["delivery"]
+        for k in ("enabled", "webtoon"):
+            if k in du:
+                dl[k] = bool(du[k])
+        if "name" in du:
+            dl["name"] = " ".join(str(du["name"] or "").split())[:20] or "배달원"
     for upd in body.get("agents") or []:
         a = next((x for x in cfg["agents"] if x["id"] == upd.get("id")), None)
         if not a:
@@ -213,6 +225,15 @@ def save_config(body):
                 a[k] = str(upd[k] or "").strip()[:600] or a[k]
         if "enabled" in upd:
             a["enabled"] = bool(upd["enabled"])
+        if "remote_url" in upd and not is_guest(a):   # 바깥 AI(디스코드 봇 등)가 이 직원 대신 생각한다 - 빈칸이면 이 서버의 AI
+            url = str(upd["remote_url"] or "").strip()
+            if url and not re.match(r"^https?://[^\s]+$", url):
+                raise ValueError("바깥 AI 주소는 http:// 또는 https://로 시작해야 합니다.")
+            a["remote_url"] = url[:300]
+            if not url:
+                a.pop("remote_token", None)
+        if str(upd.get("remote_token") or "").strip():   # 비워 두면 저장된 토큰 유지
+            a["remote_token"] = str(upd["remote_token"]).strip()[:300]
         if "call" in upd:
             calls = [c.strip() for c in re.split(r"[,\s]+", " ".join(upd["call"]) if isinstance(upd["call"], list) else str(upd["call"])) if c.strip()]
             a["call"] = [c if c.startswith("@") else "@" + c for c in calls][:6] or a.get("call", [])
@@ -249,9 +270,9 @@ def reset_config():
 
 
 # ── 활동 기록 ──
-def add_log(aid, title, text, books=None, private=False):
+def add_log(aid, title, text, books=None, private=False, name=None):
     a = agent(aid) or {"name": aid}
-    entry = {"t": time.time(), "agent": aid, "name": a.get("name"), "job": a.get("job", ""), "title": title, "text": str(text)[:1000]}
+    entry = {"t": time.time(), "agent": aid, "name": name or a.get("name"), "job": a.get("job", ""), "title": title, "text": str(text)[:1000]}
     if private:   # 이용자와의 귓속말 문답 - 관리자 화면에만 내용, 로비 안내판에는 '응대'만
         entry["private"] = True
     if books:
@@ -352,6 +373,20 @@ class WorldTools:
                 del notes[:-NOTES_KEEP]
                 _save_state()
             add_log(self.aid, "%s에게 보고" % _short(boss.get("job")), text)
+            if is_remote(boss):   # 상사가 바깥 AI면 전화로 바로 전하고 답을 듣는다
+                try:
+                    res = remote_call(boss, {"type": "report", "from": {"id": self.aid, "name": a.get("name"), "job": _short(a.get("job"))}, "text": text})
+                except Exception as error:  # noqa: BLE001 - 전화가 안 돼도 보고는 메모에 남았다
+                    return "%s에게 보고를 남겼습니다(전화는 안 받음: %s)." % (boss["name"], error), False
+                if res.get("text"):
+                    with _LOCK:
+                        mine = state()["agents"].setdefault(self.aid, {}).setdefault("notes", [])
+                        mine.append("[%s의 답] %s" % (boss["name"], res["text"][:300]))
+                        del mine[:-NOTES_KEEP]
+                        _save_state()
+                    add_log(boss["id"], "%s의 보고에 답함" % a.get("name", self.aid), res["text"])
+                    return "%s에게 전화로 보고했습니다. 답: %s" % (boss["name"], res["text"]), False
+                return "%s에게 전화로 보고했습니다." % boss["name"], False
             return "%s에게 보고했습니다." % boss["name"], False
         if name in ("point_at_book", "browse_book"):
             title = str(args.get("title") or "").strip()
@@ -406,9 +441,13 @@ class WorldTools:
         self._set(say=question[:80], say_t=time.time())
         found = []
         try:
-            out = lib3d_ai.ask(question, [], system=_system(st, self.floor, me.get("name"), True, guest=True),
-                               extra=[WorldTools(st["id"], self.floor, found, None)], allow=_allow(True), check=_check(False),
-                               need_flag=False, found=found)
+            if is_remote(st):
+                res = remote_call(st, {"type": "ask", "user": me.get("name"), "guest": True, "question": question, "floor": self.floor})
+                out = {"answer": res.get("text")}
+            else:
+                out = lib3d_ai.ask(question, [], system=_system(st, self.floor, me.get("name"), True, guest=True),
+                                   extra=[WorldTools(st["id"], self.floor, found, None)], allow=_allow(True), check=_check(False),
+                                   need_flag=False, found=found)
         except Exception as error:  # noqa: BLE001 - 손님에게 그대로 알려 준다
             return "직원이 답하지 못했습니다: %s" % error, True
         finally:
@@ -437,6 +476,54 @@ def _boss_label(aid):
 
 def _short(job):
     return re.sub(r"\s*\(.*\)\s*$", "", str(job or "")) or "직원"
+
+
+# ── 바깥 AI (전화): 직원의 생각을 다른 프로그램(예: 디스코드 봇의 캐릭터)이 맡는다 ──
+REMOTE_TIMEOUT = 45
+
+
+def is_remote(a):
+    return bool((a or {}).get("remote_url")) and not is_guest(a)
+
+
+def remote_call(a, payload, timeout=REMOTE_TIMEOUT):
+    """바깥 AI에 묻기: POST remote_url {type, agent, ...} → {"text": 답, "say"?: 말풍선, "place"?: 갈 곳}"""
+    body = dict(payload, agent={"id": a["id"], "name": a.get("name"), "job": _short(a.get("job"))}, server="bookoasis_lib3d")
+    headers = {"Content-Type": "application/json", "User-Agent": "BookOasisAssistant-lib3d"}
+    if a.get("remote_token"):
+        headers["Authorization"] = "Bearer " + a["remote_token"]
+    req = urllib.request.Request(a["remote_url"], data=json.dumps(body, ensure_ascii=False).encode("utf-8"), headers=headers, method="POST")
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        raw = r.read(256 * 1024).decode("utf-8", "replace")
+    try:
+        out = json.loads(raw) if raw.strip() else {}
+    except ValueError:
+        out = {"text": raw}
+    if not isinstance(out, dict):
+        out = {"text": str(out)}
+    out["text"] = " ".join(str(out.get("text") or out.get("answer") or out.get("reply") or "").split())[:1500]
+    return out
+
+
+def remote_act(aid, text="", place="", floor=None):
+    """바깥 AI가 직원을 움직임 (말풍선·채팅, 장소 이동). 이벤트 API의 say와 바깥 AI 답의 say·place"""
+    a = agent(aid)
+    if not a or is_guest(a):
+        raise ValueError("없는 직원입니다: %s" % aid)
+    floor = floor or _ground_floor()
+    w = WorldTools(a["id"], floor)
+    if place:
+        res, bad = w.call("move_to", {"place": place})
+        if bad:
+            raise ValueError(res)
+    if text:
+        w.call("say", {"text": text})
+    return True
+
+
+def _ground_floor():
+    floors = sorted({l["db_type"] for l in lib3d.data().get("libraries", []) if l.get("db_type") != "adult"}, key=lambda k: (k != "general", k))
+    return "general" if "general" in floors or not floors else floors[0]
 
 
 def _system(a, floor, user=None, viewer=False, guest=False):
@@ -538,7 +625,7 @@ def match_call(text):
 
 def talk(a, username, question, floor, admin, adult, display=None):
     """이용자가 부름: 질문·답은 부른 사람에게만(채팅 귓속말), 직원의 say는 그 층 모두에게"""
-    if not lib3d_ai.configured():
+    if not is_remote(a) and not lib3d_ai.configured():
         raise ValueError("AI 설정(연결 방식·주소·모델)을 먼저 해 주세요 - 3D 서재 설정 > AI 설정.")
     if not question:
         raise ValueError("'%s 질문'처럼 할 말을 적어 주세요." % a["call"][0])
@@ -555,6 +642,16 @@ def talk(a, username, question, floor, admin, adult, display=None):
         found = []
         books = None
         try:
+            if is_remote(a):   # 바깥 AI가 대신 답한다 (전화)
+                res = remote_call(a, {"type": "ask", "user": display or username, "question": question, "floor": floor})
+                answer = res.get("text") or "(답이 비어 있습니다)"
+                if res.get("say") or res.get("place"):
+                    try:
+                        remote_act(a["id"], str(res.get("say") or "")[:160], str(res.get("place") or ""), floor)
+                    except ValueError:
+                        pass
+                lib3d_presence.post(who, answer, floor, to=username)
+                return
             hist = state()["users"].get(username, {}).get("hist", {}).get(a["id"], [])
             out = lib3d_ai.ask(question, hist, system=_system(a, floor, display or username, not admin),
                                extra=[WorldTools(a["id"], floor, found, username)], allow=_allow(not admin), check=_check(adult), need_flag=False, found=found)
@@ -625,6 +722,8 @@ def run_now(aid, tid):
     t = next((x for x in (a or {}).get("tasks", []) if x["id"] == tid), None)
     if not a or not t:
         raise ValueError("없는 업무입니다.")
+    if is_remote(a):
+        raise ValueError("바깥 AI가 맡은 직원은 이 서버에서 업무를 하지 않습니다 (바깥 AI가 직접 움직입니다).")
     if not lib3d_ai.configured():
         raise ValueError("AI 설정(연결 방식·주소·모델)을 먼저 해 주세요.")
 
@@ -651,6 +750,8 @@ def _loop():
             if cfg.get("autonomous") and lib3d_ai.configured() and not nobody:
                 due = []
                 for a in agents():
+                    if is_remote(a):   # 바깥 AI가 맡은 직원은 그쪽이 알아서 움직인다
+                        continue
                     for t in a.get("tasks", []):
                         if not t.get("enabled", True):
                             continue
@@ -713,11 +814,33 @@ def public(floor):
         if e.pop("private", False):
             e["title"], e["text"] = "이용자 응대", "이용자를 도와 책을 찾아 드렸어요." if e.get("agent") == "librarian" else "이용자를 안내했어요."
         logs.append(e)
-    return {"agents": out, "board": st.get("board") or {}, "log": logs}
+    return {"agents": out, "board": st.get("board") or {}, "log": logs, "deliveries": _deliveries(), "ground": _ground_floor()}
+
+
+def _deliveries():
+    """지금 와 있는 배달원 (1층 화면에 사람 하나로). 데스크에 도착하면 그 층 채팅·활동 기록에 한 번 알린다"""
+    try:
+        d = lib3d_events.active()
+    except Exception:  # noqa: BLE001 - 배달 파일이 깨져도 서재는 돈다
+        log.exception("3D 서재 배달")
+        return []
+    if not d:
+        return []
+    s = lib3d_events.settings()
+    name = d["from"] or s["name"]
+    if d["elapsed"] >= 10 and lib3d_events.first_arrival(d):
+        text = lib3d_events.summary(d["items"])
+        lib3d_presence.post("%s (배달)" % name, "📦 " + (d["note"] or text + " 왔습니다!"), _ground_floor())
+        add_log("delivery", "배달 도착", (d["note"] + " · " if d["note"] else "") + text, name=name)
+    return [{"id": "dlv_" + d["id"], "kind": "courier", "name": name, "job": "배달", "call": "", "post": "entrance",
+             "look": s["look"], "target": d["target"], "say": d["say"], "book": "", "book_title": ""}]
 
 
 def admin_info():
-    cfg = config_get()
+    cfg = copy.deepcopy(config_get())
+    for a in cfg["agents"]:   # 토큰은 화면에 돌려주지 않는다
+        a["remote_token_set"] = bool(a.pop("remote_token", None))
     st = state()
     return {"config": cfg, "last_run": st["last_run"], "present": lib3d_presence.active_count(), "log": st["log"][-40:][::-1], "budget": lib3d_ai.budget(),
-            "notes": {k: v.get("notes", []) for k, v in st["agents"].items()}, "configured": lib3d_ai.configured()}
+            "notes": {k: v.get("notes", []) for k, v in st["agents"].items()}, "configured": lib3d_ai.configured(),
+            "deliveries": lib3d_events.recent(), "events_on": bool(config.env("LIB3D_EVENT_TOKEN", "").strip())}
