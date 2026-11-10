@@ -69,10 +69,9 @@
       ] },
     // 미니게임: 게임 목록은 서버(/api/modules의 games)에서 받아 채운다. 탭 막대 대신 주소의 #게임id로 고른다
     { id: 'mini', title: '미니게임', icon: 'gamepad', href: 'games', hashNav: true, items: [] },
-    // BookOasis 3D 서재 (.env LIB3D_ENABLED=true): 화면 하나라 탭 막대 없이 #hall
+    // BookOasis 3D 서재: 따로 설치하는 프로그램(bookoasis_3d). .env의 LIB3D_URL이 있을 때만 보이고 그 주소를 새 탭으로 연다
     { id: 'lib3d', title: 'BookOasis 3D 서재', icon: 'cube', href: 'library3d', hashNav: true,
-      items: [{ tab: 'hall', label: '둘러보기', icon: 'cube' }, { tab: 'settings', label: '설정', icon: 'gear' },
-               { tab: 'people', label: '인물 수', icon: 'users' }, { tab: 'outside', label: '창밖 풍경', icon: 'image' }, { tab: 'models', label: '3D 모형', icon: 'cube' }, { tab: 'staff', label: 'AI 직원', icon: 'users' }, { tab: 'ai', label: 'AI 설정', icon: 'comment' }] }
+      items: [{ tab: 'hall', label: '둘러보기 (새 탭)', icon: 'cube' }, { tab: 'settings', label: '서재 설정 (새 탭)', icon: 'gear' }] }
   ];
   var THEMES = [
     { id: 'dark', label: '다크', colors: ['#141517', '#1d1f22', '#ececec'] },
@@ -365,8 +364,8 @@
     var box = h('div', { class: 'users-box' });
     function load() {
       while (box.firstChild) box.removeChild(box.firstChild);
-      box.appendChild(h('p', { class: 'muted', text: '로그인할 수 있는 사람. 관리자는 모든 화면을, 관람자는 3D 서재 보기·읽기·함께 보기만 쓸 수 있습니다' +
-        '(성인 층은 허용한 관람자만). 비밀번호를 바꾸면 그 사람의 다른 기기 로그인은 끊깁니다.' }));
+      box.appendChild(h('p', { class: 'muted', text: '로그인할 수 있는 사람. 비밀번호를 바꾸면 그 사람의 다른 기기 로그인은 끊깁니다. ' +
+        '관람자는 예전 3D 서재 전용 계정입니다 - 3D 서재는 따로 설치하는 프로그램(bookoasis_3d)이 되어, 그쪽 [설정 > 사용자]에서 계정을 관리합니다.' }));
       var list = h('div', { class: 'about-list' });
       box.appendChild(list);
       api('api/users').then(function (d) {
@@ -675,6 +674,12 @@
         }
       });
     });
+    if (m.lib3d_url) {   // 3D 서재 메뉴는 따로 설치한 3D 서재로 (로그인은 그쪽 계정)
+      var l3d = MENU.filter(function (x) { return x.id === 'lib3d'; })[0];
+      Array.prototype.forEach.call((l3d.itemsEl && l3d.itemsEl.querySelectorAll('.nav-link')) || [], function (a) {
+        a.href = m.lib3d_url + '#' + a.getAttribute('data-tab'); a.target = '_blank'; a.rel = 'noopener';
+      });
+    }
     applyNavOrder();  // 서버에서 받은 게임 메뉴도 순서대로
     syncActive();
     // 아이콘 배지: 지금 보는 화면의 모듈 버전 (드라이브 변경 감시 / 웹툰 다운로더 / 미니게임마다 다름)
@@ -692,15 +697,9 @@
     var name = m.user || '?';
     who.firstChild.textContent = name;
     who.lastChild.textContent = m.role === 'viewer' ? '관람자' : '관리자';
-    if (m.role === 'viewer') {   // 관람자: 설정 메뉴와 3D 서재의 설정 하위 메뉴를 숨긴다 (서버도 막음)
+    if (m.role === 'viewer') {   // 관람자: 설정 메뉴를 숨긴다 (서버도 막음)
       document.body.classList.add('is-viewer');
       var setLink = nav.querySelector('.nav-footer > .nav-link'); if (setLink) setLink.style.display = 'none';   // hidden은 CSS display에 밀린다
-      var l3 = MENU.filter(function (x) { return x.id === 'lib3d'; })[0];
-      (l3.items || []).forEach(function (it) {
-        if (it.tab === 'hall') return;
-        var link = l3.itemsEl && l3.itemsEl.querySelector('.nav-link[data-tab="' + CSS.escape(it.tab) + '"]');
-        if (link) link.style.display = 'none';
-      });
     }
     avatar.textContent = name.slice(0, 1).toUpperCase();
   }).catch(function () {});

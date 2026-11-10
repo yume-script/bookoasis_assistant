@@ -14,7 +14,6 @@
   GET  /api/auth/state   POST /api/auth/login · setup · logout · password
   GET  /api/users        POST /api/users (추가) · /api/users/password (다른 사용자 비밀번호) · /api/users/delete
   POST /mcp              MCP 서버 (gdw/mcp.py, Authorization: Bearer MCP_TOKEN) · GET/POST /api/mcp 설정 > MCP
-  POST /api/lib3d/events 3D 서재에 배달·외부 AI의 말 알리기 (Authorization: Bearer LIB3D_EVENT_TOKEN)
 
 인증: YMPlayer와 같은 로그인 화면 + 서명한 세션 쿠키 (gdw/auth.py). 로그인 안 했으면 화면은 /login으로, API는 401.
 RPC는 Content-Type: application/json만 받는다 → 다른 사이트의 폼 전송(CSRF)으로는 호출할 수 없다.
@@ -25,19 +24,17 @@ import mimetypes
 import os
 import re
 import time
-import zipfile
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import lib3d, lib3d_agents, lib3d_brunch, lib3d_events, lib3d_jazz, lib3d_ymp, lib3d_ai, lib3d_presence, auth, config, mcp, service
+from . import auth, config, mcp, service
 
 log = logging.getLogger("gdw.web")
 WEB_DIR = os.path.join(config.ROOT, "web")
 STATIC = {"/watch": "index.html", "/style.css": "style.css", "/script.js": "script.js",
           "/theme.css": "theme.css", "/shell.js": "shell.js", "/webtoon": "webtoon/index.html", "/webtoon/": "webtoon/index.html",
           "/webtoon/style.css": "webtoon/style.css", "/webtoon/script.js": "webtoon/script.js",
-          "/login": "login.html", "/login.js": "login.js",
-          "/library3d": "lib3d/index.html", "/library3d/app.js": "lib3d/app.js"}
+          "/login": "login.html", "/login.js": "login.js"}
 PUBLIC = {"/login", "/login.js", "/theme.css", "/shell.js", "/healthz", "/api/auth/state", "/api/auth/login", "/api/auth/setup"}
 PAGES = {"/", "/index.html", "/watch", "/webtoon", "/webtoon/", "/games", "/games/", "/library3d"}  # 로그인 안 했으면 로그인 화면으로 보낼 주소
 OFF_PAGE = """<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
@@ -45,10 +42,10 @@ OFF_PAGE = """<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta n
 <link rel="stylesheet" href="theme.css"></head><body data-module=""><main class="gdw-page"><div class="app-off"><h2>{title}: 꺼져 있음</h2>
 <p>{note}</p></div></main><script src="shell.js"></script></body></html>"""
 MAX_BODY = 2 * 1024 * 1024
-# 관람자(role=viewer)가 쓸 수 있는 것: 3D 서재 보기·읽기·함께 보기와 자기 비밀번호·로그아웃
-VIEWER_GET = {"/library3d", "/library3d/", "/library3d/app.js", "/theme.css", "/shell.js", "/api/modules", "/api/auth/state"}
-VIEWER_LIB3D_ADMIN_ONLY = {"/api/lib3d/libraries", "/api/lib3d/ai/settings", "/api/lib3d/ai/test", "/api/lib3d/agents"}
-VIEWER_POST = {"/api/auth/logout", "/api/auth/password", "/api/lib3d/presence", "/api/lib3d/say", "/api/lib3d/brunch/tts", "/api/lib3d/leave"}
+# 관람자(role=viewer): 예전 3D 서재 전용 계정. 3D 서재는 따로 떼어낸 프로그램(bookoasis_3d, LIB3D_URL)이라
+# 이 프로그램에서는 로그아웃·비밀번호 변경만 하고, 화면은 3D 서재 주소로 보낸다
+VIEWER_GET = {"/theme.css", "/shell.js", "/api/modules", "/api/auth/state", "/library3d"}
+VIEWER_POST = {"/api/auth/logout", "/api/auth/password"}
 
 
 THEMES = ("dark", "light", "black", "navy", "auto")
@@ -90,7 +87,7 @@ def _clean_nav(raw):
 
 def module_versions():
     """모듈별 버전 (왼쪽 위 아이콘 배지: 지금 보는 화면의 모듈 버전)."""
-    out = {"gdw": service._plugin_version(), "lib3d": lib3d.VERSION}
+    out = {"gdw": service._plugin_version()}
     for key, path, field in (("wtm", ("wtm", "VERSION"), "plugin version"), ("mini", ("mini", "VERSION"), "plugin version")):
         try:
             with open(os.path.join(config.ROOT, *path), encoding="utf-8") as f:
@@ -182,19 +179,13 @@ def modules():
     # gdwplx: 드라이브 변경 감시의 Plex 설정 메뉴와 Plex 스캔 (드라이브 변경 감시가 켜져 있을 때만, 기본 끔)
     return {"wtm": config.env_bool("WTM_ENABLED", True), "gdw": gdw,
             "gdwplx": gdw and config.plex_enabled(), "mini": config.env_bool("MINI_ENABLED", True),
-            "lib3d": lib3d.enabled()}
+            "lib3d": bool(lib3d_url())}
 
 
-def arcade_menu(mods):
-    """오락실 게임 목록 [{id, name, icon}] (미니게임이 꺼져 있으면 빈 목록)"""
-    if not mods.get("mini"):
-        return []
-    try:
-        from mini import bundle
-        return bundle.menu()
-    except Exception:  # noqa: BLE001
-        log.exception("오락실 게임 목록")
-        return []
+def lib3d_url():
+    """BookOasis 3D 서재 주소 (따로 설치하는 bookoasis_3d - 사이드바 메뉴가 이 주소로 이어진다, 비우면 메뉴 없음)"""
+    url = config.env("LIB3D_URL", "").strip().rstrip("/")
+    return url + "/library3d" if url and not url.endswith("/library3d") else url
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -268,12 +259,11 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(302, b"", extra={"Location": "./"})
         if not user and path not in PUBLIC:
             return self._deny(path)
-        if user and not auth.is_admin(user):   # 관람자: 3D 서재만
-            if path in ("/", "/index.html") or (path in PAGES and path not in VIEWER_GET):
-                return self._send(302, b"", extra={"Location": "/library3d"})
-            if not (path in VIEWER_GET or (path.startswith("/api/lib3d/") and path not in VIEWER_LIB3D_ADMIN_ONLY)
-                    or path.startswith("/games/covers/")):   # 오락실의 그림 땅따먹기 표지
-                return self._send(403, {"success": False, "error": "관람자 계정은 3D 서재만 볼 수 있습니다."})
+        if user and not auth.is_admin(user):   # 관람자: 3D 서재(따로 설치한 bookoasis_3d)로
+            if path in PAGES:
+                return self._viewer_page()
+            if path not in VIEWER_GET:
+                return self._send(403, {"success": False, "error": "관람자 계정은 이 화면을 쓸 수 없습니다 (3D 서재는 따로 설치한 프로그램)."})
         if path == "/api/users":
             return self._send(200, {"success": True, "users": [auth.public_user(u) for u in auth.load_users()]})
         if path == "/api/mcp":
@@ -281,7 +271,7 @@ class Handler(BaseHTTPRequestHandler):
                                     "overridden": bool(config.overridden(["MCP_TOKEN"]))})
         mods = modules()
         if path == "/api/modules":
-            info = dict(mods, version=service._plugin_version(), versions=module_versions(), ui=ui_prefs(),
+            info = dict(mods, version=service._plugin_version(), versions=module_versions(), ui=ui_prefs(), lib3d_url=lib3d_url(),
                         user=user["username"], role=auth.role_of(user), windows=os.name == "nt", update=update_info())
             if not auth.is_admin(user):   # 관람자에게는 3D 서재만 켜진 것으로
                 info = {k: (v if k == "lib3d" else False) if isinstance(v, bool) else v for k, v in info.items()}
@@ -309,15 +299,15 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:  # noqa: BLE001
                 log.exception("시간대별 다운로드 계산 실패")
                 return self._send(500, {"success": False, "error": str(e)})
-        if path == "/library3d/":
-            return self._send(302, b"", extra={"Location": "/library3d"})
-        if path in ("/library3d", "/library3d/app.js") and not mods["lib3d"]:
-            return self._send(200, OFF_PAGE.format(title="BookOasis 3D 서재", note=".env에 <code>LIB3D_ENABLED=true</code>를 넣고 다시 시작하세요.").encode(), "text/html; charset=utf-8")
-        if path.startswith("/api/lib3d/"):
-            return self._lib3d(path, mods, user)
+        if path == "/library3d":   # 예전 주소·북마크: 따로 설치한 3D 서재로
+            if lib3d_url():
+                return self._send(302, b"", extra={"Location": lib3d_url()})
+            return self._send(200, OFF_PAGE.format(title="BookOasis 3D 서재", note="3D 서재는 따로 설치하는 프로그램이 되었습니다 "
+                                                   "(<a href=\"https://github.com/yume-script/bookoasis_3d\">bookoasis_3d</a>). "
+                                                   "설치한 뒤 .env에 <code>LIB3D_URL=http://서버:5932</code>를 넣으면 메뉴가 그쪽으로 이어집니다.").encode(),
+                              "text/html; charset=utf-8")
         if path in ("/", "/index.html"):  # 첫 화면: 웹툰 다운로더 → 드라이브 변경 감시 → 미니게임 순으로 켜진 것
-            first = next((p for k, p in (("wtm", "webtoon"), ("gdw", "watch"), ("mini", "games"),
-                                                ("lib3d", "library3d")) if mods[k]), None)
+            first = next((p for k, p in (("wtm", "webtoon"), ("gdw", "watch"), ("mini", "games")) if mods[k]), None)
             if first:
                 return self._send(302, b"", extra={"Location": first})
             return self._send(200, OFF_PAGE.format(title="웹툰 다운로더", note=".env에 <code>WTM_ENABLED=true</code>를 넣고 다시 시작하세요.").encode(), "text/html; charset=utf-8")
@@ -341,252 +331,6 @@ class Handler(BaseHTTPRequestHandler):
         if ctype.startswith("text/") or ctype.endswith("javascript"):
             ctype += "; charset=utf-8"
         self._send(200, data, ctype)
-
-    def _pres_ident(self, user, context):
-        """함께 보기에서의 나: (창마다 다른 key, 보일 이름). 관람자(손님 계정)는 들어올 때 적은 이름을 쓴다.
-        다른 계정 이름과 같으면 '(손님)'을 붙여 흉내를 막는다."""
-        viewer = not auth.is_admin(user)
-        key, name = lib3d_presence.ident(user["username"], context, viewer)
-        if viewer and name != user["username"] and auth.find_user(name):
-            name = "%s (손님)" % name
-        return key, name
-
-    def _jazz(self, rest):
-        from urllib.parse import parse_qs
-        q = {k: v[0] for k, v in parse_qs(self.path.partition("?")[2]).items() if v}
-        try:
-            if rest == "stations":
-                return self._send(200, {"success": True, "stations": lib3d_jazz.stations()})
-            if rest == "now":
-                return self._send(200, dict(lib3d_jazz.now_playing(q.get("s") or ""), success=True))
-            if rest == "art":
-                raw, ctype = lib3d_jazz.art_bytes(q.get("u"))
-                return self._send(200, raw, ctype, extra={"Cache-Control": "private, max-age=86400"})
-            if rest == "stream":   # 방송을 끊김 없이 이어 준다 (듣는 사람이 끊을 때까지)
-                r = lib3d_jazz.open_stream(q.get("s") or "")
-                self.send_response(200)
-                self.send_header("Content-Type", r.headers.get("Content-Type") or "audio/mpeg")
-                self.send_header("Cache-Control", "no-store")
-                self.send_header("X-Content-Type-Options", "nosniff")
-                self.end_headers()
-                try:
-                    while True:
-                        chunk = r.read(16 * 1024)
-                        if not chunk:
-                            break
-                        self.wfile.write(chunk)
-                except (BrokenPipeError, ConnectionResetError, TimeoutError):
-                    pass
-                finally:
-                    r.close()
-                return None
-        except ValueError as e:
-            return self._send(400, {"success": False, "error": str(e)})
-        except Exception as e:  # noqa: BLE001 - 방송국 쪽 오류
-            return self._send(502, {"success": False, "error": "방송에 연결하지 못했습니다: %s" % e})
-        return self._send(404, {"success": False, "error": "없는 주소입니다."})
-
-    def _ym(self, rest, user, post=False):
-        """YMPlayer 중계 (gdw/lib3d_ymp.py) - 허용한 주소만, 스트림은 조각으로 그대로 흘려 보낸다"""
-        if not lib3d_ymp.configured():
-            return self._send(404, {"success": False, "error": "YMPlayer 중계 설정이 없습니다 (LIB3D_YMPLAYER_USER·PASSWORD)."})
-        if user and not auth.is_admin(user) and not lib3d_ymp.viewers_ok():
-            return self._send(403, {"success": False, "error": "관람자 계정은 영화관을 볼 수 없습니다."})
-        try:
-            if rest == "sources" and not post:
-                return self._send(200, {"success": True, "sources": lib3d_ymp.sources(), "newtab": lib3d.ymplayer_url()})
-            if not lib3d_ymp.allowed(rest, post):
-                return self._send(404, {"success": False, "error": "중계하지 않는 주소입니다."})
-            query = self.path.partition("?")[2]
-            fwd = {k: self.headers[k] for k in ("Range", "Accept") if self.headers.get(k)}
-            if post:
-                fwd["Content-Type"] = "application/json"
-            r = lib3d_ymp.open_upstream(rest, query, fwd, b"{}" if post else None)
-        except RuntimeError as e:
-            return self._send(502, {"success": False, "error": str(e)})
-        status = getattr(r, "status", None) or getattr(r, "code", 502)
-        ctype = r.headers.get("Content-Type") or "application/octet-stream"
-        try:
-            if post or "json" in ctype or "mpegurl" in ctype.lower() or rest.endswith(".m3u8"):
-                raw = r.read(16 * 1024 * 1024)
-                if "mpegurl" in ctype.lower() or rest.endswith(".m3u8"):
-                    raw = lib3d_ymp.rewrite_playlist(raw.decode("utf-8", "replace")).encode("utf-8")
-                elif post:
-                    raw = lib3d_ymp.rewrite_playlist(raw.decode("utf-8", "replace")).encode("utf-8")
-                return self._send(status, raw, ctype)
-            self.send_response(status)
-            for k in ("Content-Type", "Content-Length", "Content-Range", "Accept-Ranges"):
-                if r.headers.get(k):
-                    self.send_header(k, r.headers[k])
-            self.send_header("Cache-Control", "no-store")
-            self.send_header("X-Content-Type-Options", "nosniff")
-            self.end_headers()
-            while True:
-                chunk = r.read(64 * 1024)
-                if not chunk:
-                    break
-                self.wfile.write(chunk)
-        except (BrokenPipeError, ConnectionResetError, TimeoutError):   # 재생기가 건너뛰거나 채널을 바꾸면 흔히 끊는다
-            pass
-        finally:
-            try:
-                r.close()
-            except Exception:  # noqa: BLE001
-                pass
-        return None
-
-    def _send_range(self, full, ctype):
-        """큰 파일을 조각으로 (HTTP Range: 오디오·영상 재생기가 건너뛸 때 그 자리부터)"""
-        import re as _re
-        size = os.path.getsize(full)
-        start, end, code = 0, size - 1, 200
-        m = _re.match(r"bytes=(\d*)-(\d*)$", (self.headers.get("Range") or "").strip())
-        if m and (m.group(1) or m.group(2)):
-            if m.group(1):
-                start = int(m.group(1))
-                end = min(int(m.group(2)), size - 1) if m.group(2) else size - 1
-            else:
-                start = max(0, size - int(m.group(2)))
-            if start > end or start >= size:
-                self.send_response(416)
-                self.send_header("Content-Range", "bytes */%d" % size)
-                self.send_header("Content-Length", "0")
-                self.end_headers()
-                return
-            code = 206
-        self.send_response(code)
-        self.send_header("Content-Type", ctype)
-        self.send_header("Accept-Ranges", "bytes")
-        self.send_header("Content-Length", str(end - start + 1))
-        if code == 206:
-            self.send_header("Content-Range", "bytes %d-%d/%d" % (start, end, size))
-        self.send_header("Cache-Control", "private, max-age=3600")
-        self.send_header("X-Content-Type-Options", "nosniff")
-        self.end_headers()
-        left = end - start + 1
-        try:
-            with open(full, "rb") as f:
-                f.seek(start)
-                while left > 0:
-                    chunk = f.read(min(256 * 1024, left))
-                    if not chunk:
-                        break
-                    self.wfile.write(chunk)
-                    left -= len(chunk)
-        except (BrokenPipeError, ConnectionResetError):   # 재생기가 건너뛰며 연결을 끊는 건 흔한 일
-            pass
-        return None
-
-    def _brunch_get(self, path, q):
-        if not lib3d_brunch.enabled():
-            return self._send(404, {"success": False, "error": "브런치 낭독 코너가 꺼져 있습니다 (LIB3D_BRUNCH)."})
-        try:
-            if path == "/api/lib3d/brunch/today":
-                return self._send(200, dict(lib3d_brunch.fetch_today(), success=True))
-            if path == "/api/lib3d/brunch/list":
-                return self._send(200, dict(lib3d_brunch.list_day(q.get("day") or lib3d_brunch.today_key(), q.get("sort") or "",
-                                                                  q.get("next") or None), today=lib3d_brunch.today_key(), success=True))
-            if path == "/api/lib3d/brunch/article":
-                return self._send(200, dict(lib3d_brunch.fetch_article(q.get("u"), q.get("n")), success=True))
-            if path == "/api/lib3d/brunch/voices":
-                return self._send(200, dict(lib3d_brunch.tts_voices(), success=True))
-        except ValueError as e:
-            return self._send(400, {"success": False, "error": str(e)})
-        except Exception as e:  # noqa: BLE001 - 브런치 쪽 오류는 화면에 그대로
-            return self._send(502, {"success": False, "error": "브런치에서 가져오지 못했습니다: %s" % e})
-        return self._send(404, {"success": False, "error": "없는 주소입니다."})
-
-    def _lib3d(self, path, mods, user=None):
-        """BookOasis 3D 서재: 보관함·작품 목록, 표지, 책 열기 주소"""
-        if not mods["lib3d"]:
-            return self._send(404, {"success": False, "error": "BookOasis 3D 서재가 꺼져 있습니다 (LIB3D_ENABLED)."})
-        from urllib.parse import parse_qs
-        if path.startswith("/api/lib3d/jazz/"):   # 재즈 청음실 (인터넷 재즈 라디오 중계)
-            return self._jazz(path[len("/api/lib3d/jazz/"):])
-        if path == "/api/lib3d/arcade":   # 오락실: 게임 하나만 띄우는 화면 (3D 서재 안 창에 넣음, #게임id)
-            if not mods["mini"]:
-                return self._send(404, {"success": False, "error": "미니게임이 꺼져 있습니다 (MINI_ENABLED)."})
-            from mini import bundle
-            return self._send(200, bundle.arcade_page().encode("utf-8"), "text/html; charset=utf-8", extra={"X-Frame-Options": "SAMEORIGIN"})
-        if path.startswith("/api/lib3d/ym/"):   # 영화관 층: YMPlayer IPTV·텔레그램 중계
-            return self._ym(path[len("/api/lib3d/ym/"):], user)
-        q = parse_qs(self.path.partition("?")[2])
-        key = (q.get("k") or [""])[0]
-        adult = auth.adult_ok(user)
-        if not adult and any(str(v).startswith("adult:") for v in (key, (q.get("b") or [""])[0])):
-            return self._send(403, {"success": False, "error": "성인 서재는 볼 수 없는 계정입니다."})
-        try:
-            if path == "/api/lib3d/libraries":   # 설정 화면: 보관함 전부 + 보이는지
-                return self._send(200, dict(lib3d.all_libraries(), success=True))
-            if path == "/api/lib3d/data":
-                d = lib3d.data(force=bool(q.get("refresh")) and auth.is_admin(user))
-                if not adult:   # 성인 층을 볼 수 없는 관람자에게는 빼고
-                    d = dict(d, libraries=[x for x in d.get("libraries", []) if x.get("db_type") != "adult"])
-                ai = lib3d_ai.flags()
-                me = {"username": user["username"], "role": auth.role_of(user), "adult": adult} if user else None
-                staff_on = lib3d_ai.configured() and bool(lib3d_agents.agents())   # 직원이든 손님이든 하나라도 있으면
-                return self._send(200, dict(d, ai=ai, me=me, staff_on=staff_on, brunch_on=lib3d_brunch.enabled(),
-                                            people=lib3d.load_settings().get("people") or {},
-                                            outside=lib3d.load_settings().get("outside") or {},
-                                            models=lib3d.load_settings().get("models") or "basic",
-                                            banner=lib3d.banner_info(), street=lib3d.street(), ymplayer=lib3d.ymplayer_url(), ymproxy=lib3d_ymp.configured(), arcade=arcade_menu(mods), ymplayer_embed=lib3d.ymplayer_embed(), success=True))
-            if path.startswith("/api/lib3d/brunch/"):   # 1층 브런치 연재 낭독 코너 (브런치 공개 글이라 관람자도)
-                return self._brunch_get(path, {k: v[0] for k, v in q.items() if v})
-            if path == "/api/lib3d/banner_pick":   # 현수막에 띄울 무작위 작품 (보관함 표지 모드)
-                pick = lib3d.banner_pick()
-                if not adult and pick.get("db") == "adult":
-                    return self._send(404, {"success": False, "error": "현수막 보관함을 볼 수 없는 계정입니다."})
-                return self._send(200, dict(pick, success=True))
-            if path == "/api/lib3d/banner":   # 현수막 건물 그림 (서버가 받아 둔 것)
-                raw, ctype = lib3d.banner_image(force=bool(q.get("force")))
-                return self._send(200, raw, ctype, extra={"Cache-Control": "private, max-age=600"})
-            # AI: 손님 대화 / 설정 / BookOasis MCP 연결 시험
-            if path == "/api/lib3d/ai/settings":
-                return self._send(200, dict(lib3d_ai.settings(), success=True))
-            if path == "/api/lib3d/agents":   # AI 직원 설정·활동 기록 (관리자)
-                return self._send(200, dict(lib3d_agents.admin_info(), success=True))
-            if path == "/api/lib3d/ai/chat":
-                libs = [x for x in (q.get("libs") or [""])[0].split(",") if x]
-                return self._send(200, dict(lib3d_ai.chat(libs), success=True))
-            if path == "/api/lib3d/ai/test":
-                return self._send(200, dict(lib3d_ai.test_mcp(), success=True))
-            if path == "/api/lib3d/cover":
-                raw, ctype = lib3d.cover(key)
-                if raw is None:
-                    return self._send(404, {"success": False, "error": ctype}, extra={"Cache-Control": "max-age=600"})
-                return self._send(200, raw, ctype, extra={"Cache-Control": "max-age=86400"})
-            if path == "/api/lib3d/open":
-                url, file_path = lib3d.open_url(key)
-                return self._send(200, {"success": True, "url": url, "path": file_path})
-            # 서재 안에서 읽기 (자체 뷰어)
-            b = (q.get("b") or [""])[0]
-            if path == "/api/lib3d/volumes":
-                return self._send(200, {"success": True, "volumes": lib3d.volumes(key or b)})
-            if path == "/api/lib3d/book":
-                return self._send(200, dict(lib3d.book_info(b), success=True))
-            if path == "/api/lib3d/page":
-                data, ctype = lib3d.page(b, (q.get("i") or ["0"])[0])
-                return self._send(200, data, ctype, extra={"Cache-Control": "private, max-age=3600"})
-            if path == "/api/lib3d/chapter":
-                return self._send(200, {"success": True, "html": lib3d.chapter(b, (q.get("i") or ["0"])[0])})
-            if path == "/api/lib3d/res":
-                data, ctype = lib3d.resource(b, (q.get("p") or [""])[0])
-                return self._send(200, data, ctype, extra={"Cache-Control": "private, max-age=3600"})
-            if path == "/api/lib3d/media":   # 오디오북·영상 한 트랙 (Range로 이어 받기·건너뛰기)
-                full, ctype = lib3d.media_file(b, (q.get("i") or ["0"])[0])
-                return self._send_range(full, ctype)
-            if path == "/api/lib3d/pdf":
-                with open(lib3d.pdf_path(b), "rb") as handle:
-                    return self._send(200, handle.read(), "application/pdf")
-        except (ValueError, OSError, zipfile.BadZipFile) as e:
-            return self._send(404, {"success": False, "error": str(e)})
-        except RuntimeError as e:   # AI 호출·MCP 실패 (안내 문구)
-            log.warning("3D 서재 AI: %s", e)
-            return self._send(502, {"success": False, "error": str(e)})
-        except Exception as e:  # noqa: BLE001
-            log.exception("3D 서재 요청 실패")
-            return self._send(500, {"success": False, "error": str(e)})
-        return self._send(404, {"success": False, "error": "없는 주소입니다."})
 
     def _games(self, path, mods):
         if not mods["mini"]:
@@ -612,6 +356,13 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, data, ctype, extra={"Cache-Control": "max-age=3600"})
         return self._send(404, {"success": False, "error": "없는 주소입니다."})
 
+    def _viewer_page(self):
+        """관람자 계정이 이 프로그램을 열면: 3D 서재 주소로 (없으면 안내)"""
+        if lib3d_url():
+            return self._send(302, b"", extra={"Location": lib3d_url()})
+        return self._send(200, OFF_PAGE.format(title="BookOasis 3D 서재", note="관람자 계정은 3D 서재 전용입니다. 3D 서재는 따로 설치한 프로그램에서 엽니다.").encode(),
+                          "text/html; charset=utf-8")
+
     def _wake(self):
         """POST|GET /api/gdw/wake - Authorization: Bearer <GDW_WAKE_TOKEN> (또는 ?token=). 본문은 읽고 버린다."""
         try:
@@ -629,63 +380,18 @@ class Handler(BaseHTTPRequestHandler):
         wake_watcher(self.headers.get("User-Agent") or "")
         return self._send(200, {"success": True, "message": "드라이브 변경을 지금 확인합니다.", "count": _wake["count"]})
 
-    def _events(self):
-        """POST /api/lib3d/events - Authorization: Bearer <LIB3D_EVENT_TOKEN>. 바깥 프로그램(디스코드 봇 등)이 3D 서재에 알린다.
-          {"type": "delivery", "from": "배달원 이름", "items": [{"title": "제목", "kind": "book|webtoon|video|audio|comic"}], "note": "할 말"}
-          {"type": "say", "agent": "boss", "text": "할 말", "place": "office"}   (직원 id, 장소는 넣지 않아도 됨)"""
-        if not config.env("LIB3D_EVENT_TOKEN", "").strip() or not modules()["lib3d"]:
-            return self._send(404, {"success": False, "error": "3D 서재 이벤트 받기가 꺼져 있습니다 (.env의 LIB3D_EVENT_TOKEN)."})
-        if not lib3d_events.token_ok(self.headers.get("Authorization")):
-            return self._send(401, {"success": False, "error": "토큰이 맞지 않습니다."})
-        try:
-            length = int(self.headers.get("Content-Length") or 0)
-        except ValueError:
-            length = 0
-        if length > MAX_BODY:
-            return self._send(413, {"success": False, "error": "요청이 너무 큽니다."})
-        try:
-            body = json.loads(self.rfile.read(length) or b"{}") if length else {}
-        except ValueError:
-            return self._send(400, {"success": False, "error": "JSON 형식이 아닙니다."})
-        if not isinstance(body, dict):
-            return self._send(400, {"success": False, "error": "JSON 객체를 보내세요."})
-        try:
-            kind = body.get("type")
-            if kind == "delivery":
-                row = lib3d_events.add(body.get("items"), body.get("from"), body.get("note"), src="api")
-                if not row:
-                    return self._send(409, {"success": False, "error": "배달이 꺼져 있습니다 ([AI 직원] > 배달)."})
-                return self._send(200, {"success": True, "id": row["id"]})
-            if kind == "say":
-                lib3d_agents.remote_act(str(body.get("agent") or ""), " ".join(str(body.get("text") or "").split())[:160], str(body.get("place") or ""))
-                return self._send(200, {"success": True})
-            return self._send(400, {"success": False, "error": "type은 delivery·say 중 하나입니다."})
-        except ValueError as e:
-            return self._send(400, {"success": False, "error": str(e)})
-
     def do_POST(self):
         path = self.path.split("?", 1)[0]
         if path == "/mcp":
             return self._mcp()
         if path == "/api/gdw/wake":
             return self._wake()
-        if path == "/api/lib3d/events":
-            return self._events()
         user = self._user()
         if not user and path not in PUBLIC:
             return self._deny(path)
-        if user and path.startswith("/api/lib3d/ym/") and modules()["lib3d"]:   # 영화관 중계 (텔레그램 HLS 변환 시작)
-            try:
-                self.rfile.read(min(int(self.headers.get("Content-Length") or 0), 65536))   # 본문은 쓰지 않지만 읽어 비운다
-            except ValueError:
-                pass
-            return self._ym(path[len("/api/lib3d/ym/"):], user, post=True)
         if user and not auth.is_admin(user) and path not in VIEWER_POST:
             return self._send(403, {"success": False, "error": "관람자 계정은 할 수 없는 일입니다."})
-        if not path.startswith(("/api/rpc/", "/api/auth/", "/api/users")) and path not in ("/api/wtm/action", "/api/ui-prefs", "/api/mcp",
-                                                                                          "/api/lib3d/settings", "/api/lib3d/ai/settings", "/api/lib3d/ai/ask",
-                                                                                          "/api/lib3d/presence", "/api/lib3d/say", "/api/lib3d/agents",
-                                                                                          "/api/lib3d/brunch/tts", "/api/lib3d/leave"):
+        if not path.startswith(("/api/rpc/", "/api/auth/", "/api/users")) and path not in ("/api/wtm/action", "/api/ui-prefs", "/api/mcp"):
             return self._send(404, {"success": False, "error": "없는 주소입니다."})
         if (self.headers.get("Content-Type") or "").split(";")[0].strip().lower() != "application/json":
             return self._send(415, {"success": False, "error": "Content-Type은 application/json이어야 합니다."})
@@ -703,113 +409,6 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(400, {"success": False, "error": "JSON 객체를 보내세요."})
         if path.startswith(("/api/auth/", "/api/users")):
             return self._auth_post(path, context, user)
-        if path == "/api/lib3d/leave":   # 3D 서재 [나가기]: 함께 보기에서 바로 빠진다 (아무도 없으면 AI 직원도 쉼)
-            lib3d_presence.leave(self._pres_ident(user, context)[0])
-            return self._send(200, {"success": True})
-        if path == "/api/lib3d/brunch/tts":   # 낭독 코너: Edge 음성 한 문장 → mp3
-            if not modules()["lib3d"] or not lib3d_brunch.enabled():
-                return self._send(404, {"success": False, "error": "브런치 낭독 코너가 꺼져 있습니다 (LIB3D_BRUNCH)."})
-            try:
-                return self._send(200, lib3d_brunch.tts_audio(context.get("voice"), context.get("text")), "audio/mpeg",
-                                  extra={"Cache-Control": "private, max-age=3600"})
-            except ValueError as e:
-                return self._send(400, {"success": False, "error": str(e)})
-            except Exception as e:  # noqa: BLE001 - 음성 서버 오류는 화면에 그대로
-                return self._send(502, {"success": False, "error": "음성을 만들지 못했습니다: %s" % e})
-        if path in ("/api/lib3d/presence", "/api/lib3d/say"):   # 3D 서재 함께 보기: 내 위치 보내고 다른 사람·채팅 받기 / 말하기
-            if not modules()["lib3d"]:
-                return self._send(404, {"success": False, "error": "BookOasis 3D 서재가 꺼져 있습니다 (LIB3D_ENABLED)."})
-            if not auth.adult_ok(user) and str(context.get("floor") or "") == "adult":
-                context["floor"] = ""
-            try:
-                key, name = self._pres_ident(user, context)
-                if path == "/api/lib3d/presence":
-                    return self._send(200, dict(lib3d_presence.update(key, context, name),
-                                                staff=lib3d_agents.public(str(context.get("floor") or "")), success=True))
-                ag, question = lib3d_agents.match_call(context.get("text"))
-                if ag:   # 채팅에서 AI 직원 부르기 (@사서·@도슨트…): 문답은 부른 사람에게만, 직원의 말은 그 층 모두에게
-                    if not lib3d_ai.flags()["ask"]:
-                        return self._send(400, {"success": False, "error": "AI 직원과의 대화가 꺼져 있습니다 - 3D 서재 설정 > AI 설정의 'AI 직원'."})
-                    lib3d_agents.talk(ag, key, question, context.get("floor"), auth.is_admin(user), auth.adult_ok(user), display=name)
-                    return self._send(200, {"success": True, "ask": True})
-                return self._send(200, {"success": True, "msg": lib3d_presence.say(key, context.get("text"), context.get("floor"), name)})
-            except ValueError as e:
-                return self._send(400, {"success": False, "error": str(e)})
-        if path == "/api/lib3d/settings":  # 3D 서재 설정: 보여 줄 보관함 ({"libraries": [키…] 또는 null=전부})
-            if not modules()["lib3d"]:
-                return self._send(404, {"success": False, "error": "BookOasis 3D 서재가 꺼져 있습니다 (LIB3D_ENABLED)."})
-            if "banner_lib" in context and "libraries" not in context:   # 현수막: 보관함 표지 무작위 (비우면 끔)
-                try:
-                    lib3d.save_banner_library(context.get("banner_lib"), context.get("banner_sec"))
-                    if context.get("banner_lib"):
-                        lib3d.banner_pick()   # 바로 뽑아 보고 안 되면 알린다
-                    return self._send(200, {"success": True, "banner": lib3d.banner_info()})
-                except ValueError as e:
-                    return self._send(400, {"success": False, "error": str(e), "banner": lib3d.banner_info()})
-                except Exception as e:  # noqa: BLE001 - DB 접속 실패 등
-                    return self._send(400, {"success": False, "error": "보관함을 읽지 못했습니다: %s" % e, "banner": lib3d.banner_info()})
-            if "banner" in context and "libraries" not in context:   # 현수막 그림 주소만 저장
-                try:
-                    url = lib3d.save_banner(context.get("banner"))
-                    if url:
-                        lib3d.banner_image(force=True)   # 바로 받아 보고 못 받으면 알린다
-                    return self._send(200, {"success": True, "banner": lib3d.banner_info()})
-                except ValueError as e:
-                    return self._send(400, {"success": False, "error": str(e), "banner": lib3d.banner_info()})
-            if "street" in context and "libraries" not in context:   # 거리 간판·특별한 건물 이름
-                try:
-                    return self._send(200, {"success": True, "street": lib3d.save_street(context["street"] if isinstance(context["street"], dict) else {})})
-                except ValueError as e:
-                    return self._send(400, {"success": False, "error": str(e)})
-            if "models" in context and "libraries" not in context:   # 3D 모형 선택만 저장
-                return self._send(200, {"success": True, "models": lib3d.save_models(context.get("models"))})
-            if "outside" in context and "libraries" not in context:   # 창밖 풍경만 저장
-                if not isinstance(context["outside"], dict):
-                    return self._send(400, {"success": False, "error": "outside는 {time, season, weather} 형식이어야 합니다."})
-                return self._send(200, {"success": True, "outside": lib3d.save_outside(context["outside"])})
-            if "people" in context and "libraries" not in context:   # 층별 인물 수만 저장
-                if not isinstance(context["people"], dict):
-                    return self._send(400, {"success": False, "error": "people은 {층: {종류: 수}} 형식이어야 합니다."})
-                try:
-                    return self._send(200, {"success": True, "people": lib3d.save_people(context["people"])})
-                except ValueError as e:
-                    return self._send(400, {"success": False, "error": str(e)})
-            libs = context.get("libraries")
-            if libs is not None and not isinstance(libs, list):
-                return self._send(400, {"success": False, "error": "libraries는 목록이나 null이어야 합니다."})
-            return self._send(200, dict(lib3d.save_settings(libs), success=True))
-        if path == "/api/lib3d/agents":   # AI 직원: {action: save|reset|run, ...} (관리자)
-            if not modules()["lib3d"]:
-                return self._send(404, {"success": False, "error": "BookOasis 3D 서재가 꺼져 있습니다 (LIB3D_ENABLED)."})
-            try:
-                act = context.get("action")
-                if act == "save":
-                    lib3d_agents.save_config(context)
-                elif act == "reset":
-                    lib3d_agents.reset_config()
-                elif act == "run":
-                    lib3d_agents.run_now(context.get("agent"), context.get("task"))
-                else:
-                    return self._send(400, {"success": False, "error": "action은 save·reset·run 중 하나입니다."})
-                return self._send(200, dict(lib3d_agents.admin_info(), success=True))
-            except ValueError as e:
-                return self._send(400, {"success": False, "error": str(e)})
-        if path in ("/api/lib3d/ai/settings", "/api/lib3d/ai/ask"):  # 3D 서재 AI: 설정 저장 / 질문하기
-            if not modules()["lib3d"]:
-                return self._send(404, {"success": False, "error": "BookOasis 3D 서재가 꺼져 있습니다 (LIB3D_ENABLED)."})
-            try:
-                if path == "/api/lib3d/ai/settings":
-                    return self._send(200, dict(lib3d_ai.save(context), success=True))
-                hist = context.get("history")
-                return self._send(200, dict(lib3d_ai.ask(context.get("question"), hist if isinstance(hist, list) else []), success=True))
-            except ValueError as e:
-                return self._send(400, {"success": False, "error": str(e)})
-            except RuntimeError as e:
-                log.warning("3D 서재 AI: %s", e)
-                return self._send(502, {"success": False, "error": str(e)})
-            except Exception as e:  # noqa: BLE001
-                log.exception("3D 서재 AI 요청 실패")
-                return self._send(500, {"success": False, "error": str(e)})
         if path == "/api/mcp":  # 설정 > MCP: 토큰 만들기 / 끄기
             if config.overridden(["MCP_TOKEN"]):
                 return self._send(400, {"success": False, "error": "MCP_TOKEN이 실제 환경변수로 지정돼 있어 화면에서 바꿀 수 없습니다."})
@@ -903,8 +502,6 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, {"success": True, "user": auth.public_user(found)},
                                   extra={"Set-Cookie": self._session_cookie(found, bool(body.get("remember")))})
             if path == "/api/auth/logout":
-                if user:
-                    lib3d_presence.leave(user["username"])
                 return self._send(200, {"success": True},
                                   extra={"Set-Cookie": f"{auth.COOKIE}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax"})
             if path == "/api/auth/password":  # 내 비밀번호 바꾸기: 다른 기기의 로그인은 끊기고 이 기기는 새 쿠키
@@ -931,8 +528,6 @@ class Handler(BaseHTTPRequestHandler):
 def make_server(svc, host, port):
     handler = type("GdwHandler", (Handler,), {"svc": svc})
     server = ThreadingHTTPServer((host, port), handler)
-    if modules().get("lib3d"):
-        lib3d_agents.start()   # AI 직원 자율 업무 (AI 설정이 돼 있고 자율 업무가 켜져 있을 때만 실제로 일함)
     server.daemon_threads = True
     _fetch_latest()   # 새 버전 확인을 미리 시작 (첫 화면부터 업데이트 표시가 나오게)
     return server
