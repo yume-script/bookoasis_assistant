@@ -25,8 +25,10 @@ log = logging.getLogger("gdw.lib3d_agents")
 
 LOG_KEEP = 200
 NOTES_KEEP = 40
-PLACES = ("desk", "lobby", "entrance", "lounge", "elevator")
-PLACE_KO = {"desk": "안내 데스크", "lobby": "로비 한가운데", "entrance": "입구", "lounge": "라운지(소파)", "elevator": "엘리베이터 앞"}
+PLACES = ("desk", "lobby", "entrance", "lounge", "elevator", "office", "gallery", "jazz")
+PLACE_KO = {"desk": "안내 데스크", "lobby": "로비 한가운데", "entrance": "입구", "lounge": "라운지(소파)", "elevator": "엘리베이터 앞",
+            "office": "길 건너 사무실", "gallery": "길 건너 갤러리", "jazz": "길 건너 재즈 청음실"}
+ROOM_POSTS = ("office", "gallery", "jazz")   # 1층 밖 길 건너 건물 1층 ([창밖 풍경 > 거리]의 건물)
 
 DEFAULT_AGENTS = [
     {"id": "librarian", "name": "한서윤", "job": "사서 (Chief Librarian)", "call": ["@사서", "@안내", "@ai", "@봇"], "post": "desk", "look": 3,
@@ -62,6 +64,34 @@ _VISIT_PROMPT = ("도서관에 놀러 온 시간이다. 네 관심사에 맞는 
                  "3) 마음에 드는 책이 있으면 browse_book으로 그 책 앞에 가서 살펴보고, say로 짧은 혼잣말이나 감상을 한다. "
                  "4) 다음에 기억할 것(찾은 책, 직원 추천 등)은 remember. "
                  "끝나면 오늘 방문을 한 문장으로 답하라.")
+# 길 건너 건물에서 일하는 사람들 (공개 기본값은 중립 이름 - [AI 직원]에서 이름·성격을 바꾼다)
+# 대표: 사무실, 사서·도슨트의 상사 (직원들이 report로 보고). 큐레이터·청음실 주인: 자기 공간에서 일하다 가끔 서재에 손님으로 온다.
+_STAFF_VISIT = ("일터를 잠시 비우고 서재에 손님으로 들르는 시간이다. 순서: "
+                "1) move_to로 관심 있는 구역으로 간다. 2) search_books로 찾아보거나 ask_staff로 사서·도슨트에게 묻는다. "
+                "3) 마음에 드는 책을 browse_book으로 살펴보고 say로 짧게 감상을 말한다. 4) 일에 쓸 만한 것은 remember. "
+                "끝나면 오늘 들른 일을 한 문장으로 답하라 (그 뒤 일터로 돌아간다).")
+DEFAULT_STREET = [
+    {"id": "boss", "name": "오세진", "job": "대표 (사무실)", "call": ["@대표", "@사장"], "post": "office", "look": 41,
+     "goal": "서재와 길 건너 공간들이 잘 돌아가게 살핀다. 직원 보고를 듣고, 필요한 것을 정해 알려 준다.",
+     "personality": "침착하고 짧게 말한다. 직원을 믿고 맡기되 숫자와 사실을 챙긴다. 손님에게는 정중하다.",
+     "actions": ["move_to", "say", "remember"], "enabled": True,
+     "tasks": [{"id": "brief", "title": "하루 정리", "every_min": 1440, "enabled": True,
+                "prompt": "대표로서 하루를 정리하는 시간이다. 네가 기억하는 직원 보고와 get_library_stats로 서재 사정을 살피고, "
+                          "내일 직원들에게 바라는 점을 remember로 남긴 뒤 사무실에서 say로 한마디 하라. 끝나면 한두 문장으로 답하라."}]},
+    {"id": "curator", "name": "윤가람", "job": "큐레이터 (갤러리)", "call": ["@큐레이터"], "post": "gallery", "look": 47,
+     "goal": "갤러리에 걸린 표지 그림을 손님에게 소개하고, 서재에서 전시할 만한 작품을 찾는다.",
+     "personality": "섬세하고 말에 색이 있다. 표지 그림의 분위기를 잘 짚는다.",
+     "actions": ["move_to", "say", "ask_staff", "browse_book", "remember"], "enabled": True,
+     "tasks": [{"id": "visit", "title": "서재 나들이", "every_min": 300, "enabled": True, "visit": True, "prompt": _STAFF_VISIT}]},
+    {"id": "dj", "name": "배준", "job": "청음실 주인 (재즈 청음실)", "call": ["@DJ", "@디제이"], "post": "jazz", "look": 53,
+     "goal": "재즈 청음실을 편안하게 지키고, 음악과 어울리는 책을 찾아 손님에게 권한다.",
+     "personality": "느긋하고 유머가 있다. 재즈 이야기를 좋아한다.",
+     "actions": ["move_to", "say", "ask_staff", "browse_book", "remember"], "enabled": True,
+     "tasks": [{"id": "visit", "title": "서재 나들이", "every_min": 360, "enabled": True, "visit": True, "prompt": _STAFF_VISIT}]},
+]
+_REPORT_TASK = {"id": "report", "title": "대표에게 보고", "every_min": 1440, "enabled": True,
+                "prompt": "하루 일을 대표에게 보고하는 시간이다. 네가 기억하는 일과 get_library_stats로 서재 사정을 보고, "
+                          "report로 두세 문장 보고하라. 끝나면 보고한 내용을 한 문장으로 답하라."}
 DEFAULT_GUESTS = [
     {"id": "guest_jiho", "kind": "guest", "name": "박지호", "job": "손님 (대학생)", "post": "entrance", "look": 9,
      "goal": "판타지·무협 웹소설과 만화 중에 밤새 읽을 완결작을 찾는다.",
@@ -114,6 +144,18 @@ def config_get():
                 have = {a.get("id") for a in v["agents"]}
                 v["agents"] += [copy.deepcopy(g) for g in DEFAULT_GUESTS if g["id"] not in have]
                 v["guests_v1"] = True
+            if not v.get("street_v1"):   # 길 건너 사람들(대표·큐레이터·청음실 주인)과 대표 보고를 예전 설정에도
+                have = {a.get("id") for a in v["agents"]}
+                v["agents"] += [copy.deepcopy(g) for g in DEFAULT_STREET if g["id"] not in have]
+                for a in v["agents"]:
+                    if a.get("id") in ("librarian", "docent"):
+                        a.setdefault("boss", "boss")
+                    if a.get("id") == "librarian":
+                        if "report" not in (a.get("actions") or []):
+                            a["actions"] = list(a.get("actions") or []) + ["report"]
+                        if not any(t.get("id") == "report" for t in a.get("tasks") or []):
+                            a["tasks"] = list(a.get("tasks") or []) + [copy.deepcopy(_REPORT_TASK)]
+                v["street_v1"] = True
             _CFG["v"] = v
         return _CFG["v"]
 
@@ -260,9 +302,13 @@ class WorldTools:
                                                              "question": {"type": "string"}}, "required": ["staff", "question"]}},
             {"name": "browse_book", "description": "책 한 권 앞으로 가서 꺼내 살펴본다. search_books나 직원 답에서 나온 책 제목을 넣는다.",
              "inputSchema": {"type": "object", "properties": {"title": {"type": "string"}}, "required": ["title"]}},
+            {"name": "report", "description": "상사(%s)에게 보고한다. 상사가 기억해 두었다가 판단에 쓴다. 두세 문장." % _boss_label(self.aid),
+             "inputSchema": {"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"]}},
             {"name": "remember", "description": "나중을 위해 기억해 둔다 (도서관에 대한 사실, 이용자 취향 등). 짧은 한 문장.",
              "inputSchema": {"type": "object", "properties": {"note": {"type": "string"}}, "required": ["note"]}},
         ]
+        if not _boss_of(self.aid):
+            allowed.discard("report")
         return [t for t in tools if t["name"] in allowed]
 
     def stop(self):
@@ -295,6 +341,18 @@ class WorldTools:
             return "말했습니다.", False
         if name == "ask_staff":
             return self._ask_staff(a, args)
+        if name == "report":
+            boss = _boss_of(self.aid)
+            text = " ".join(str(args.get("text") or "").split())[:400]
+            if not boss or not text:
+                return "보고할 상사가 없거나 내용이 비었습니다.", True
+            with _LOCK:
+                notes = state()["agents"].setdefault(boss["id"], {}).setdefault("notes", [])
+                notes.append("[%s의 보고] %s" % (a.get("name", self.aid), text))
+                del notes[:-NOTES_KEEP]
+                _save_state()
+            add_log(self.aid, "%s에게 보고" % _short(boss.get("job")), text)
+            return "%s에게 보고했습니다." % boss["name"], False
         if name in ("point_at_book", "browse_book"):
             title = str(args.get("title") or "").strip()
             bk = next((b for b in self.found if title and (title in b["title"] or b["title"] in title)), None)
@@ -332,8 +390,9 @@ class WorldTools:
         question = " ".join(str(args.get("question") or "").split())[:300]
         if not question:
             return "물어볼 것이 비었습니다.", True
-        st = next((x for x in staff() if want and (want in x["job"] or want in x["name"] or any(want == c.lstrip("@") for c in x.get("call", [])))), None) \
-            or next(iter(staff()), None)
+        pool = [x for x in staff() if x["id"] != self.aid]   # 자기 자신에게는 묻지 않는다
+        st = next((x for x in pool if want and (want in x["job"] or want in x["name"] or any(want == c.lstrip("@") for c in x.get("call", [])))), None) \
+            or next(iter(pool), None)
         if not st:
             return "지금 일하는 직원이 없습니다.", True
         key = (st["id"], self.aid)
@@ -364,6 +423,18 @@ class WorldTools:
         return "%s의 답: %s%s" % (st["name"], answer, ("\n직원이 찾은 책: " + titles) if titles else ""), False
 
 
+def _boss_of(aid):
+    """이 직원의 상사 (설정의 boss, 켜져 있을 때만)"""
+    a = agent(aid) or {}
+    b = agent(a.get("boss")) if a.get("boss") else None
+    return b if b and b.get("enabled", True) and b["id"] != aid else None
+
+
+def _boss_label(aid):
+    b = _boss_of(aid)
+    return "%s %s" % (b["name"], _short(b.get("job"))) if b else "상사"
+
+
 def _short(job):
     return re.sub(r"\s*\(.*\)\s*$", "", str(job or "")) or "직원"
 
@@ -379,10 +450,17 @@ def _system(a, floor, user=None, viewer=False, guest=False):
         "성격: " + a.get("personality", ""),
         "지금 있는 층: %s층(%s). 이 층의 장소·구역: %s." % (floor, {"general": "일반", "adult": "성인", "audiobook": "오디오북", "video": "비디오"}.get(floor, floor), ", ".join(places)),
         "동료: " + (others or "없음") + ". 동료가 더 잘하는 일이면 이용자에게 그 동료를 불러 보라고 권한다.",
+        "일하는 곳: %s." % PLACE_KO.get(a.get("post"), "서재 안") + (" (서재 1층 밖, 길 건너 건물 1층)" if a.get("post") in ROOM_POSTS else ""),
         "너는 말만 하는 캐릭터가 아니다. 도서관 안에서 실제로 움직이고 행동하려면 월드 도구(move_to·say·point_at_book·set_board·remember)를 쓴다. "
         "책·서재 정보는 BookOasis 도구(search_books 등)로 확인하고, 확인 못 한 것은 추측이라고 밝힌다. db_type은 general·adult·audiobook·video.",
         "답은 한국어로, 네 성격대로 짧게. 찾은 책 목록은 화면이 답 아래 따로 붙이므로 답에서는 요약만.",
     ]
+    boss = _boss_of(a["id"])
+    if boss:
+        lines.append("상사: %s(%s). 중요한 일·하루 일은 report로 보고하고, 이용자에게는 '대표님'처럼 부른다." % (boss["name"], _short(boss.get("job"))))
+    team = [x for x in staff() if x.get("boss") == a["id"]]
+    if team:
+        lines.append("너에게 보고하는 직원: " + ", ".join("%s(%s)" % (x["name"], _short(x["job"])) for x in team) + ".")
     if notes:
         lines.append("네가 기억하고 있는 것: " + " / ".join(notes[-12:]))
     if user:
@@ -520,6 +598,19 @@ def run_task(a, task):
         finally:
             world._wait(4)
             world._set(target="entrance", book="", left_t=time.time())
+        add_log(a["id"], task["title"], out.get("answer") or "", out.get("books"))
+        return out
+    if task.get("visit"):   # 길 건너 사람의 서재 나들이: 입구로 들어와 손님처럼 둘러보고 → 일터로 돌아간다
+        world.pace = True
+        world._set(target="entrance", book="", say="")
+        world._wait(5)
+        sysm = _system(a, floor) + "\n지금은 네 일터를 잠시 나와 서재에 손님으로 들렀다. 직원 흉내는 내지 말고 손님답게 둘러본다. 성인 서재는 보지 않는다."
+        try:
+            out = lib3d_ai.ask("[%s] %s" % (task["title"], task["prompt"]), [], system=sysm, extra=[world],
+                               allow=_guest_allow, check=_check(False), need_flag=False, found=found)
+        finally:
+            world._wait(4)
+            world._set(target=a.get("post") or "entrance", book="", say="")
         add_log(a["id"], task["title"], out.get("answer") or "", out.get("books"))
         return out
     prompt = "[업무 시간: %s] %s" % (task["title"], task["prompt"])

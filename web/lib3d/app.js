@@ -1020,7 +1020,7 @@
   }
   // ── 길 건너 건물 1층 방 (상점처럼): 건물 1층을 비우고 유리 진열창·문·바닥·천장·벽을 짓는다. 횡단보도로 건너가 들어간다 ──
   // 지금 쓰는 방([거리] 설정의 건물): 갤러리(표지 액자), 재즈 청음실, 사무실. 길 양쪽 어느 건물이든 된다(side = +1 오른쪽, -1 왼쪽).
-  var SHOPS = {}, ROOMS = [];
+  var SHOPS = {}, ROOMS = [], GALLERY_R = null;
   var galGlass = new T.MeshStandardMaterial({ color: 0xa9c0cc, roughness: 0.05, metalness: 0.2, transparent: true, opacity: 0.22, depthWrite: false, side: T.DoubleSide });
   var galWall = new T.MeshStandardMaterial({ color: 0xf4f2ee, roughness: 0.9, side: T.DoubleSide });
   var galFloor = new T.MeshStandardMaterial({ color: 0xcfcac1, roughness: 0.35 });
@@ -1084,8 +1084,10 @@
   }
   // 갤러리: 벽마다 서재 전체에서 무작위로 고른 표지 액자 (누르면 작품 카드)
   function addGallery(w) {
+    GALLERY_R = null;
     var gn = STREET.gallery, R = gn && shopRoom(SHOPS[gn], w, { label: gn + ' 갤러리 · 액자를 누르면 작품 · [입구로]는 서재 입구', sign: [gn + ' GALLERY', '들어오세요 · 액자를 누르면 작품 카드'] });
     if (!R) return;
+    GALLERY_R = R;
     var gy = R.gy, z = R.z, H = R.H, bw = R.bw, s = R.s, seed = rnd(311);
     var inTex = textTex([gn + ' 갤러리'], 1400, 180, '#f4f2ee', '#14181f', 110);
     var inSign = new T.Mesh(new T.PlaneGeometry(3.6, 0.46), new T.MeshBasicMaterial({ map: inTex, toneMapped: false })); inSign.rotation.y = R.inRot; inSign.position.set(R.kx - s * 0.02, gy + H - 0.3, z); parent.add(inSign);
@@ -3693,7 +3695,8 @@
     floorGroup = new T.Group();
     scene.add(floorGroup);
     parent = floorGroup;
-    ARC_X = null; CINE_WALL = null; ROOMS = []; if (i !== 0 && JZ.playing) jzStop(); if (cine.video) cineStop(); cineScreen = null; if (cine.tex) { cine.tex.dispose(); cine.tex = null; }
+    ARC_X = null; CINE_WALL = null; ROOMS = []; GALLERY_R = null; OFFICE = null; JZ.room = null; JZ.bars = null; JZ.platter = null; JZ.screen = null;   // 길 건너 방은 1층에서만 다시 만든다
+    if (i !== 0 && JZ.playing) jzStop(); if (cine.video) cineStop(); cineScreen = null; if (cine.tex) { cine.tex.dispose(); cine.tex = null; }
     COLS = fl.cinema ? 3 : Math.max(2, Math.min(4, fl.libs.length));
     addBuilding(fl, COLS, fl.cinema ? 1 : Math.ceil(fl.libs.length / COLS));
     applyOutside.force = true; applyOutside();
@@ -4847,6 +4850,11 @@
     if (name === 'entrance') return [1.6, L.front - 2.4, Math.PI];
     if (name === 'lounge') return [-lx + 2.4, L.front - 11.2, 0.6];
     if (name === 'elevator') return [-L.w / 2 + 2.2, L.front - 3, -Math.PI / 2];
+    if (name === 'office') return OFFICE && OFFICE.chief ? [OFFICE.chief.x, OFFICE.chief.z, OFFICE.chief.rot] : null;   // 길 건너 (1층에만)
+    if (name === 'gallery' || name === 'jazz') {
+      var R0 = name === 'gallery' ? GALLERY_R : JZ.room;
+      return R0 ? [R0.fx + R0.s * (name === 'jazz' ? R0.bd - 2.2 : 2.2), R0.z + (name === 'jazz' ? 0.9 : -1.4), name === 'jazz' ? -R0.s * Math.PI / 2 : R0.s * Math.PI / 2 + 0.6] : null;
+    }
     var b = (floors[cur] && floors[cur].booths || []).filter(function (x) { return x.name === name; })[0];
     if (b) return [b.x + 2.6, b.z + BOOTH_D / 2 + 1.6, Math.PI];
     return null;
@@ -4865,7 +4873,7 @@
   }
   function setStaffTag(p, s, msg) {   // 직원은 청록, AI 손님은 호박색 이름표
     if (p.tag) { p.g.remove(p.tag); p.tag.material.map.dispose(); p.tag.material.dispose(); }
-    p.tag = nameTag(s.name + ' · ' + s.job, msg, s.kind === 'guest' ? '#ffcf7a' : '#7ee0c3');
+    p.tag = nameTag(s.name + ' · ' + s.job, msg, s.kind === 'guest' ? '#ffcf7a' : s.post === 'office' ? '#ffd166' : (s.post === 'gallery' || s.post === 'jazz') ? '#9fd3ff' : '#7ee0c3');
     p.tag.position.y = 2.15 + (msg ? 0.2 : 0); p.g.add(p.tag);
   }
   function syncStaff(d) {
@@ -4875,7 +4883,12 @@
       if (staffData.some(function (s) { return s.id === k; })) return;
       var gone = staffNPC[k]; if (gone.g.parent) gone.g.parent.remove(gone.g); disposeGroup(gone.g); delete staffNPC[k];
     });
+    var ROOMPOST = { office: 1, gallery: 1, jazz: 1 };
     staffData.forEach(function (s) {
+      if (ROOMPOST[s.post] && !placePos(s.post) && (!s.target || ROOMPOST[s.target] && !placePos(s.target))) {   // 길 건너 사람: 자기 공간이 없는 층(2층부터)에는 안 보인다
+        if (staffNPC[s.id]) { var q0 = staffNPC[s.id]; if (q0.g.parent) q0.g.parent.remove(q0.g); disposeGroup(q0.g); delete staffNPC[s.id]; }
+        return;
+      }
       var p = staffNPC[s.id];
       if (p && p.g.parent !== floorGroup) { disposeGroup(p.g); p = null; }
       if (!p) p = staffNPC[s.id] = makeStaff(s);
