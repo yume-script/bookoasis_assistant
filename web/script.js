@@ -348,7 +348,7 @@
             seen[x.library] = 1;
             var cls = x.ok === true ? 'ok' : x.ok === false ? 'fail' : '';
             tags.push(el('span', { class: 'gdw-lib ' + cls, text: libraryName(x.library),
-                title: (x.ok === true ? '반영된 보관함' : x.ok === false ? '스캔 실패한 보관함' : '보관함') + ' · 스캔한 폴더: ' + x.dir }));
+                title: (x.ok === true ? '반영된 보관함' : x.ok === false ? '스캔 실패한 보관함' : '보관함') + ' · 스캔한 폴더: ' + x.dir + (x.root ? ' · 보관함 경로: ' + x.root : '') }));
         });
         return tags;
     }

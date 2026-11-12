@@ -79,6 +79,24 @@ class LibrariesTest(unittest.TestCase):
         self.assertEqual((libs[0]["db_type"], libs[0]["id"]), ("audiobook", 1))
 
 
+class LibraryRootTest(unittest.TestCase):
+    """보관함 경로가 절대 경로가 아니면 쓰지 않는다 - 예전에는 '/'로 바뀌어 다른 폴더(Plex 등)의 변경까지 그 보관함이 받았다."""
+
+    def test_bad_root_is_not_catch_all(self):
+        import worker
+        self.assertEqual(worker.usable_root("/mnt/gds2/READING/만화/"), "/mnt/gds2/READING/만화")
+        for bad in ("", "  ", "gdrive:READING/만화", "READING/만화", "C:\\books", "/", "//"):
+            self.assertEqual(worker.usable_root(bad), "", bad)
+        libs = [{"db_type": "adult", "id": 7, "name": "공유 서재", "roots": ["share:hitomi", ""]},
+                {"db_type": "general", "id": 1, "name": "만화", "roots": ["/mnt/gds2/READING/만화"]}]
+        bo = worker.BookOasis({"webhook_token": "t"}, libs, [])
+        movie = "/mnt/gds2/GDRIVE/VIDEO/영화/제목/차/천국은 없다 (2025)"
+        self.assertIsNone(bo.library_for(movie))                         # 어느 보관함에도 속하지 않는다
+        self.assertEqual(bo.scan(movie, False)[:2], (None, "보관함 밖 경로"))   # 스캔을 보내지 않고 넘어간다 (재시도 정체 없음)
+        self.assertEqual(bo.library_for("/mnt/gds2/READING/만화/작품")["name"], "만화")
+        self.assertEqual(bo.bad_roots, [("공유 서재", "share:hitomi"), ("공유 서재", "")])
+
+
 class EnvEscapeTest(unittest.TestCase):
     def test_multiline_roundtrip(self):
         value = '[{"name":"NID_AUT","value":"a\\b"},\n{"x":"y\"z"}]'

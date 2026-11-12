@@ -242,6 +242,13 @@ def norm(path):
     return posixpath.normpath(path) if path.startswith("/") else ""
 
 
+def usable_root(raw):
+    """보관함 경로로 쓸 수 있는 절대 경로 또는 "". 절대 경로가 아닌 것(다른 형식의 경로·빈 값)과 맨 위 '/'는 쓰지 않는다.
+    (그런 경로가 '/'로 바뀌면 그 보관함이 다른 모든 폴더의 변경까지 받아, 남의 폴더를 계속 스캔하다 실패한다)"""
+    root = norm(raw).rstrip("/")
+    return root if root and root != "/" else ""
+
+
 def under(path, root):
     root = root.rstrip("/")
     return not root or path == root or path.startswith(root + "/")
@@ -2585,12 +2592,16 @@ class BookOasis:
         self.crons = {(lib["db_type"], int(lib["id"])): lib.get("cron_schedule") or ""
                       for lib in libraries or [] if lib.get("id") is not None}
         self.libraries = []
+        self.bad_roots = []   # 쓸 수 없는 보관함 경로 (절대 경로가 아니거나 맨 위 '/') - 예전에는 '/'로 바뀌어 모든 경로를 받아 버렸다
         for lib in libraries or []:
-            for root in lib.get("roots") or []:
-                root = norm(root).rstrip("/") or "/"
-                if root:
-                    self.libraries.append({"root": root, "db_type": lib["db_type"], "id": int(lib["id"]),
-                                           "name": lib.get("name") or f"보관함 {lib['id']}"})
+            for raw in lib.get("roots") or []:
+                root = usable_root(raw)
+                if not root:
+                    self.bad_roots.append((lib.get("name") or f"보관함 {lib.get('id')}", str(raw)))
+                    log.warning("보관함 '%s'의 경로 '%s'는 절대 경로가 아니어서(또는 맨 위 폴더라) 쓰지 않습니다.", lib.get("name") or lib.get("id"), raw)
+                    continue
+                self.libraries.append({"root": root, "db_type": lib["db_type"], "id": int(lib["id"]),
+                                       "name": lib.get("name") or f"보관함 {lib['id']}"})
         # Plex 라이브러리 (서비스가 runtime.json에 넣어 줌): BookOasis 보관함과 같이 '어느 라이브러리 폴더인지'로 찾는다.
         # 같은 폴더가 BookOasis 보관함에도 있으면 BookOasis 스캔과 Plex 스캔을 둘 다 보낸다(scan).
         self.plex_url = str(cfg.get("plex_url") or "").rstrip("/")
@@ -2598,8 +2609,10 @@ class BookOasis:
         self.plex_map = plex_path_map(cfg.get("plex_path_map"))
         self.plex_libraries = []
         for lib in cfg.get("plex_libraries") or []:
-            for root in lib.get("roots") or []:
-                root = norm(root).rstrip("/") or "/"
+            for raw in lib.get("roots") or []:
+                root = usable_root(raw)
+                if not root:
+                    continue
                 self.plex_libraries.append({"root": root, "db_type": "plex", "id": int(lib["id"]),
                                             "name": lib.get("name") or f"Plex {lib['id']}", "plex": True})
         self.plex_libraries.sort(key=lambda l: len(l["root"]), reverse=True)
@@ -2934,6 +2947,7 @@ class BookOasis:
                 log.info("스캔 건너뜀 %s [%s] %s", d, label, message)
             for event_id in wanted[d]["events"]:
                 results[event_id]["scans"].append({"dir": d, "library": label, "ok": ok, "msg": message,
+                                                   "root": lib["root"] if lib else "",   # 어느 보관함 경로에 걸렸는지 (잘못 걸렸을 때 찾기 쉽게)
                                                    "merged": d not in own.get(event_id, ())})
                 if ok is None and lib:
                     results[event_id]["messages"].append(message)  # 보관함 안이지만 일부러 건너뜀 (맨 위 폴더 등)
