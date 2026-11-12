@@ -408,7 +408,7 @@
                 var plexLibs = (s.plex_libraries || []).map(function (l) { return l.name + ' (' + (l.roots || []).join(', ') + ')'; });
                 bind('env-info').textContent = '보관함 목록: ' + (s.library_source || '') + (dbs.length ? ' · ' + dbs.join(', ') : '') +
                     ' (BookOasis DB 연결은 .env의 BOOKOASIS_DB_URL에서 바꿉니다)' +
-                    (s.plex_url ? ' · Plex 라이브러리 ' + plexLibs.length + '개' + (plexLibs.length ? ': ' + plexLibs.join(' / ') : '') +
+                    (s.plex_enabled && s.plex_url ? ' · Plex 라이브러리 ' + plexLibs.length + '개' + (plexLibs.length ? ': ' + plexLibs.join(' / ') : '') +
                      (s.plex_error ? ' (읽기 실패: ' + s.plex_error + ')' : '') : '');
             }
             renderRoots(); renderVfs(); renderOpts(); loadVfsMap();
@@ -760,6 +760,7 @@
         $$('[data-plex]').forEach(function (i) {
             var k = i.getAttribute('data-plex');
             if (k === 'plex_token') { if (i.value.trim()) env[k] = i.value.trim(); }
+            else if (i.type === 'checkbox') env[k] = i.checked;
             else env[k] = i.value.trim();
         });
         return env;
@@ -790,9 +791,11 @@
             $$('[data-plex]').forEach(function (i) {
                 var k = i.getAttribute('data-plex');
                 if (k === 'plex_token') { i.value = ''; i.placeholder = s.plex_token_set ? '.env에 저장됨 (바꿀 때만 입력)' : 'Plex를 쓸 때 입력'; }
+                else if (i.type === 'checkbox') i.checked = !!s[k];
                 else i.value = s[k] || '';
             });
-            bind('plex-msg').textContent = s.plex_error ? '✗ 라이브러리 목록을 읽지 못함: ' + s.plex_error : '';
+            bind('plex-msg').textContent = !s.plex_enabled ? 'Plex 스캔이 꺼져 있습니다 - [Plex 스캔 사용]을 켜고 저장하세요.'
+                : s.plex_error ? '✗ 라이브러리 목록을 읽지 못함: ' + s.plex_error : '';
             renderPlexLibs(s.plex_libraries || [], false);
         }).catch(function (e) { toast(e.message, true); });
     }

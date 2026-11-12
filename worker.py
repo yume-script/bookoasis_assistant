@@ -287,7 +287,7 @@ def outside_hint(path, cfg):
     """어느 보관함·Plex 라이브러리에도 속하지 않는 경로일 때, 왜 그런지 한 줄 (Plex 쪽 원인을 짚어 준다). 모르겠으면 "" """
     cfg = cfg or {}
     if cfg.get("plex_enabled") is False:
-        return "Plex 스캔이 꺼져 있습니다 - .env의 GDWPLX_ENABLED=true 후 다시 시작"
+        return "Plex 스캔이 꺼져 있습니다 - [Plex 설정]에서 'Plex 스캔 사용'을 켜고 저장하세요"
     if not cfg.get("plex_url") or not cfg.get("plex_token"):
         return "Plex 주소·토큰이 없습니다 - [Plex 설정]에서 PLEX_URL·PLEX_TOKEN을 넣으세요"
     libs = cfg.get("plex_libraries") or []

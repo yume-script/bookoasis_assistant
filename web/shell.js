@@ -63,7 +63,7 @@
       items: [
         { tab: 'events', label: '변경 기록', icon: 'list-check' },
         { tab: 'setup', label: '감시 설정', icon: 'sliders' },
-        { tab: 'plex', label: 'Plex 설정', icon: 'film', needs: 'gdwplx' },  // .env GDWPLX_ENABLED=true 일 때만
+        { tab: 'plex', label: 'Plex 설정', icon: 'film' },  // 늘 보인다 - Plex 스캔을 켜고 끄는 것은 이 화면에서 (GDWPLX_ENABLED)
         { tab: 'schedule', label: '스캔 일정', icon: 'calendar-days' },
         { tab: 'log', label: '로그', icon: 'terminal' }
       ] },

@@ -282,6 +282,7 @@
       <p class="gdw-tip gdw-tip-top">감시는 [감시 설정]의 폴더 그대로입니다. 바뀐 폴더가 아래 Plex 라이브러리 폴더 안이면 rclone VFS 새로고침 뒤
         Plex에도 그 폴더만 부분 스캔을 요청합니다(BookOasis 보관함과 같은 폴더면 둘 다). 결과는 [변경 기록]·[로그]에 <code>plex#번호 이름</code>으로 나옵니다.
         저장하면 <code>.env</code>의 PLEX_URL · PLEX_TOKEN · PLEX_PATH_MAP 줄만 바뀝니다.</p>
+      <label class="gdw-check"><input type="checkbox" data-plex="plex_enabled"> Plex 스캔 사용 <small>(.env의 GDWPLX_ENABLED · 꺼져 있으면 Plex 폴더의 변경은 '보관함 밖'으로 건너뜁니다)</small></label>
       <div class="gdw-opts gdw-env">
         <label class="gdw-wide">Plex 주소 <small>(비우면 Plex는 쓰지 않음)</small><input type="text" data-plex="plex_url" placeholder="http://127.0.0.1:32400"></label>
         <label class="gdw-wide">PLEX_TOKEN <small>(X-Plex-Token · 바꿀 때만 입력)</small><input type="password" data-plex="plex_token" autocomplete="new-password" readonly onfocus="this.removeAttribute('readonly')"></label>

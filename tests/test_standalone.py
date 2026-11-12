@@ -205,7 +205,7 @@ class OutsideHintTest(unittest.TestCase):
         import worker
         path = "/mnt/gds2/GDRIVE/VIDEO/영화/최신/2026.11/오디세이 (2026)/a.mkv"
         libs = [{"id": 1, "name": "영화", "roots": ["/data/VIDEO/영화"], "plex_roots": ["/data/VIDEO/영화"]}]
-        self.assertIn("GDWPLX_ENABLED", worker.outside_hint(path, {"plex_enabled": False}))
+        self.assertIn("Plex 스캔 사용", worker.outside_hint(path, {"plex_enabled": False}))
         self.assertIn("PLEX_URL", worker.outside_hint(path, {"plex_enabled": True, "plex_url": "", "plex_token": ""}))
         on = {"plex_enabled": True, "plex_url": "http://p", "plex_token": "t"}
         self.assertIn("목록을 읽지 못했습니다", worker.outside_hint(path, on))
@@ -216,6 +216,26 @@ class OutsideHintTest(unittest.TestCase):
         cfg = dict(on, plex_path_map="/mnt/gds2/GDRIVE/VIDEO/영화=/data/VIDEO/영화",
                    plex_libraries=[{"id": 1, "name": "영화", "roots": ["/mnt/gds2/GDRIVE/VIDEO/영화"], "plex_roots": ["/data/VIDEO/영화"]}])
         self.assertEqual(worker.BookOasis(cfg, [], []).library_for(path)["name"], "영화")
+
+
+class PlexToggleTest(unittest.TestCase):
+    def test_enable_from_screen(self):
+        svc = service.Service()
+        old = os.environ.get("GDWPLX_ENABLED")
+        try:
+            os.environ.pop("GDWPLX_ENABLED", None)
+            self.assertFalse(svc.dispatch("get_watch", {})["settings"]["plex_enabled"])
+            res = svc.dispatch("save_plex", {"env": {"plex_enabled": True, "plex_url": "", "plex_path_map": "", "plex_rc_url": ""}})
+            self.assertTrue(res["success"], res)
+            self.assertTrue(config.plex_enabled())
+            self.assertTrue(svc.dispatch("get_watch", {})["settings"]["plex_enabled"])
+            svc.dispatch("save_plex", {"env": {"plex_enabled": False}})
+            self.assertFalse(config.plex_enabled())
+        finally:
+            if old is None:
+                os.environ.pop("GDWPLX_ENABLED", None)
+            else:
+                os.environ["GDWPLX_ENABLED"] = old
 
 
 class EnvEscapeTest(unittest.TestCase):

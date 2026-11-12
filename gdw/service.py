@@ -1015,7 +1015,8 @@ class Service:
                 "settings": {"rclone_path": settings["rclone_path"], "rclone_config": settings["rclone_config"],
                              "bookoasis_url": settings["bookoasis_url"], "auto_start": settings["auto_start"],
                              "token_set": bool(settings["webhook_token"]), "env_file": config.ENV_PATH,
-                             "plex_url": settings.get("plex_url") or "", "plex_path_map": settings.get("plex_path_map") or "",
+                             "plex_enabled": config.plex_enabled(),
+                             "plex_url": (config.env("PLEX_URL") or "").strip().rstrip("/"), "plex_path_map": settings.get("plex_path_map") or "",
                              "plex_rc_url": settings.get("plex_rc_url") or "",
                              "plex_token_set": bool(settings.get("plex_token")),
                              "plex_libraries": [{"id": l["id"], "name": l["name"], "roots": l["roots"]}
@@ -1571,6 +1572,10 @@ class Service:
         clean = {"PLEX_URL": str(env.get("plex_url") or "").strip().rstrip("/"),
                  "PLEX_PATH_MAP": str(env.get("plex_path_map") or "").strip(),
                  "PLEX_RC_URL": str(env.get("plex_rc_url") or "").strip().rstrip("/")}
+        if "plex_url" not in env:   # 켜기/끄기만 보낸 경우: 주소 등은 그대로 둔다
+            clean = {}
+        if "plex_enabled" in env:   # Plex 스캔 켜기/끄기도 이 화면에서 (다시 시작하지 않아도 반영)
+            clean["GDWPLX_ENABLED"] = "true" if env.get("plex_enabled") else "false"
         if str(env.get("plex_token") or "").strip():
             clean["PLEX_TOKEN"] = str(env["plex_token"]).strip()
         fixed = config.overridden(clean)
@@ -1581,7 +1586,7 @@ class Service:
         self._sync_runtime(force_libraries=True)
         note = f" 단, {', '.join(fixed)}는 실제 환경변수로도 정해져 있어 그 값이 우선합니다." if fixed else ""
         if not config.plex_enabled():
-            note += " (GDWPLX_ENABLED=false라 Plex 스캔은 꺼져 있습니다)"
+            note += " ('Plex 스캔 사용'이 꺼져 있어 Plex 스캔은 하지 않습니다)"
         return {"success": True, "message": "Plex 설정을 저장했습니다. 실행 중인 감시에 자동 반영됩니다." + note}
 
     def _rpc_check_plex(self, ctx):
