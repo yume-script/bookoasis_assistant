@@ -142,6 +142,62 @@ class SharedFolderTest(unittest.TestCase):
         self.assertTrue(p.root_checked)
 
 
+class DriveLinkedLibraryTest(unittest.TestCase):
+    """BookOasis 보관함 경로가 Drive 공유 링크(로컬 경로 없음)인 보관함: 가짜 경로로 맞춰 보고, 변경이 오면 보관함 스캔을 요청한다."""
+    FID = "17nHlq3_VswDkHszcdjaItdAHPQJNWTU_"
+    URL = "https://drive.google.com/drive/folders/" + FID
+
+    def test_virtual_roots(self):
+        import worker
+        root = "/@gdrive/" + self.FID
+        self.assertEqual(worker.usable_root(self.URL + "?usp=sharing"), root)
+        self.assertEqual(worker.usable_root("gdrive://" + self.FID), root)
+        self.assertEqual(worker.usable_root("https://example.com/folders/abcdefghijklmn"), "")
+        self.assertEqual(worker.watch_local_root({"root_id": self.URL, "local_root": ""}), root)        # 로컬 경로를 비움
+        self.assertEqual(worker.watch_local_root({"root_id": "x", "local_root": self.URL}), root)       # 로컬 경로 칸에 링크
+        self.assertEqual(worker.watch_local_root({"root_id": self.FID, "local_root": root}), root)      # 저장된 값 그대로
+        self.assertEqual(worker.watch_local_root({"root_id": self.FID, "local_root": "/mnt/a/"}), "/mnt/a")
+        w = worker.DrivePollWatcher({"name": "히토미", "source_remote": "r", "root_id": self.URL, "local_root": ""}, None, None, [], 5, 5)
+        self.assertEqual((w.root_id, w.local_root), (self.FID, root))
+
+    def test_scan_requests_library_scan_without_vfs(self):
+        import worker
+        libs = [{"db_type": "adult", "id": 7, "name": "히토미", "roots": [self.URL], "rclone_rc_url": ""},
+                {"db_type": "general", "id": 1, "name": "만화", "roots": ["/mnt/lib"]}]
+        bo = worker.BookOasis({"webhook_token": "t", "file_wait_minutes": 10}, libs, [])
+        self.assertEqual(bo.bad_roots, [])
+        posts = []
+        bo._post = lambda lib, rel: (posts.append((lib["id"], rel)) or (200, {"success": True, "already_queued": len(posts) > 1}))
+        path = f"/@gdrive/{self.FID}/작가/작품.zip"
+        self.assertEqual(bo.library_for(path)["name"], "히토미")
+        self.assertIsNone(bo.library_for("/mnt/gds2/GDRIVE/VIDEO/영화/제목"))                     # 다른 폴더는 받지 않는다
+        ok, msg, lib = bo.scan(posixpath_dirname(path), False)
+        self.assertTrue(ok and lib["id"] == 7 and "Drive 연결 보관함" in msg, msg)
+        self.assertEqual(posts, [(7, "")])                                                       # 폴더 단위가 아니라 보관함 스캔
+        self.assertIn("이미 대기 중", bo.scan(posixpath_dirname(path), False)[1])
+        ev = {"id": 1, "root": "히토미", "action": "create", "item_type": "file", "path": path, "removed_path": "", "status": "pending",
+              "created": "2026-01-01T00:00:00", "result": ""}
+        res = bo.process([ev])[1]
+        self.assertEqual(res.get("vfs"), [])                                                     # 마운트가 없으니 VFS·파일 대기 없음
+        self.assertNotIn("waiting", str(res.get("status")))
+
+    def test_save_watch_without_local_path(self):
+        svc = service.Service()
+        base = {"name": "히토미", "source_remote": "r", "root_id": self.URL, "enabled": True}
+        bad = svc.dispatch("save_watch", {"watch": {"roots": [dict(base, mode="local", local_root=self.URL)]}})
+        self.assertFalse(bad["success"])
+        self.assertIn("폴더 비교", bad["error"])
+        ok = svc.dispatch("save_watch", {"watch": {"roots": [dict(base, mode="drivepoll", local_root="")]}})
+        self.assertTrue(ok["success"], ok)
+        saved = svc._watch()["roots"][0]
+        self.assertEqual((saved["root_id"], saved["local_root"]), (self.FID, "/@gdrive/" + self.FID))
+
+
+def posixpath_dirname(path):
+    import posixpath
+    return posixpath.dirname(path)
+
+
 class EnvEscapeTest(unittest.TestCase):
     def test_multiline_roundtrip(self):
         value = '[{"name":"NID_AUT","value":"a\\b"},\n{"x":"y\"z"}]'

@@ -518,7 +518,7 @@
             } else {
                 cells.push(field('rclone 리모트', input(r, 'source_remote', { list: 'gdw-remotes', placeholder: 'my_remote' })),
                     field('Drive 폴더 ID 또는 주소', input(r, 'root_id', { placeholder: '1AbC… 또는 https://drive.google.com/drive/folders/…' })),
-                    field('로컬 경로', input(r, 'local_root', { placeholder: '/mnt/gds/책' })));
+                    field('로컬 경로', input(r, 'local_root', { placeholder: '/mnt/gds/책 (로컬에 없는 Drive 연결 보관함이면 비움)' })));
                 if (r.mode === 'drivepoll') {
                     if (!r.drive_interval) r.drive_interval = 600;
                     cells.push(field('비교 주기(초)', input(r, 'drive_interval', { type: 'number', min: 120 })));

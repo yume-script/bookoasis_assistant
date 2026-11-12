@@ -1054,8 +1054,13 @@ class Service:
                 return {"success": False, "error": f"{index}번 루트: 이름이 비었거나 중복입니다."}
             names.add(name)
             local_root = str(root.get("local_root") or "").strip().rstrip("/")
+            if root.get("mode") != "local" and str(root.get("root_id") or "").strip():
+                # 로컬 경로를 비우면(또는 Drive 링크면) 로컬에 마운트하지 않은 'Drive 연결 보관함'으로 본다
+                local_root = _load_worker_module().watch_local_root(root).rstrip("/")
             if not local_root.startswith("/"):
-                return {"success": False, "error": f"[{name}] 로컬 경로는 절대 경로여야 합니다."}
+                return {"success": False, "error": f"[{name}] 로컬 경로는 절대 경로여야 합니다."
+                        + (" 로컬 폴더 방식에는 Drive 주소를 쓸 수 없습니다 - 방식을 '폴더 비교(Drive)'로 바꾸고 주소는 'Drive 폴더 ID 또는 주소' 칸에 넣으세요."
+                           if "drive.google.com" in local_root else "")}
             if root.get("mode") == "local":
                 roots.append({"name": name, "mode": "local", "local_root": local_root,
                               "local_detect": root.get("local_detect") if root.get("local_detect") in ("inotify", "polling") else "auto",
@@ -1361,6 +1366,8 @@ class Service:
         remote = str(root.get("source_remote") or "").strip().rstrip(":")
         folder_id = worker.folder_id_of(root.get("root_id"))
         local_root = worker.norm(str(root.get("local_root") or "").strip())
+        if root.get("mode") != "local" and folder_id:
+            local_root = worker.watch_local_root(root)
         if root.get("mode") == "local":
             return self._check_local(worker, settings, local_root, root, add, checks)
         mode = "activity" if root.get("mode") == "activity" else "changes"
@@ -1454,7 +1461,9 @@ class Service:
             except Exception as error:
                 add("변경 수신", False, f"Activity 조회 실패 (rclone scope에 drive.activity.readonly가 필요): {error}")
         # 4) 로컬 경로가 이 Drive 폴더와 같은 곳인지
-        if not os.path.isdir(local_root):
+        if worker.is_virtual(local_root):
+            add("로컬 경로", True, "로컬 경로 없음 - Drive 연결 보관함으로 감시합니다 (마운트·VFS 새로고침 없이, 변경이 있으면 그 보관함 스캔을 요청).")
+        elif not os.path.isdir(local_root):
             add("로컬 경로", False, f"컨테이너 안에 {local_root} 폴더가 없습니다.")
         else:
             try:
@@ -1474,10 +1483,13 @@ class Service:
             except Exception as error:
                 add("로컬 경로", None, f"폴더는 있지만 내용 비교 실패: {error}")
         # 5) 보관함 / VFS
-        libs = [(lib, r.rstrip("/")) for lib in self._libraries() for r in lib["roots"]
-                if worker.under(r.rstrip("/"), local_root) or worker.under(local_root, r.rstrip("/"))]
+        libs = [(lib, r) for lib in self._libraries() for r in map(worker.usable_root, lib["roots"])
+                if r and (worker.under(r, local_root) or worker.under(local_root, r))]
         if not libs:
-            add("BookOasis 보관함", False, "이 경로에 걸친 보관함이 없어 변경을 감지해도 스캔하지 않습니다.")
+            add("BookOasis 보관함", False, "이 경로에 걸친 보관함이 없어 변경을 감지해도 스캔하지 않습니다."
+                + (" BookOasis 보관함 경로에 적은 Drive 공유 링크와 같은 폴더여야 합니다." if worker.is_virtual(local_root) else ""))
+        elif worker.is_virtual(local_root):
+            add("BookOasis 보관함", True, "Drive 연결 보관함 " + ", ".join(sorted({str(lib.get("name")) for lib, _r in libs})) + "에 걸쳐 있습니다.")
         else:
             no_rc = [r for lib, r in libs if not lib.get("rclone_rc_url")]
             add("BookOasis 보관함", True, f"보관함 경로 {len(libs)}개가 이 폴더에 걸쳐 있습니다."
@@ -1515,8 +1527,8 @@ class Service:
                 add("감지 방식", True, f"파일시스템 {fstype} → 실시간 감지 (폴더 하나당 감시 1개, 한도 {limit:,}개. 넘으면 주기 비교로 자동 전환)")
             except OSError:
                 add("감지 방식", True, f"파일시스템 {fstype} → 실시간 감지")
-        libs = [(lib, r.rstrip("/")) for lib in self._libraries() for r in lib["roots"]
-                if worker.under(r.rstrip("/"), local_root) or worker.under(local_root, r.rstrip("/"))]
+        libs = [(lib, r) for lib in self._libraries() for r in map(worker.usable_root, lib["roots"])
+                if r and (worker.under(r, local_root) or worker.under(local_root, r))]
         add("BookOasis 보관함", bool(libs), f"보관함 경로 {len(libs)}개가 이 폴더에 걸쳐 있습니다." if libs
             else "이 경로에 걸친 보관함이 없어 변경을 감지해도 스캔하지 않습니다.")
         token, source = self._token_source(settings)

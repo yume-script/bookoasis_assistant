@@ -243,9 +243,42 @@ def norm(path):
     return posixpath.normpath(path) if path.startswith("/") else ""
 
 
+VIRTUAL = "/@gdrive"   # 로컬 경로가 없는 'Drive 연결 보관함'(BookOasis 보관함 경로가 Drive 공유 링크)의 가짜 경로: /@gdrive/<폴더ID>/…
+
+
+def drive_link_id(raw):
+    """Drive 공유 링크(또는 gdrive://폴더ID)면 폴더 ID, 아니면 "" """
+    text = str(raw or "").strip()
+    hit = re.search(r"drive\.google\.com/.*?(?:/folders/|[?&]id=)([\w-]{10,})", text) or re.match(r"gdrive:/{0,2}([\w-]{10,})", text)
+    return hit.group(1) if hit else ""
+
+
+def virtual_root(folder_id):
+    return f"{VIRTUAL}/{folder_id}"
+
+
+def is_virtual(path):
+    return str(path or "").startswith(VIRTUAL + "/")
+
+
+def watch_local_root(cfg):
+    """감시 설정의 로컬 경로. 비었거나 Drive 링크면 그 Drive 폴더의 가짜 경로 (로컬에 마운트하지 않은 Drive 연결 보관함)."""
+    raw = str(cfg.get("local_root") or "").strip()
+    if is_virtual(raw):
+        return norm(raw)
+    if raw and not drive_link_id(raw):
+        return norm(raw)
+    fid = drive_link_id(raw) or folder_id_of(cfg.get("root_id"))
+    return virtual_root(fid) if fid else ""
+
+
 def usable_root(raw):
     """보관함 경로로 쓸 수 있는 절대 경로 또는 "". 절대 경로가 아닌 것(다른 형식의 경로·빈 값)과 맨 위 '/'는 쓰지 않는다.
-    (그런 경로가 '/'로 바뀌면 그 보관함이 다른 모든 폴더의 변경까지 받아, 남의 폴더를 계속 스캔하다 실패한다)"""
+    (그런 경로가 '/'로 바뀌면 그 보관함이 다른 모든 폴더의 변경까지 받아, 남의 폴더를 계속 스캔하다 실패한다)
+    Drive 공유 링크는 그 폴더의 가짜 경로(/@gdrive/<폴더ID>)로 바꾼다."""
+    fid = drive_link_id(raw)
+    if fid:
+        return virtual_root(fid)
     root = norm(raw).rstrip("/")
     return root if root and root != "/" else ""
 
@@ -1085,7 +1118,7 @@ class Watcher:
         self.name = cfg["name"]
         self.source_remote = str(cfg["source_remote"]).rstrip(":")
         self.root_id = folder_id_of(cfg["root_id"])
-        self.local_root = norm(cfg["local_root"])
+        self.local_root = watch_local_root(cfg)
         self.seed = cfg.get("seed", True)
         self.store, self.rclone = store, rclone
         self.api = DriveApi(rclone, self.source_remote, api_timeout)
@@ -2640,7 +2673,7 @@ class BookOasis:
             self.plex_libraries = []
         self.libraries.extend(self.plex_libraries)
         self.libraries.sort(key=lambda l: len(l["root"]), reverse=True)
-        auto = [(root, lib.get("rclone_rc_url")) for lib in libraries or [] for root in lib.get("roots") or []]
+        auto = [(root, lib.get("rclone_rc_url")) for lib in libraries or [] for root in lib.get("roots") or [] if not drive_link_id(root)]
         if cfg.get("plex_rc_url"):   # Plex 라이브러리 폴더도 그 마운트의 RC로 VFS 새로고침 (보관함 RC처럼 자동 감지)
             auto += [(lib["root"], cfg["plex_rc_url"]) for lib in self.plex_libraries]
         self.vfs = Vfs(vfs_rules, int(cfg.get("rc_timeout", 60)), auto, store)
@@ -2714,6 +2747,17 @@ class BookOasis:
         if not self.token:
             return False, "WEBHOOK_TOKEN이 없습니다. .env의 WEBHOOK_TOKEN을 BookOasis .env 값과 같게 넣으세요.", lib
         rel = directory[len(lib["root"]):].strip("/")
+        if is_virtual(lib["root"]):
+            # Drive 연결 보관함: BookOasis가 Drive에서 직접 읽으므로 폴더 단위 스캔이 없다 → 그 보관함 스캔을 대기열에 넣는다
+            count_load("scan")
+            code, payload = self._post(lib, "")
+            message = str(payload.get("message") or payload.get("error") or f"HTTP {code}")
+            if code == 200 and payload.get("success"):
+                return True, "(Drive 연결 보관함 스캔 요청" + (" · 이미 대기 중)" if payload.get("already_queued") else ")"), lib
+            if code == 401:
+                return False, (f"BookOasis가 스캔 요청을 거부했습니다(토큰 불일치: {message}). "
+                               ".env의 WEBHOOK_TOKEN을 BookOasis .env 값과 맞추세요."), lib
+            return False, message, lib
         while True:
             if not rel and not self.allow_root_scan:
                 # 부분 스캔 대상이 보관함 맨 위가 되면 사실상 전체 스캔이라 보내지 않는다 (예약된 전체 스캔 때 반영)
@@ -2780,8 +2824,8 @@ class BookOasis:
                 deleted_in.setdefault(posixpath.dirname(ev["removed_path"]), []).append(ev["id"])
         collapse = {d for d, ids in deleted_in.items() if len(ids) > 1}
         for ev in events:
-            if ev.get("root") in getattr(self, "skip_vfs", ()):
-                continue
+            if ev.get("root") in getattr(self, "skip_vfs", ()) or is_virtual(ev["path"] or ev["removed_path"]):
+                continue   # (로컬에 없는 Drive 연결 보관함은 마운트가 없으니 VFS 새로고침도 없다)
             if self._vfs_already_done(ev):
                 results[ev["id"]]["vfs"] = self._previous_vfs(ev)
                 continue
@@ -2840,7 +2884,7 @@ class BookOasis:
                 if not r["ok"] or ev.get("root") in getattr(self, "skip_vfs", ()):
                     continue
                 target = ev["removed_path"] if ev["action"] == "delete" else ev["path"]
-                if not target or not self.library_for(target):
+                if not target or not self.library_for(target) or is_virtual(target):
                     continue
                 want = ev["action"] != "delete"
                 if os.path.exists(target) == want:
