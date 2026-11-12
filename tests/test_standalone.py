@@ -97,6 +97,51 @@ class LibraryRootTest(unittest.TestCase):
         self.assertEqual(bo.bad_roots, [("공유 서재", "share:hitomi"), ("공유 서재", "")])
 
 
+class SharedFolderTest(unittest.TestCase):
+    """Drive 주소를 붙여 넣어도 되고, 링크로만 공유된 남의 폴더는 변경 목록 대신 폴더 비교로 감시한다."""
+
+    def test_folder_id_from_url(self):
+        import worker
+        fid = "17nHlq3_VswDkHszcdjaItdAHPQJNWTU_"
+        for text in (fid, f" {fid} ", f"https://drive.google.com/drive/folders/{fid}", f"https://drive.google.com/drive/u/1/folders/{fid}?usp=sharing",
+                     f"https://drive.google.com/open?id={fid}&usp=drive_fs"):
+            self.assertEqual(worker.folder_id_of(text), fid, text)
+        self.assertEqual(worker.folder_id_of(None), "")
+
+    def test_link_shared_switches_to_poll(self):
+        import worker
+        folder = {"id": "F", "name": "manga", "mimeType": worker.FOLDER_MIME}
+        self.assertTrue(worker.link_shared(dict(folder, ownedByMe=False)))
+        self.assertFalse(worker.link_shared(dict(folder, ownedByMe=True)))                                   # 내 폴더
+        self.assertFalse(worker.link_shared(dict(folder, ownedByMe=False, sharedWithMeTime="2026-01-01")))   # 나에게 직접 공유
+        self.assertFalse(worker.link_shared(dict(folder, driveId="D")))                                      # 공유 드라이브
+        self.assertFalse(worker.link_shared({}))
+
+        class Api:
+            timeout = 5
+
+            def __init__(self, data):
+                self.data = data
+
+            def file(self, _fid):
+                return self.data
+
+        cfg = {"name": "공유", "source_remote": "r", "root_id": "https://drive.google.com/drive/folders/FFFFFFFFFFFF", "local_root": "/mnt/x"}
+        w = worker.ChangesWatcher(cfg, None, None, [], 5, 5)
+        self.assertEqual(w.root_id, "FFFFFFFFFFFF")
+        w.api = Api(dict(folder, ownedByMe=False))
+        with self.assertRaises(worker.NeedsPoll):
+            w.check_root()
+        self.assertFalse(w.root_checked)
+        w.api = Api(dict(folder, ownedByMe=True))
+        w.check_root()
+        self.assertTrue(w.root_checked)
+        p = worker.DrivePollWatcher(cfg, None, None, [], 5, 5)                                               # 폴더 비교는 그대로 감시
+        p.api = Api(dict(folder, ownedByMe=False))
+        p.check_root()
+        self.assertTrue(p.root_checked)
+
+
 class EnvEscapeTest(unittest.TestCase):
     def test_multiline_roundtrip(self):
         value = '[{"name":"NID_AUT","value":"a\\b"},\n{"x":"y\"z"}]'

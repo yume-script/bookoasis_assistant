@@ -226,7 +226,8 @@ def screen_event(event, root=""):
 DRIVE_API = "https://www.googleapis.com/drive/v3"
 ACTIVITY_API = "https://driveactivity.googleapis.com/v2/activity:query"
 FOLDER_MIME = "application/vnd.google-apps.folder"
-FILE_FIELDS = "id,name,mimeType,parents,trashed,modifiedTime,size,md5Checksum,driveId,shortcutDetails(targetId,targetMimeType)"
+FILE_FIELDS = ("id,name,mimeType,parents,trashed,modifiedTime,size,md5Checksum,driveId,ownedByMe,sharedWithMeTime,"
+               "shortcutDetails(targetId,targetMimeType)")
 SHORTCUT_MIME = "application/vnd.google-apps.shortcut"
 DEFAULT_EXTENSIONS = (
     ".zip .cbz .cbr .epub .pdf .txt .yaml .xml .json "
@@ -694,6 +695,23 @@ def explain_drive_error(code, detail, where=""):
     return f"{target}: Google API 오류"
 
 
+def folder_id_of(text):
+    """감시 폴더 칸에 적은 것 → 폴더 ID. Drive 주소(…/drive/folders/<ID>?…, …/open?id=<ID>)를 붙여 넣어도 ID만 꺼낸다."""
+    text = str(text or "").strip()
+    hit = re.search(r"/folders/([\w-]{10,})", text) or re.search(r"[?&]id=([\w-]{10,})", text)
+    return hit.group(1) if hit else text
+
+
+def link_shared(data):
+    """다른 사람의 내 드라이브에 있고 이 계정에 직접 공유되지도 않은 폴더(링크로 공유됐거나 윗폴더를 거쳐 보이는 것).
+    이런 폴더의 변경은 계정의 변경 목록(Changes)에 오지 않으므로 폴더 비교로 감시해야 한다."""
+    return bool(data) and not data.get("driveId") and data.get("ownedByMe") is False and not data.get("sharedWithMeTime")
+
+
+class NeedsPoll(RuntimeError):
+    """변경 목록으로는 감시할 수 없는 폴더 → 폴더 비교(drivepoll)로 바꿔야 한다"""
+
+
 class DriveError(RuntimeError):
     def __init__(self, code, message, where=""):
         self.code = code
@@ -1066,7 +1084,7 @@ class Watcher:
         self.cfg = dict(cfg)
         self.name = cfg["name"]
         self.source_remote = str(cfg["source_remote"]).rstrip(":")
-        self.root_id = cfg["root_id"]
+        self.root_id = folder_id_of(cfg["root_id"])
         self.local_root = norm(cfg["local_root"])
         self.seed = cfg.get("seed", True)
         self.store, self.rclone = store, rclone
@@ -1124,6 +1142,8 @@ class Watcher:
         # 변경 목록은 리모트의 기본 드라이브(team_drive)가 아니라 감시 폴더가 실제로 있는 드라이브 기준으로 받는다.
         # 토큰은 계정 단위라 같은 토큰으로 다른 공유 드라이브의 변경도 조회할 수 있다 (그 드라이브에 접근 권한만 있으면 됨).
         self.drive_id = "" if self.user_feed else (data.get("driveId") or "")
+        if self.mode == "changes" and link_shared(data):
+            raise NeedsPoll(f"'{data.get('name')}' 폴더는 다른 사람의 드라이브에 있고 링크로만 공유돼 있어 변경 목록에 오지 않습니다.")
         self.root_checked = True
 
     @staticmethod
@@ -3315,6 +3335,20 @@ class Worker:
             json.dump(data, handle, ensure_ascii=False)
         os.replace(path + ".tmp", path)
 
+    def to_drivepoll(self, watcher, why):
+        """변경 목록으로 감시할 수 없는 폴더를 폴더 비교로 바꾼다 (fallback.json에 남겨 재시작 후에도 유지)."""
+        self.set_fallback(watcher.name, "drivepoll")
+        replacement = DrivePollWatcher(dict(watcher.cfg, mode="drivepoll"), self.store, watcher.rclone,
+                                       watcher.extensions, watcher.buffer_seconds, watcher.api.timeout)
+        replacement.verbose = watcher.verbose
+        replacement.workers = min(16, max(1, int(self.cfg.get("drive_workers", 4) or 4)))
+        replacement.set_tiers(self.cfg)
+        replacement.parent = getattr(watcher, "parent", None)
+        self.watchers[self.watchers.index(watcher)] = replacement
+        message = f"[{watcher.name}] {why}"
+        log.warning(message)
+        self.notifier.root_error(watcher.name, message)
+
     def fall_back(self, watcher):
         """Activity → Changes 자동 전환. 전환 사실은 fallback.json에 남겨 재시작 후에도 유지한다."""
         self.set_fallback(watcher.name, "changes")
@@ -3387,6 +3421,10 @@ class Worker:
                 watcher.poll()
                 watcher.failures = 0
                 lines.append(watcher.summary())
+            except NeedsPoll as error:
+                self.to_drivepoll(watcher, f"{error} 폴더 비교 방식으로 전환했습니다.")
+                lines.append(f"{watcher.name}: 링크로 공유된 폴더 → 폴더 비교로 전환")
+                continue
             except DriveError as error:
                 if error.code == 429 or "rateLimitExceeded" in str(error):
                     watcher.failures = min(watcher.failures + 1, 5)
@@ -3398,18 +3436,7 @@ class Worker:
                         and not watcher.user_feed:
                     # 공유 드라이브 멤버가 아니라 폴더만 공유받은 계정: 변경 목록 대신 폴더 비교로 감시한다
                     # (계정 전체 변경 목록은 관계없는 변경이 수십만 건이라 쓸 수 없음)
-                    self.set_fallback(watcher.name, "drivepoll")
-                    replacement = DrivePollWatcher(dict(watcher.cfg, mode="drivepoll"), self.store, watcher.rclone,
-                                                   watcher.extensions, watcher.buffer_seconds, watcher.api.timeout)
-                    replacement.verbose = watcher.verbose
-                    replacement.workers = min(16, max(1, int(self.cfg.get("drive_workers", 4) or 4)))
-                    replacement.set_tiers(self.cfg)
-                    replacement.parent = getattr(watcher, "parent", None)
-                    self.watchers[self.watchers.index(watcher)] = replacement
-                    message = (f"[{watcher.name}] 이 계정은 공유 드라이브 멤버가 아니라 변경 목록을 받을 수 없어, "
-                               "폴더 비교 방식으로 전환했습니다.")
-                    log.warning(message)
-                    self.notifier.root_error(watcher.name, message)
+                    self.to_drivepoll(watcher, "이 계정은 공유 드라이브 멤버가 아니라 변경 목록을 받을 수 없어, 폴더 비교 방식으로 전환했습니다.")
                     lines.append(f"{watcher.name}: 공유 드라이브 멤버 아님 → 폴더 비교로 전환")
                     continue
                 elif error.code == 403 and isinstance(watcher, ActivityWatcher) and self.scope_missing(error):

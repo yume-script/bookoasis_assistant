@@ -1067,7 +1067,7 @@ class Service:
             roots.append({"name": name, "mode": root.get("mode") if root.get("mode") in ("activity", "drivepoll") else "changes",
                           "drive_interval": max(120, int(root.get("drive_interval") or 600)),
                           "source_remote": str(root["source_remote"]).strip().rstrip(":"),
-                          "root_id": str(root["root_id"]).strip(), "local_root": local_root,
+                          "root_id": _load_worker_module().folder_id_of(root["root_id"]), "local_root": local_root,
                           "seed": bool(root.get("seed", True)), "enabled": bool(root.get("enabled", True)),
                           "activity_delay": int(root.get("activity_delay") or 60),
                           # 폴더별 주기 규칙은 세부 보기에서 따로 저장하므로 화면이 안 보내면 기존 값을 유지
@@ -1195,7 +1195,7 @@ class Service:
         rclone.rc_sources = worker.rc_sources(self._watch().get("vfs"), self._libraries())
         remote = str(root.get("source_remote") or "").strip().rstrip(":")
         api = worker.DriveApi(rclone, remote, 30)
-        data = api.file(str(root.get("root_id") or "").strip()) or {}
+        data = api.file(worker.folder_id_of(root.get("root_id"))) or {}
         if data.get("mimeType") == worker.SHORTCUT_MIME:
             data = api.file((data.get("shortcutDetails") or {}).get("targetId", "")) or {}
         if not data:
@@ -1359,7 +1359,7 @@ class Service:
             checks.append({"label": label, "ok": ok, "msg": msg})
 
         remote = str(root.get("source_remote") or "").strip().rstrip(":")
-        folder_id = str(root.get("root_id") or "").strip()
+        folder_id = worker.folder_id_of(root.get("root_id"))
         local_root = worker.norm(str(root.get("local_root") or "").strip())
         if root.get("mode") == "local":
             return self._check_local(worker, settings, local_root, root, add, checks)
@@ -1416,6 +1416,15 @@ class Service:
                                  fields="files(id)").get("files") or []
                 add("변경 수신", True, f"폴더 비교 사용 가능 · {int(root.get('drive_interval') or 600)}초마다 폴더 트리를 훑어 비교합니다 "
                                      f"(바로 아래 항목 {len(listed)}개 이상 확인).")
+            except Exception as error:
+                add("변경 수신", False, f"폴더 내용을 읽을 수 없습니다: {error}")
+        elif mode == "changes" and worker.link_shared(data):
+            try:
+                q = f"'{real_id}' in parents and trashed = false"
+                listed = api.get("files", q=q, pageSize=10, corpora="allDrives", includeItemsFromAllDrives="true",
+                                 supportsAllDrives="true", fields="files(id)").get("files") or []
+                add("변경 수신", None, "다른 사람의 드라이브에 있고 링크로만 공유된 폴더라 변경 목록(Changes)에 오지 않습니다. "
+                                    f"폴더 비교 방식으로 감시합니다(자동 전환) · 바로 아래 항목 {len(listed)}개 이상 확인.")
             except Exception as error:
                 add("변경 수신", False, f"폴더 내용을 읽을 수 없습니다: {error}")
         elif mode == "changes":

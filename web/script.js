@@ -517,7 +517,7 @@
                     field('감시할 폴더 (컨테이너 기준)', input(r, 'local_root', { placeholder: '/mnt/nas/책' })), el('span'));
             } else {
                 cells.push(field('rclone 리모트', input(r, 'source_remote', { list: 'gdw-remotes', placeholder: 'my_remote' })),
-                    field('Drive 폴더 ID', input(r, 'root_id', { placeholder: '1AbC…' })),
+                    field('Drive 폴더 ID 또는 주소', input(r, 'root_id', { placeholder: '1AbC… 또는 https://drive.google.com/drive/folders/…' })),
                     field('로컬 경로', input(r, 'local_root', { placeholder: '/mnt/gds/책' })));
                 if (r.mode === 'drivepoll') {
                     if (!r.drive_interval) r.drive_interval = 600;
