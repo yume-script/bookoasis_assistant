@@ -463,7 +463,7 @@ class Service:
         if not runtime.get("webhook_token") and runtime.get("libraries"):
             warnings.append("WEBHOOK_TOKEN이 없어 스캔 요청을 보낼 수 없습니다. .env 또는 [감시 설정 > 실행 환경]에서 BookOasis .env와 같은 값을 넣으세요.")
         for lib in runtime.get("libraries") or []:   # 절대 경로가 아닌 보관함 경로는 쓰지 않는다 (예전에는 모든 폴더를 받아 버렸다)
-            bad = [str(r) for r in lib.get("roots") or [] if not worker.usable_root(r)]
+            bad = [str(r) for r in lib.get("roots") or [] if not _load_worker_module().usable_root(r)]
             if bad:
                 warnings.append(f"보관함 '{lib.get('name') or lib.get('id')}'의 경로 {', '.join(bad[:3])}는 절대 경로가 아니어서 감시·스캔에 쓰지 않습니다. "
                                 "BookOasis의 보관함 경로를 /로 시작하는 실제 경로로 고치세요.")

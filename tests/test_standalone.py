@@ -201,6 +201,17 @@ class DispatchTest(unittest.TestCase):
         self.assertFalse(svc.dispatch("nope", {})["success"])
         self.assertFalse(svc.dispatch("__init__", {})["success"])
 
+    def test_status_runs_and_warns_bad_library_root(self):
+        os.makedirs(service.DATA_DIR, exist_ok=True)
+        with open(config.libraries_file(), "w", encoding="utf-8") as handle:
+            json.dump([{"name": "공유 서재", "db_type": "general", "roots": "share:hitomi"}], handle)
+        try:
+            res = service.Service().dispatch("status", {})
+            self.assertTrue(res["success"], res)
+            self.assertTrue(any("공유 서재" in w and "share:hitomi" in w for w in res.get("warnings") or []), res.get("warnings"))
+        finally:
+            os.remove(config.libraries_file())
+
 
 class AuthTest(unittest.TestCase):
     def test_session_cookie(self):
