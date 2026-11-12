@@ -467,6 +467,18 @@ class Service:
             if bad:
                 warnings.append(f"보관함 '{lib.get('name') or lib.get('id')}'의 경로 {', '.join(bad[:3])}는 절대 경로가 아니어서 감시·스캔에 쓰지 않습니다. "
                                 "BookOasis의 보관함 경로를 /로 시작하는 실제 경로로 고치세요.")
+        wk = _load_worker_module()
+        covered = [wk.usable_root(r) for lib in runtime.get("libraries") or [] for r in lib.get("roots") or []]
+        if runtime.get("plex_url") and runtime.get("plex_token"):
+            covered += [wk.usable_root(r) for lib in runtime.get("plex_libraries") or [] for r in lib.get("roots") or []]
+        covered = [c for c in covered if c]
+        for root in runtime.get("roots") or []:   # 어느 보관함·Plex 라이브러리에도 걸치지 않는 감시 폴더: 감지해도 전부 건너뛴다
+            top = wk.watch_local_root(root) if root.get("mode") != "local" else wk.norm(root.get("local_root"))
+            if not root.get("enabled", True) or not top or any(wk.under(c, top) or wk.under(top, c) for c in covered):
+                continue
+            hint = wk.outside_hint(top, runtime)
+            warnings.append(f"감시 폴더 '{root.get('name')}'({top})는 어느 보관함·Plex 라이브러리에도 속하지 않아 변경을 감지해도 건너뜁니다."
+                            + (f" {hint}." if hint else ""))
         libinfo = _read_json("libraries.json", {}) or {}
         if libinfo.get("error"):
             warnings.append(f"BookOasis DB에서 보관함 목록을 읽지 못했습니다 (이전 목록 사용): {libinfo['error']}")

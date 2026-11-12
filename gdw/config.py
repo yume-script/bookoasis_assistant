@@ -155,6 +155,7 @@ def settings():
         "auto_start": env_bool("AUTO_START", True),
         # Plex: 비워 두면 Plex 스캔 안 함. 경로 매핑은 '이 프로그램 경로=Plex 서버 경로'를 ; 로 여러 개
         "plex_url": (env("PLEX_URL") or "").strip().rstrip("/") if plex_enabled() else "",
+        "plex_enabled": plex_enabled(),
         "plex_token": env("PLEX_TOKEN"),
         "plex_path_map": env("PLEX_PATH_MAP"),
         # Plex 라이브러리 폴더의 rclone 마운트 RC 주소 (VFS 새로고침용, 비우면 감시 설정의 VFS 규칙만)

@@ -283,6 +283,35 @@ def usable_root(raw):
     return root if root and root != "/" else ""
 
 
+def outside_hint(path, cfg):
+    """어느 보관함·Plex 라이브러리에도 속하지 않는 경로일 때, 왜 그런지 한 줄 (Plex 쪽 원인을 짚어 준다). 모르겠으면 "" """
+    cfg = cfg or {}
+    if cfg.get("plex_enabled") is False:
+        return "Plex 스캔이 꺼져 있습니다 - .env의 GDWPLX_ENABLED=true 후 다시 시작"
+    if not cfg.get("plex_url") or not cfg.get("plex_token"):
+        return "Plex 주소·토큰이 없습니다 - [Plex 설정]에서 PLEX_URL·PLEX_TOKEN을 넣으세요"
+    libs = cfg.get("plex_libraries") or []
+    if not libs:
+        return "Plex 라이브러리 목록을 읽지 못했습니다 - [Plex 설정]의 연결 확인을 눌러 보세요"
+    parts = [x for x in norm(path).split("/") if x]
+    best = None   # (맞은 꼬리 길이, 로컬 쪽 앞부분, Plex 폴더, 라이브러리 이름)
+    for lib in libs:
+        for proot in lib.get("plex_roots") or lib.get("roots") or []:
+            tail = [x for x in str(proot).replace("\\", "/").split("/") if x]
+            for n in range(min(len(tail), 4), 0, -1):
+                want = tail[-n:]
+                at = next((i for i in range(len(parts) - n + 1) if parts[i:i + n] == want), None)
+                if at is not None:
+                    if not best or n > best[0]:
+                        best = (n, "/" + "/".join(parts[:at + n]), str(proot).rstrip("/"), lib.get("name") or "")
+                    break
+    if best:
+        return (f"Plex 라이브러리 '{best[3]}'의 폴더는 Plex에서 {best[2]} 인데 이 프로그램에서는 {best[1]} 로 보입니다 - "
+                f"[Plex 설정]의 경로 바꾸기(PLEX_PATH_MAP)에 {best[1]}={best[2]} 를 넣으세요")
+    return "이 경로를 가진 Plex 라이브러리가 없습니다 (Plex 폴더: " + ", ".join(
+        str(r) for lib in libs[:6] for r in (lib.get("plex_roots") or lib.get("roots") or [])[:2]) + ")"
+
+
 def under(path, root):
     root = root.rstrip("/")
     return not root or path == root or path.startswith(root + "/")
@@ -2657,6 +2686,7 @@ class BookOasis:
                                        "name": lib.get("name") or f"보관함 {lib['id']}"})
         # Plex 라이브러리 (서비스가 runtime.json에 넣어 줌): BookOasis 보관함과 같이 '어느 라이브러리 폴더인지'로 찾는다.
         # 같은 폴더가 BookOasis 보관함에도 있으면 BookOasis 스캔과 Plex 스캔을 둘 다 보낸다(scan).
+        self.cfg = cfg
         self.plex_url = str(cfg.get("plex_url") or "").rstrip("/")
         self.plex_token = cfg.get("plex_token") or ""
         self.plex_map = plex_path_map(cfg.get("plex_path_map"))
@@ -3026,7 +3056,8 @@ class BookOasis:
             r = results[ev["id"]]
             if r.get("outside"):
                 status = "skipped"
-                r["messages"].append("보관함 밖 경로 (VFS 새로고침·스캔 안 함)")
+                hint = outside_hint(ev["path"] or ev["removed_path"], getattr(self, "cfg", None))
+                r["messages"].append("보관함 밖 경로 (VFS 새로고침·스캔 안 함)" + (f" · {hint}" if hint else ""))
             elif r.get("timeout"):
                 status = "timeout"
             elif r.get("waiting") or (r.get("deferred") and r["ok"] and not r["scans"]):

@@ -198,6 +198,26 @@ def posixpath_dirname(path):
     return posixpath.dirname(path)
 
 
+class OutsideHintTest(unittest.TestCase):
+    """Plex 폴더인데 '보관함 밖'으로 건너뛸 때 이유를 알려 준다"""
+
+    def test_hints(self):
+        import worker
+        path = "/mnt/gds2/GDRIVE/VIDEO/영화/최신/2026.11/오디세이 (2026)/a.mkv"
+        libs = [{"id": 1, "name": "영화", "roots": ["/data/VIDEO/영화"], "plex_roots": ["/data/VIDEO/영화"]}]
+        self.assertIn("GDWPLX_ENABLED", worker.outside_hint(path, {"plex_enabled": False}))
+        self.assertIn("PLEX_URL", worker.outside_hint(path, {"plex_enabled": True, "plex_url": "", "plex_token": ""}))
+        on = {"plex_enabled": True, "plex_url": "http://p", "plex_token": "t"}
+        self.assertIn("목록을 읽지 못했습니다", worker.outside_hint(path, on))
+        self.assertIn("/mnt/gds2/GDRIVE/VIDEO/영화=/data/VIDEO/영화", worker.outside_hint(path, dict(on, plex_libraries=libs)))
+        other = [{"id": 2, "name": "음악", "roots": ["/data/MUSIC"], "plex_roots": ["/data/MUSIC"]}]
+        self.assertIn("없습니다", worker.outside_hint(path, dict(on, plex_libraries=other)))
+        # 경로 바꾸기를 넣으면 Plex 라이브러리로 잡힌다
+        cfg = dict(on, plex_path_map="/mnt/gds2/GDRIVE/VIDEO/영화=/data/VIDEO/영화",
+                   plex_libraries=[{"id": 1, "name": "영화", "roots": ["/mnt/gds2/GDRIVE/VIDEO/영화"], "plex_roots": ["/data/VIDEO/영화"]}])
+        self.assertEqual(worker.BookOasis(cfg, [], []).library_for(path)["name"], "영화")
+
+
 class EnvEscapeTest(unittest.TestCase):
     def test_multiline_roundtrip(self):
         value = '[{"name":"NID_AUT","value":"a\\b"},\n{"x":"y\"z"}]'
