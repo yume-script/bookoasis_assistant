@@ -279,6 +279,29 @@
         if (!opts.plex.length) warn.push(h('p', { class: 'field-hint', text: 'Plex 규칙을 쓰려면 .env에 PLEX_URL과 PLEX_TOKEN을 넣고 다시 시작하세요 (드라이브 감시의 Plex 설정과 같은 값). rclone 드라이브 · 폴더 규칙은 그대로 쓸 수 있습니다.' }));
         opts.plex.filter((p) => p.error).forEach((p) => warn.push(h('p', { class: 'muted error', text: p.error })));
         if (!data.ffmpeg) warn.push(h('p', { class: 'muted error', text: '서버에 ffmpeg/ffprobe가 없습니다 - 인코딩·나눠 올리기를 못 합니다 (sudo apt install ffmpeg).' }));
+        // 디스코드 알림 (올림·실패·건너뜀) - 서버: tgup/notify.py
+        const nt = data.notify || {};
+        const hookIn = h('input', { class: 'input', value: nt.webhook || '', placeholder: 'https://discord.com/api/webhooks/…', autocomplete: 'off' });
+        const botIn = h('input', { class: 'input', type: 'password', placeholder: nt.has_bot_token ? '저장됨 (바꿀 때만 입력)' : '봇 토큰 (웹훅 대신 쓸 때)', autocomplete: 'off' });
+        const chIn = h('input', { class: 'input', inputmode: 'numeric', value: nt.channel_id || '', placeholder: '채널 ID' });
+        const okIn = h('input', { type: 'checkbox', checked: nt.ok !== false });
+        const failIn = h('input', { type: 'checkbox', checked: nt.fail !== false });
+        const skipIn = h('input', { type: 'checkbox', checked: !!nt.skip });
+        const notifyBody = (action) => ({ action, webhook: hookIn.value.trim(), bot_token: botIn.value.trim(), channel_id: chIn.value.trim(),
+            ok: okIn.checked, fail: failIn.checked, skip: skipIn.checked });
+        const notifyBtn = (action, label, ic, cls) => h('button', { class: `btn ${cls || ''}`, on: { click: async (e) => {
+            const btn = e.currentTarget; btn.disabled = true;
+            try { await post('api/tgup/notify', notifyBody(action)); toast(action === 'test' ? '시험 알림을 보냈습니다. 디스코드를 보세요.' : '알림 설정을 저장했습니다.', 'success'); }
+            catch (err) { toast(err.message, 'error', 6000); } finally { btn.disabled = false; }
+        } } }, icon(ic), label);
+        const notifyCard = h('div', { class: 'src-card' },
+            h('h3', { class: 'pane-title' }, h('i', { class: 'fa-brands fa-discord' }), ' 디스코드 알림'),
+            h('p', { class: 'field-hint', text: '올리기가 끝나거나 실패하면 디스코드로 알립니다. 디스코드 채널 설정 > 연동 > 웹후크에서 만든 주소를 넣거나, 봇 토큰과 채널 ID를 넣으세요 (둘 다 있으면 웹훅).' }),
+            field('웹훅 주소', hookIn),
+            h('div', { class: 'row-2' }, field('봇 토큰', botIn), field('채널 ID', chIn)),
+            h('div', { class: 'toolbar' }, h('span', { class: 'muted', text: '알릴 것:' }), h('label', { class: 'check' }, okIn, ' 올림'),
+                h('label', { class: 'check' }, failIn, ' 실패'), h('label', { class: 'check' }, skipIn, ' 건너뜀 (이미 올린 파일·너무 큰 파일 등)')),
+            h('div', { class: 'toolbar' }, notifyBtn('save', ' 알림 저장', 'check', 'btn-accent'), notifyBtn('test', ' 시험 알림 보내기', 'paper-plane')));
         clear(pane).append(h('div', { class: 'src-card' },
             h('p', { text: '고른 Plex 라이브러리에 새 동영상(영화·에피소드)이 들어오거나, 고른 rclone 드라이브 폴더에 새 동영상이 올라오면 '
                 + '로그인해 둔 텔레그램 계정으로 고른 채널에 올립니다. 규칙을 처음 저장할 때 이미 있던 것은 올리지 않고 그 뒤에 들어온 것부터 올립니다. '
@@ -292,7 +315,7 @@
             rulesBox,
             h('div', { class: 'toolbar' }, h('button', { class: 'btn', on: { click: () => addRule() } }, icon('plus'), ' 규칙 추가'), save),
             h('p', { class: 'field-hint', text: '올리려면 그 채널에 글을 쓸 수 있어야 합니다(채널 관리자). Plex 서버의 파일 경로가 이 컴퓨터에서 보이면(PLEX_PATH_MAP으로 바꿈) 그대로 쓰고, '
-                + '아니면 Plex에서 data/tgup의 임시 폴더로 받은 뒤 올리고 지웁니다(파일 크기만큼 빈 공간 필요).' })));
+                + '아니면 Plex에서 data/tgup의 임시 폴더로 받은 뒤 올리고 지웁니다(파일 크기만큼 빈 공간 필요).' })), notifyCard);
     }
 
     // ── 진행 상태 ──

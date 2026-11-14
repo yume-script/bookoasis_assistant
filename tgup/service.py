@@ -14,6 +14,7 @@
   POST /api/tgup/check        지금 확인
   POST /api/tgup/test         {rule} 가장 최근 것 하나 올려 보기
   POST /api/tgup/item         {rule, key, action: upload|drop|cancel|cancel_all}
+  POST /api/tgup/notify       {action: save|test, webhook, bot_token, channel_id, ok, fail, skip} 디스코드 알림
   POST /api/tgup/account      {action: save_api|send_code|sign_in|logout, api_id, api_hash, phone, code, password}
 """
 import asyncio
@@ -21,7 +22,7 @@ import logging
 import threading
 import time
 
-from . import compat, folder_watch, plex_to_tg, tgaccount
+from . import compat, folder_watch, notify, plex_to_tg, tgaccount
 
 log = logging.getLogger("tgup")
 CALL_TIMEOUT = 120
@@ -85,14 +86,16 @@ class _Runner:
         self.plex_json = plex_json
         self.mirror = plex_to_tg.Mirror(plex_json, plex_src, tg_for, lambda: self.http)
         self._task = asyncio.ensure_future(self.mirror.loop())
+        self._notify_task = asyncio.ensure_future(notify.watch(self.http, plex_to_tg.load_state))   # 디스코드 알림
 
     async def _teardown(self):
-        if self._task:
-            self._task.cancel()
-            try:
-                await self._task
-            except BaseException:  # noqa: BLE001 - 끝내는 중
-                pass
+        for task in (self._task, getattr(self, "_notify_task", None)):
+            if task:
+                task.cancel()
+                try:
+                    await task
+                except BaseException:  # noqa: BLE001 - 끝내는 중
+                    pass
         try:
             await self.account.close()
         except Exception:  # noqa: BLE001
@@ -156,7 +159,7 @@ async def _account_status():
 def _state():
     return {"success": True, "settings": plex_to_tg.load_settings(), "status": RUNNER.run(RUNNER.mirror.status),
             "plex": bool(compat.plex_conf()["url"]), "ffmpeg": compat.available(),
-            "rclone": bool(folder_watch.rclone_path())}
+            "rclone": bool(folder_watch.rclone_path()), "notify": notify.public(notify.settings())}
 
 
 def api_get(path, query):
@@ -231,6 +234,23 @@ def api_post(path, body):
         compat.save(data)
         RUNNER.run(m.wake)
         return _state()
+    if path == "/api/tgup/notify":   # 디스코드 알림: {action: save|test, webhook, bot_token, channel_id, ok, fail, skip}
+        data = compat.load()
+        try:
+            new = notify.clean(body, data.get("notify"))
+        except ValueError as e:
+            raise ApiError(400, str(e))
+        if body.get("action") == "test":
+            s = notify.settings({"notify": new})   # 화면에 넣은 값으로 (저장 전에도 시험할 수 있게)
+            ok, msg = RUNNER.call(notify.send(RUNNER.http, s, {
+                "title": "텔레그램 자동 올리기 · 알림 시험", "description": "이 채널로 자동 올리기 알림(올림·실패·건너뜀)이 옵니다.",
+                "color": notify.COLOR["ok"], "footer": {"text": "bookoasis_assistant"}}), 30)
+            if not ok:
+                raise ApiError(400, f"디스코드로 보내지 못했습니다: {msg}")
+            return {"success": True}
+        data["notify"] = new
+        compat.save(data)
+        return {"success": True, "notify": notify.public(notify.settings())}
     if path == "/api/tgup/check":
         RUNNER.run(m.wake)
         return {"success": True}

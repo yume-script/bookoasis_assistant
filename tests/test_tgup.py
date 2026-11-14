@@ -26,8 +26,9 @@ except ImportError:
 class TgupTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        from tgup import compat, service
+        from tgup import compat, notify, service
         cls.compat, cls.service = compat, service
+        notify.CHECK_SEC = 0.2   # 알림 확인을 빨리
         cls.data = tempfile.mkdtemp(prefix="tgup-data-")
         compat.DATA_DIR = cls.data
         service.RUNNER.start()
@@ -84,6 +85,52 @@ class TgupTest(unittest.TestCase):
         self.compat.save(data)
         self.assertEqual(tgaccount.api_conf()["api_id"], "123")
         self.assertEqual(oct(os.stat(os.path.join(self.data, "settings.json")).st_mode & 0o777), "0o600")
+
+    def test_discord_notify(self):
+        import time
+        from aiohttp import web
+        from tgup import notify, plex_to_tg
+        got = []
+
+        async def hook(request):
+            got.append(await request.json())
+            return web.Response(status=204)
+
+        async def serve():
+            app = web.Application()
+            app.router.add_post("/hook", hook)
+            runner = web.AppRunner(app)
+            await runner.setup()
+            site = web.TCPSite(runner, "127.0.0.1", 0)
+            await site.start()
+            return runner, site._server.sockets[0].getsockname()[1]
+        runner, port = self.service.RUNNER.call(serve())
+        try:
+            with self.assertRaises(ValueError):   # 디스코드 웹훅 주소가 아님
+                notify.clean({"webhook": "http://example.com/x"}, {})
+            data = self.compat.load()
+            data["notify"] = {"webhook": f"http://127.0.0.1:{port}/hook", "ok": True, "fail": True, "skip": False}
+            self.compat.save(data)
+            st = plex_to_tg.load_state()
+            st["history"] = [{"title": "건너뛴 것", "ok": False, "note": "건너뜀: 이미 올린 파일", "at": int(time.time()), "key": "s"},
+                             {"title": "영화 (2026)", "ok": True, "note": "720p로 줄임", "at": int(time.time()), "key": "a",
+                              "subs": "자막 입혀 인코딩", "channel": "채널"},
+                             *st.get("history", [])]
+            plex_to_tg.save_state(st)
+            for _ in range(50):
+                if got:
+                    break
+                time.sleep(0.1)
+            time.sleep(0.5)
+            self.assertEqual(len(got), 1)   # 건너뜀은 끔
+            emb = got[0]["embeds"][0]
+            self.assertEqual(emb["description"], "영화 (2026)")
+            self.assertIn("올림", emb["title"])
+            # 시험 알림 (화면의 [시험 알림 보내기]) - 디스코드 주소가 아니면 저장·시험 모두 400
+            with self.assertRaises(self.service.ApiError):
+                self.service.api_post("/api/tgup/notify", {"action": "test", "webhook": f"http://127.0.0.1:{port}/hook"})
+        finally:
+            self.service.RUNNER.call(runner.cleanup())
 
     def test_folder_list(self):
         res = self.service.api_get("/api/tgup/folders", {"path": ROOT})

@@ -380,8 +380,17 @@ venv\Scripts\python app.py
    그래픽 카드 인코더(NVIDIA·Intel·VAAPI)가 되면 자동으로 씁니다. **ffmpeg·ffprobe가 있어야 합니다**(`sudo apt install ffmpeg`, 경로는 `FFMPEG_PATH`/`FFPROBE_PATH`).
 4. **진행 상태**: 지금 올리는 것(진행률)·올릴 차례·자막 기다림(10분 지점 장면으로 하드섭인지 보고 [지금 올리기]/[빼기])·다시 시도 대기, 항목마다 [취소]와 [전체 취소], 최근 기록.
    실패하면 10분 → 30분 → 2시간 뒤 다시(3번까지). 반쯤 올리다 실패·취소·재시작하면 보낸 메시지를 지우고 처음부터 다시 올립니다.
+5. **디스코드 알림**: 규칙 탭 아래 **디스코드 알림**에 웹훅 주소(또는 봇 토큰 + 채널 ID)를 넣으면 올림·실패(·건너뜀)를 알립니다.
+   [시험 알림 보내기]로 확인합니다. `.env`의 `TGUP_DISCORD_WEBHOOK_URL`(또는 `TGUP_DISCORD_BOT_TOKEN`·`TGUP_DISCORD_CHANNEL_ID`)로도 정할 수 있습니다.
 - 설정·기록은 `DATA_DIR/tgup/`(settings.json - API Hash가 있어 권한 600, plex_to_tg.json). 끄려면 `TGUP_ENABLED=false`.
-- 필요한 패키지: `aiohttp`, `telethon`(그리고 빠른 암호화 `cryptg`) - `pip install -r requirements.txt`. 없으면 이 모듈만 꺼집니다.
+- 필요한 패키지: `aiohttp`, `telethon`(그리고 빠른 암호화 `cryptg`). 없으면 이 모듈만 꺼집니다. 이미 설치해 쓰고 있다면 업데이트 뒤에 한 번:
+  ```bash
+  cd /opt/bookoasis_assistant && git pull
+  venv/bin/pip install -r requirements.txt     # 새로 생긴 aiohttp·telethon·cryptg만 더 설치됨
+  sudo apt install -y ffmpeg                   # 인코딩·나눠 올리기 (없을 때만)
+  sudo systemctl restart bookoasis_assistant
+  ```
+  (도커는 이미지를 다시 만들면 됩니다: `docker compose build && docker compose up -d`)
 - YMPlayer에서 같은 계정·채널로 이미 자동 올리기를 쓰고 있다면 한쪽에서만 켜세요(올린 기록을 따로 가지므로 둘 다 켜면 두 번 올라갑니다).
 
 ## 미니게임
