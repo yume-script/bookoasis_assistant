@@ -390,7 +390,7 @@ venv\Scripts\python app.py
   sudo apt install -y ffmpeg                   # 인코딩·나눠 올리기 (없을 때만)
   sudo systemctl restart bookoasis_assistant
   ```
-  (도커는 이미지를 다시 만들면 됩니다: `docker compose build && docker compose up -d`)
+  (도커는 이미지를 다시 만들면 됩니다: `git pull && docker compose up -d --build`)
 - YMPlayer에서 같은 계정·채널로 이미 자동 올리기를 쓰고 있다면 한쪽에서만 켜세요(올린 기록을 따로 가지므로 둘 다 켜면 두 번 올라갑니다).
 
 ## 미니게임
