@@ -132,6 +132,20 @@ class TgupTest(unittest.TestCase):
         finally:
             self.service.RUNNER.call(runner.cleanup())
 
+    def test_queue_kept_after_restart(self):
+        """올릴 차례 목록은 data/tgup/plex_to_tg_queue.json에 남아 다시 켜도 이어 간다 (지운 규칙의 것은 버림)"""
+        from tgup import plex_to_tg
+        folder = tempfile.mkdtemp(prefix="tgup-folder-")
+        try:
+            res = self.service.api_post("/api/tgup/settings", {"rules": [{"kind": "folder", "folder": folder, "tg": "tg", "channel": "-100123"}]})
+            rid = res["settings"]["rules"][0]["id"]
+            plex_to_tg.save_queue([{"rule": rid, "key": folder + "/a.mkv", "title": "a"}, {"rule": "gone", "key": "x", "title": "x"}])
+            self.assertTrue(os.path.exists(os.path.join(self.data, "plex_to_tg_queue.json")))
+            self.assertEqual([j["title"] for j in plex_to_tg.load_queue()], ["a"])
+        finally:
+            plex_to_tg.save_queue([])
+            shutil.rmtree(folder, ignore_errors=True)
+
     def test_folder_list(self):
         res = self.service.api_get("/api/tgup/folders", {"path": ROOT})
         self.assertIn("tgup", res["dirs"])
