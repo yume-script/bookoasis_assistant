@@ -26,6 +26,14 @@ services:
       - /opt/wtm_tmp:/wtm_tmp               # .env에 WTM_TEMP_DOWNLOAD_ROOT=/wtm_tmp
       # ── 드라이브 변경 감시 (GDW_ENABLED=true일 때만) ──
       - /opt/rclone:/config/rclone          # rclone.conf는 파일이 아니라 디렉터리째. .env에 RCLONE_CONFIG=/config/rclone/rclone.conf
+      # ── 텔레그램 자동 올리기 (TGUP_ENABLED=true일 때) ──
+      # Plex 원본을 바로 읽으려면 Plex가 보는 경로와 같은 경로로 (다르면 .env의 PLEX_PATH_MAP, 안 보이면 Plex에서 받아 옴)
+      # - /mnt/media:/mnt/media:ro,rslave
+      # rclone 드라이브 폴더 규칙: 호스트의 rclone mount 폴더 (위 저장 경로와 같다면 따로 안 넣어도 됨)
+      # - /mnt/gdrive:/mnt/gdrive:ro,rslave
+    # 자동 올리기의 Intel/AMD 그래픽 인코딩 (호스트에 /dev/dri가 있을 때)
+    # devices:
+    #   - /dev/dri:/dev/dri
     ports:
       - "5931:5931"
     # 드라이브 변경 감시가 호스트의 rclone rc(127.0.0.1:5572)나 BookOasis(127.0.0.1:5930)에 붙어야 하면
