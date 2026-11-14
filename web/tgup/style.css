@@ -1,0 +1,97 @@
+/* 텔레그램 자동 올리기 화면 (tgup) - 공통 테마(theme.css) 위에 YMPlayer 설정 화면의 모양을 가져옴 */
+.hidden { display: none !important; }
+.tgup { max-width: 1100px; display: flex; flex-direction: column; gap: 1rem; }
+.tgup h1 { margin: 0; font-size: 1.4rem; display: flex; align-items: center; gap: 0.5rem; }
+.tgup h4 { margin: 0.8rem 0 0.4rem; }
+.tgup .lead { margin: 0.2rem 0 0; color: var(--muted); font-size: 0.9rem; }
+.btn-sm { padding: 0.3rem 0.6rem; font-size: 0.8rem; }
+.btn:disabled { opacity: 0.5; cursor: default; }
+.check { display: inline-flex; align-items: center; gap: 0.35rem; cursor: pointer; user-select: none; color: var(--muted); }
+.check input { accent-color: var(--accent); }
+.toolbar { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; }
+.loading { display: flex; align-items: center; gap: 0.7rem; padding: 2rem; color: var(--muted); }
+.loading i { color: var(--accent); }
+.src-card { background: var(--bg-elev); border: 1px solid var(--border); border-radius: 8px; padding: 1rem 1.1rem; display: flex; flex-direction: column; gap: 0.75rem; }
+.src-card > p { margin: 0; }
+.field { display: flex; flex-direction: column; gap: 0.3rem; min-width: 0; }
+.field-label { font-size: 0.8rem; color: var(--muted); font-weight: 500; }
+.field-hint { font-size: 0.75rem; color: var(--muted); }
+.select { padding: 0.5rem 0.7rem; font: inherit; font-size: 0.92rem; color: var(--text); background: var(--bg); border: 1px solid var(--border);
+    border-radius: var(--radius); outline: none; max-width: 100%; }
+.select:focus { border-color: var(--accent); }
+textarea.input { resize: vertical; }
+.row-2 { display: grid; grid-template-columns: 1fr 2fr; gap: 0.75rem; }
+@media (max-width: 700px) { .row-2 { grid-template-columns: 1fr; } }
+.pane-title { font-size: 1rem; margin: 0; display: flex; align-items: center; gap: 0.5rem; }
+.toast-box { position: fixed; left: 50%; bottom: 1.5rem; transform: translateX(-50%); z-index: 300; display: flex; flex-direction: column; gap: 0.5rem; align-items: center; pointer-events: none; }
+.toast {
+    background: var(--bg-elev2); border: 1px solid var(--border); border-left: 4px solid var(--accent);
+    padding: 0.65rem 1rem; border-radius: var(--radius); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+    max-width: min(560px, 90vw); transition: opacity 0.3s, transform 0.3s;
+}
+.toast-error { border-left-color: var(--danger); }
+.toast-success { border-left-color: var(--ok); }
+.toast.out { opacity: 0; transform: translateY(8px); }
+.cache-bar { align-self: stretch; height: 8px; border-radius: 999px; background: var(--bg-elev2); overflow: hidden; }
+.cache-bar div { height: 100%; background: var(--accent); }
+.folder-pick { display: flex; flex-direction: column; gap: 0.25rem; max-height: 60vh; overflow-y: auto; min-width: min(480px, 80vw); }
+.folder-pick-item { display: flex; align-items: center; gap: 0.5rem; padding: 0.45rem 0.6rem; border: none; border-radius: var(--radius);
+    background: none; color: var(--text); text-align: left; cursor: pointer; font: inherit; }
+.folder-pick-item:hover { background: var(--bg-elev2); }
+.folder-pick-item span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.folder-pick-path { font-family: monospace; font-size: 0.85rem; word-break: break-all; margin: 0 0 0.25rem; }
+.btn.danger { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 45%, transparent); }
+.btn.danger:hover { background: color-mix(in srgb, var(--danger) 14%, transparent); }
+.mirror-live-head { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
+.mirror-rule { border: 1px solid var(--border); border-radius: var(--radius); padding: 0.75rem; margin: 0.75rem 0; display: flex; flex-direction: column; gap: 0.5rem; }
+.mirror-pick { grid-template-columns: 1fr 1fr; }
+.mirror-pick .toolbar { flex-wrap: nowrap; }
+.mirror-pick .toolbar .select { min-width: 0; flex: 1; }
+@media (max-width: 900px) { .mirror-pick { grid-template-columns: 1fr; } }
+.mirror-wait { display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; }
+.mirror-wait .mirror-days { width: 5rem; }
+.mirror-table { display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; margin-bottom: 0.5rem; }
+.mirror-row { display: grid; grid-template-columns: minmax(0, 1fr) 7.5rem 5.5rem minmax(0, 0.8fr); gap: 0.75rem; align-items: center;
+    padding: 0.45rem 0.75rem; border-top: 1px solid var(--border); font-size: 0.88rem; }
+.mirror-row:first-child { border-top: none; }
+.mirror-head { background: var(--bg-elev2); color: var(--muted); font-size: 0.78rem; font-weight: 600; }
+.mirror-title, .mirror-note { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mirror-subs { color: var(--text-soft); }
+.mirror-chip { display: inline-block; padding: 0.1rem 0.5rem; border-radius: 999px; font-size: 0.75rem; font-weight: 700; white-space: nowrap; }
+.mirror-chip.run { background: rgba(var(--accent-rgb), 0.2); color: var(--accent); }
+.mirror-chip.queue { background: var(--bg-elev2); color: var(--text-soft); }
+.mirror-chip.wait { background: rgba(120, 140, 255, 0.18); color: #9fb0ff; }
+.mirror-chip.ok { background: rgba(60, 190, 110, 0.18); color: #5fd38d; }
+.mirror-chip.fail { background: rgba(240, 80, 70, 0.18); color: #ff8a80; }
+.mirror-chip.skip { background: rgba(200, 160, 60, 0.18); color: #e0b85a; }
+.mirror-bar { margin-top: 0.3rem; height: 4px; }
+@media (max-width: 700px) {
+    .mirror-row { grid-template-columns: minmax(0, 1fr) auto; }
+    .mirror-row > :nth-child(3), .mirror-row > :nth-child(4) { grid-column: 1 / -1; font-size: 0.8rem; }
+    .mirror-head > :nth-child(3), .mirror-head > :nth-child(4) { display: none; }
+    .mirror-row:not(.mirror-head) > .mirror-subs:not(:empty)::before { content: '자막 '; color: var(--muted); }
+}
+.mirror-actions { display: inline-flex; gap: 0.3rem; margin-left: 0.5rem; vertical-align: middle; }
+.mirror-actions .btn { padding: 0.1rem 0.5rem; font-size: 0.75rem; }
+.mirror-note:has(.mirror-actions) { overflow: visible; white-space: normal; }
+
+.mirror-title-shot { display: flex; align-items: center; gap: 0.6rem; min-width: 0; }
+.mirror-shot { flex-shrink: 0; width: 112px; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 4px; background: var(--bg-elev2); cursor: zoom-in; }
+.mirror-shot.failed { visibility: hidden; }
+.mirror-shot-wait { display: inline-flex; align-items: center; justify-content: center; cursor: default; color: var(--muted); }
+.mirror-shot-wait.failed { visibility: visible; opacity: 0.5; }
+.mirror-shot-big { display: block; width: 100%; max-height: 75vh; object-fit: contain; border-radius: 6px; background: #000; }
+
+/* 텔레그램 계정 */
+.tg-account { display: flex; flex-direction: column; gap: 0.6rem; }
+.tg-account .ok { color: var(--ok); font-weight: 600; }
+.tg-login { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: flex-end; }
+.tg-login .field { flex: 1 1 12rem; }
+/* 탭 */
+.tgup-tabs { display: flex; gap: 0.4rem; flex-wrap: wrap; }
+.tgup-tabs button { display: inline-flex; align-items: center; gap: 0.4rem; padding: 0.45rem 0.9rem; border-radius: 999px; border: 1px solid var(--border);
+    background: var(--bg-elev); color: var(--text-soft); font: inherit; font-size: 0.88rem; cursor: pointer; }
+.tgup-tabs button:hover { background: var(--bg-hover); }
+.tgup-tabs button.is-on { background: rgba(var(--accent-rgb), 0.16); border-color: rgba(var(--accent-rgb), 0.5); color: var(--accent); font-weight: 600; }
+.mirror-folder-row { flex-wrap: nowrap; }
+.mirror-folder-row .input { flex: 1; min-width: 0; }

@@ -76,7 +76,7 @@ def check(svc):
     problems = 0
     mods = modules()
     print(f"모듈            : 웹툰 다운로더 {'켬' if mods['wtm'] else '끔'} · 드라이브 변경 감시 {'켬' if mods['gdw'] else '끔'}"
-          f" · 미니게임 {'켬' if mods['mini'] else '끔'} · 3D 서재 링크 {'있음 (LIB3D_URL)' if mods.get('lib3d') else '없음'}")
+          f" · 미니게임 {'켬' if mods['mini'] else '끔'} · 텔레그램 자동 올리기 {'켬' if mods.get('tgup') else '끔'} · 3D 서재 링크 {'있음 (LIB3D_URL)' if mods.get('lib3d') else '없음'}")
     settings = config.settings()
     print(f".env            : {config.ENV_PATH}" + ("" if os.path.exists(config.ENV_PATH) else "  (없음 - env.example을 복사하세요)"))
     print(f"DATA_DIR        : {service.DATA_DIR}")
@@ -150,6 +150,9 @@ def main():
         from wtm import service as wtm_service, telegram_upload
         wtm_service.provider()  # 설정 이전(플러그인 데이터) + 스케줄러·작업 프로세스 시작
         telegram_upload.start(stop_event)  # 받은 회차 → 텔레그램 채널 (켰을 때만 실제로 올림)
+    if mods.get("tgup"):
+        from tgup import service as tgup_service
+        tgup_service.start(stop_event)   # Plex·rclone 드라이브의 새 동영상 → 텔레그램 채널 (규칙이 있을 때만 실제로 올림)
     supervisor.start(svc, stop_event, wtm=mods["wtm"])
     server = make_server(svc, host, port)
 
@@ -163,7 +166,7 @@ def main():
     log.info("관리 화면: http://%s:%d/  (데이터: %s, 보관함: %s, 모듈: %s)", host, port, service.DATA_DIR,
              "BookOasis DB" if bookoasis_db.configured() else config.libraries_file(),
              ", ".join(name for name, on in (("웹툰 다운로더", mods["wtm"]), ("드라이브 변경 감시", mods["gdw"]),
-                                             ("미니게임", mods["mini"])) if on))
+                                             ("미니게임", mods["mini"]), ("텔레그램 자동 올리기", mods.get("tgup"))) if on))
     if mods["wtm"]:  # 재시작 뒤 어떤 카카오 계정 쿠키가 살아 있는지 로그로 바로 확인할 수 있게
         try:
             from wtm import host as wtm_host

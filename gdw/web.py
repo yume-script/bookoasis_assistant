@@ -34,9 +34,10 @@ WEB_DIR = os.path.join(config.ROOT, "web")
 STATIC = {"/watch": "index.html", "/style.css": "style.css", "/script.js": "script.js",
           "/theme.css": "theme.css", "/shell.js": "shell.js", "/webtoon": "webtoon/index.html", "/webtoon/": "webtoon/index.html",
           "/webtoon/style.css": "webtoon/style.css", "/webtoon/script.js": "webtoon/script.js",
-          "/login": "login.html", "/login.js": "login.js"}
+          "/login": "login.html", "/login.js": "login.js",
+          "/tgup": "tgup/index.html", "/tgup/style.css": "tgup/style.css", "/tgup/script.js": "tgup/script.js"}
 PUBLIC = {"/login", "/login.js", "/theme.css", "/shell.js", "/healthz", "/api/auth/state", "/api/auth/login", "/api/auth/setup"}
-PAGES = {"/", "/index.html", "/watch", "/webtoon", "/webtoon/", "/games", "/games/", "/library3d"}  # 로그인 안 했으면 로그인 화면으로 보낼 주소
+PAGES = {"/", "/index.html", "/watch", "/webtoon", "/webtoon/", "/games", "/games/", "/library3d", "/tgup"}  # 로그인 안 했으면 로그인 화면으로 보낼 주소
 OFF_PAGE = """<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{title}</title><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
 <link rel="stylesheet" href="theme.css"></head><body data-module=""><main class="gdw-page"><div class="app-off"><h2>{title}: 꺼져 있음</h2>
@@ -88,7 +89,8 @@ def _clean_nav(raw):
 def module_versions():
     """모듈별 버전 (왼쪽 위 아이콘 배지: 지금 보는 화면의 모듈 버전)."""
     out = {"gdw": service._plugin_version()}
-    for key, path, field in (("wtm", ("wtm", "VERSION"), "plugin version"), ("mini", ("mini", "VERSION"), "plugin version")):
+    for key, path, field in (("wtm", ("wtm", "VERSION"), "plugin version"), ("mini", ("mini", "VERSION"), "plugin version"),
+                             ("tgup", ("tgup", "VERSION"), "plugin version")):
         try:
             with open(os.path.join(config.ROOT, *path), encoding="utf-8") as f:
                 out[key] = str(json.load(f).get(field) or "")
@@ -179,6 +181,8 @@ def modules():
     # gdwplx: 드라이브 변경 감시의 Plex 설정 메뉴와 Plex 스캔 (드라이브 변경 감시가 켜져 있을 때만, 기본 끔)
     return {"wtm": config.env_bool("WTM_ENABLED", True), "gdw": gdw,
             "gdwplx": gdw and config.plex_enabled(), "mini": config.env_bool("MINI_ENABLED", True),
+            # 텔레그램 자동 올리기 (Plex·rclone 드라이브 -> 텔레그램 채널, YMPlayer와 같은 기능). 기본 켬 - 규칙이 없으면 아무것도 안 함
+            "tgup": config.env_bool("TGUP_ENABLED", True),
             "lib3d": bool(lib3d_url())}
 
 
@@ -299,6 +303,10 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:  # noqa: BLE001
                 log.exception("시간대별 다운로드 계산 실패")
                 return self._send(500, {"success": False, "error": str(e)})
+        if path.startswith("/api/tgup"):
+            return self._tgup("GET", path, None, mods)
+        if path == "/tgup" and not mods["tgup"]:
+            return self._send(200, OFF_PAGE.format(title="텔레그램 자동 올리기", note=".env에 <code>TGUP_ENABLED=true</code>를 넣고 다시 시작하세요.").encode(), "text/html; charset=utf-8")
         if path == "/library3d":   # 예전 주소·북마크: 따로 설치한 3D 서재로
             if lib3d_url():
                 return self._send(302, b"", extra={"Location": lib3d_url()})
@@ -331,6 +339,27 @@ class Handler(BaseHTTPRequestHandler):
         if ctype.startswith("text/") or ctype.endswith("javascript"):
             ctype += "; charset=utf-8"
         self._send(200, data, ctype)
+
+    def _tgup(self, method, path, body, mods):
+        """텔레그램 자동 올리기 API (tgup/service.py)"""
+        if not mods.get("tgup"):
+            return self._send(404, {"success": False, "error": "텔레그램 자동 올리기가 꺼져 있습니다 (TGUP_ENABLED)."})
+        from urllib.parse import parse_qs
+        from tgup import service as tgup_service
+        try:
+            if method == "GET":
+                query = {k: v[0] for k, v in parse_qs(self.path.partition("?")[2]).items()}
+                res = tgup_service.api_get(path, query)
+            else:
+                res = tgup_service.api_post(path, body)
+        except tgup_service.ApiError as e:
+            return self._send(e.status, {"success": False, "error": str(e)})
+        except Exception as e:  # noqa: BLE001
+            log.exception("자동 올리기 요청 실패: %s", path)
+            return self._send(500, {"success": False, "error": str(e)})
+        if isinstance(res, tuple):   # (bytes, content-type) - 장면 그림
+            return self._send(200, res[0], res[1], extra={"Cache-Control": "private, max-age=300"})
+        return self._send(200, res)
 
     def _games(self, path, mods):
         if not mods["mini"]:
@@ -391,7 +420,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._deny(path)
         if user and not auth.is_admin(user) and path not in VIEWER_POST:
             return self._send(403, {"success": False, "error": "관람자 계정은 할 수 없는 일입니다."})
-        if not path.startswith(("/api/rpc/", "/api/auth/", "/api/users")) and path not in ("/api/wtm/action", "/api/ui-prefs", "/api/mcp"):
+        if not path.startswith(("/api/rpc/", "/api/auth/", "/api/users", "/api/tgup/")) and path not in ("/api/wtm/action", "/api/ui-prefs", "/api/mcp"):
             return self._send(404, {"success": False, "error": "없는 주소입니다."})
         if (self.headers.get("Content-Type") or "").split(";")[0].strip().lower() != "application/json":
             return self._send(415, {"success": False, "error": "Content-Type은 application/json이어야 합니다."})
@@ -409,6 +438,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(400, {"success": False, "error": "JSON 객체를 보내세요."})
         if path.startswith(("/api/auth/", "/api/users")):
             return self._auth_post(path, context, user)
+        if path.startswith("/api/tgup/"):
+            return self._tgup("POST", path, context, modules())
         if path == "/api/mcp":  # 설정 > MCP: 토큰 만들기 / 끄기
             if config.overridden(["MCP_TOKEN"]):
                 return self._send(400, {"success": False, "error": "MCP_TOKEN이 실제 환경변수로 지정돼 있어 화면에서 바꿀 수 없습니다."})

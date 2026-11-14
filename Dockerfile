@@ -1,7 +1,7 @@
 FROM python:3.12-slim
 
-# rclone (VFS 새로고침·토큰 갱신에 rclone 실행 파일을 쓴다)
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl unzip tzdata \
+# rclone (VFS 새로고침·토큰 갱신에 rclone 실행 파일을 쓴다), ffmpeg (텔레그램 자동 올리기의 인코딩·나눠 올리기)
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl unzip tzdata ffmpeg \
     && curl -fsSL https://rclone.org/install.sh | bash \
     && apt-get purge -y curl unzip && apt-get autoremove -y && rm -rf /var/lib/apt/lists/*
 

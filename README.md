@@ -7,6 +7,7 @@ BookOasis 플러그인으로 쓰던 세 가지를 **BookOasis 밖에서 따로 �
 |---|---|---|---|
 | **웹툰 다운로더** | [webtoon_manager](https://github.com/yume-script/webtoon_manager) v1.39.3 | 네이버웹툰·카카오웹툰·카카오웹소설 구독/다운로드, kavita.yaml 등 | `WTM_ENABLED=true` (기본 · 첫 화면) |
 | **드라이브 변경 감시** | [gdrive_watch](https://github.com/yume-script/gdrive_watch) v1.18.8 | Google Drive·로컬 폴더 변경 감지 → rclone VFS 새로고침 → 바뀐 폴더만 BookOasis 부분 스캔 | `GDW_ENABLED=true` (기본, rclone 마운트를 쓸 때) · **리눅스 전용 - 윈도우에서는 사용 불가** |
+| **텔레그램 자동 올리기** | [YMPlayer](https://github.com/yume-script/ym_player)의 설정 > 자동 올리기 | Plex 라이브러리·rclone 드라이브에 새로 들어온 동영상 → 내 텔레그램 계정으로 채널에 (텔레그램에서 바로 재생되는 mp4, 큰 파일은 나눠서) | `TGUP_ENABLED=true` (기본, 규칙이 없으면 아무것도 안 함) |
 | **미니게임** | [ym_mini_game](https://github.com/yume-script/ym_mini_game) v2.0.2 | 테트리스·지뢰찾기·오목·홀덤 등 12종 (브라우저에서만 돔, 서버 부하 없음) | `MINI_ENABLED=true` (기본) |
 
 감지·다운로드 로직과 화면은 플러그인과 같고, 플러그인이라서 생기던 제약만 걷어냈습니다.
@@ -361,6 +362,28 @@ venv\Scripts\python app.py
 옮긴 뒤 이 프로그램 `.env`에 `LIB3D_URL`(사이드바 메뉴 → 3D 서재)과 `LIB3D_EVENT_TOKEN`(웹툰 회차 배달)을 넣고, 남은 `LIB3D_*` 줄은 지워도 됩니다.
 예전 주소 `/library3d`는 `LIB3D_URL`로 넘어가고, 예전 관람자 계정으로 로그인하면 3D 서재 주소로 보냅니다.
 
+## 텔레그램 자동 올리기
+`/tgup` (사이드바 **텔레그램 자동 올리기**). [YMPlayer](https://github.com/yume-script/ym_player)의 **설정 > 자동 올리기**와 같은 기능이고 코드도 같습니다
+(`tgup/plex_to_tg.py`·`tgup/folder_watch.py`는 YMPlayer에서 `tools/sync_tgup_from_ymp.py`로 그대로 가져옴). YMPlayer 없이 이 프로그램만으로 쓸 수 있습니다.
+
+1. **텔레그램 계정**: my.telegram.org > API development tools에서 받은 API ID·API Hash를 넣고(또는 `.env`의 `TGUP_API_ID`/`TGUP_API_HASH`),
+   전화번호 → 인증 코드(→ 2단계 비밀번호)로 로그인합니다. 봇이 아니라 **내 계정**으로 올리므로 한 파일 2GB(프리미엄 4GB)까지 올라가고,
+   올릴 채널에 글을 쓸 수 있어야 합니다(채널 관리자). 세션은 `DATA_DIR/tgup/telegram.session`(권한 600 - 계정 열쇠).
+2. **규칙**: 규칙 하나 = 올릴 곳(Plex 라이브러리 하나 또는 rclone 드라이브 폴더 하나) → 텔레그램 채널 하나. 20개까지.
+   - **Plex 라이브러리**: `.env`의 `PLEX_URL`·`PLEX_TOKEN`(드라이브 감시의 Plex 설정과 같은 값, Plex 스캔을 꺼 둬도 씀)으로 붙어 "추가된 순"으로 새 영화·에피소드를 찾습니다.
+     Plex가 보는 파일 경로가 이 컴퓨터에서 보이면(`PLEX_PATH_MAP`으로 바꿈) 그대로 쓰고, 아니면 Plex에서 받아 옵니다.
+   - **rclone 드라이브 · 폴더**: rclone mount 폴더(/로 시작) 또는 rclone 원격 `이름:경로`. 하위 폴더까지 봅니다. `RCLONE_PATH`·`RCLONE_CONFIG`를 그대로 씁니다.
+   - 규칙을 처음 저장할 때 이미 있던 것은 올리지 않고 그 뒤에 들어온 것부터 올립니다. 같은 파일(이름+크기)은 같은 채널에 한 번만.
+3. **올리는 모양**: 텔레그램 앱에서 받기 전에 바로 재생되는 mp4(H.264 + AAC)로 올립니다(이미 그 모양이면 그대로). 규칙의 화질(기본 720p)보다 높으면 줄이고,
+   자막 파일이나 파일 안 자막은 화면에 입혀 인코딩합니다(자막이 생길 때까지 기다리기 - 기본 12시간). 한도를 넘는 파일은 `이름_0000.mp4`, `이름_0001.mp4`…로 나눕니다.
+   네트워크 드라이브의 원본은 이 서버(`DATA_DIR/tgup` 임시 폴더)로 먼저 복사(옆 자막 파일도)한 뒤 인코딩합니다 - 파일 크기만큼 빈 자리가 필요합니다.
+   그래픽 카드 인코더(NVIDIA·Intel·VAAPI)가 되면 자동으로 씁니다. **ffmpeg·ffprobe가 있어야 합니다**(`sudo apt install ffmpeg`, 경로는 `FFMPEG_PATH`/`FFPROBE_PATH`).
+4. **진행 상태**: 지금 올리는 것(진행률)·올릴 차례·자막 기다림(10분 지점 장면으로 하드섭인지 보고 [지금 올리기]/[빼기])·다시 시도 대기, 항목마다 [취소]와 [전체 취소], 최근 기록.
+   실패하면 10분 → 30분 → 2시간 뒤 다시(3번까지). 반쯤 올리다 실패·취소·재시작하면 보낸 메시지를 지우고 처음부터 다시 올립니다.
+- 설정·기록은 `DATA_DIR/tgup/`(settings.json - API Hash가 있어 권한 600, plex_to_tg.json). 끄려면 `TGUP_ENABLED=false`.
+- 필요한 패키지: `aiohttp`, `telethon`(그리고 빠른 암호화 `cryptg`) - `pip install -r requirements.txt`. 없으면 이 모듈만 꺼집니다.
+- YMPlayer에서 같은 계정·채널로 이미 자동 올리기를 쓰고 있다면 한쪽에서만 켜세요(올린 기록을 따로 가지므로 둘 다 켜면 두 번 올라갑니다).
+
 ## 미니게임
 `/games` (사이드바 **미니게임**). 게임 12종이 사이드바 서브 메뉴로 나오고, 주소의 `#게임id`(예: `/games#tetris`)로 바로 열 수 있습니다.
 - 게임은 `mini/games/<id>/`(manifest.json · template.html · style.css · game.js) 그대로이고, 서버가 읽어서 화면 하나로 묶어 줍니다.
@@ -380,7 +403,8 @@ venv\Scripts\python app.py
   마우스를 올리거나 [설정 > 정보]에서 최신 버전을 볼 수 있습니다. 6시간마다 GitHub의 `VERSION`을 확인하며,
   `.env`에 `UPDATE_CHECK_URL=`(빈 값)을 넣으면 확인하지 않습니다.
 
-- `GET /` 드라이브 변경 감시 (현황, 변경 기록, 감시 설정, 스캔 일정, 로그) · `GET /webtoon` 웹툰 다운로더 · `GET /games` 미니게임
+- `GET /` 드라이브 변경 감시 (현황, 변경 기록, 감시 설정, 스캔 일정, 로그) · `GET /webtoon` 웹툰 다운로더 · `GET /games` 미니게임 · `GET /tgup` 텔레그램 자동 올리기
+- `GET /api/tgup`(설정·진행 상태·계정) · `GET /api/tgup/options|channels|folders|shot` · `POST /api/tgup/settings|check|test|item|account` 텔레그램 자동 올리기 (`tgup/service.py`)
 - `POST /api/rpc/<동작>` 드라이브 변경 감시 RPC, `GET /api/wtm/data`·`POST /api/wtm/action` 웹툰 다운로더.
   `Content-Type: application/json`만 받습니다(다른 사이트 폼 전송 차단).
 - **로그인**: YMPlayer와 같은 로그인 화면입니다. '로그인 유지'를 켜면 30일, 끄면 12시간 유지됩니다. 계정은 `DATA_DIR/users.json`(PBKDF2 해시)이고
@@ -410,9 +434,11 @@ venv\Scripts\python app.py
 | `gdw/web.py` | 관리 화면 웹 서버 (두 모듈 공용) |
 | `gdw/handoff.py` | 다른 모듈이 라이브러리에 넣은 파일을 드라이브 변경 감시 대기열로 |
 | `worker.py` | 드라이브 변경 감시 워커: 변경 감지, VFS 새로고침, 스캔 요청 (플러그인과 같은 코드) |
+| `tgup/` | 텔레그램 자동 올리기 (`plex_to_tg.py`·`folder_watch.py` YMPlayer 코드 그대로 + `compat.py`·`tgaccount.py`: 설정·텔레그램 계정, `service.py`: asyncio 루프·화면 API) |
+| `tools/sync_tgup_from_ymp.py` | YMPlayer의 자동 올리기 코드를 `tgup/`로 다시 가져오기 |
 | `mini/` | 미니게임 (`games/` 게임 폴더 그대로 + `bundle.py`: /games 화면 만들기) |
 | `wtm/` | 웹툰 다운로더 (플러그인 코드 그대로 + `host.py`: 설정·DB·데이터 폴더, `service.py`: 화면 연결) |
-| `web/` | 관리 화면 (`theme.css` 공용, `index.html`·`style.css`·`script.js` 드라이브 감시, `webtoon/` 웹툰) |
+| `web/` | 관리 화면 (`theme.css` 공용, `index.html`·`style.css`·`script.js` 드라이브 감시, `webtoon/` 웹툰, `tgup/` 텔레그램 자동 올리기) |
 | `docs/webtoon_manager_CHANGELOG.md` | 웹툰 다운로더 플러그인 시절 변경 기록 |
 | `deploy/`, `Dockerfile`, `docker-compose.example.yml` | 배포 예시 |
 
