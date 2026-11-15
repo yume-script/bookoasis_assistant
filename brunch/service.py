@@ -3,7 +3,9 @@
 
 - 브런치북 하나 = EPUB 하나 (발행된 회차 전부가 장으로). 브런치북에 없는 글은 글 하나로 EPUB 하나.
 - 저장: 설정 > 저장 폴더 (비우면 .env의 BRUNCH_DOWNLOAD_ROOT, 그것도 없으면 DATA_DIR/brunch/files)
-  기본은 <저장 폴더>/<작가>/<브런치북 제목>.epub. 같은 책을 다시 받으면 새 회차까지 담아 덮어쓴다.
+  기본은 <저장 폴더>/<작가>/<브런치북 제목>/<브런치북 제목>.epub (책마다 폴더 하나). 같은 책을 다시 받으면 새 회차까지 담아 덮어쓴다.
+- kavita.yaml: 웹툰 다운로더처럼 책 폴더에 BookOasis 메타데이터(제목·작가·소개·연재 상태·발행일·원문 주소·표지)를 같이 둔다
+  (brunch/kavita.py, 설정에서 끌 수 있음). 예전(2.55.0까지) 작가 폴더에 바로 받은 책은 한 번 다시 받아 책 폴더로 옮긴다.
 - 저장 폴더가 BookOasis 보관함 안이면 웹툰처럼 드라이브 변경 감시에 넘겨 바로 스캔한다 (gdw/handoff.py).
 - 화면의 [내려받기]로 브라우저에도 받을 수 있다.
 - 새 글 자동 받기: 받은 브런치북(연재 중)을 정해 둔 간격(기본 6시간)마다 확인해, 발행된 회차가 늘었으면 다시 받아 덮어쓴다.
@@ -23,7 +25,7 @@ from datetime import datetime
 
 from gdw import config
 
-from . import epub, fetch
+from . import epub, fetch, kavita
 
 log = logging.getLogger("brunch")
 MAX_HISTORY = 300
@@ -79,7 +81,7 @@ def load_settings():
     except (TypeError, ValueError):
         hours = 6
     return {"save_dir": str(s.get("save_dir") or ""), "by_author": s.get("by_author", True) is not False,
-            "auto_check": s.get("auto_check", True) is not False,
+            "auto_check": s.get("auto_check", True) is not False, "kavita_yaml": s.get("kavita_yaml", True) is not False,
             "check_hours": hours if hours in CHECK_HOURS else 6}
 
 
@@ -102,7 +104,8 @@ def clean_settings(body):
     if hours not in CHECK_HOURS:
         raise ValueError("새 글 확인 간격은 %s시간 중 하나입니다." % ", ".join(map(str, CHECK_HOURS)))
     return {"save_dir": save_dir, "by_author": bool(body.get("by_author", True)),
-            "auto_check": bool(body.get("auto_check", True)), "check_hours": hours}
+            "auto_check": bool(body.get("auto_check", True)), "check_hours": hours,
+            "kavita_yaml": bool(body.get("kavita_yaml", True))}
 
 
 _BAD = re.compile(r'[\\/:*?"<>|\x00-\x1f]+')
@@ -115,9 +118,38 @@ def safe_name(text, fallback="브런치"):
 
 
 def target_path(settings, author, title):
+    """책마다 폴더 하나 (kavita.yaml이 폴더 단위라서): <저장 폴더>[/<작가>]/<제목>/<제목>.epub"""
     root = save_root(settings)
     folder = os.path.join(root, safe_name(author, "작가 미상")) if settings["by_author"] else root
-    return os.path.join(folder, safe_name(title) + ".epub")
+    name = safe_name(title)
+    return os.path.join(folder, name, name + ".epub")
+
+
+LAYOUT = 2   # 2.56.0부터 책마다 폴더 (history의 layout이 이보다 작으면 예전 위치)
+
+
+def _remove_book_file(path, keep=None):
+    """예전에 받은 EPUB을 지운다 (같은 폴더의 kavita.yaml도, 비면 폴더도). keep(새 경로)과 같으면 그대로"""
+    if not path or (keep and os.path.normpath(path) == os.path.normpath(keep)) or not os.path.isfile(path):
+        return False
+    try:
+        os.remove(path)
+    except OSError:
+        return False
+    folder = os.path.dirname(path)
+    yaml_path = os.path.join(folder, kavita.YAML_NAME)
+    # 그 폴더에 이 책 말고 다른 EPUB이 없을 때만 (예전 작가 폴더에는 kavita.yaml이 없다)
+    if os.path.isfile(yaml_path) and not any(n.lower().endswith(".epub") for n in os.listdir(folder)):
+        try:
+            os.remove(yaml_path)
+        except OSError:
+            pass
+    try:
+        os.rmdir(folder)   # 비었을 때만 지워진다
+    except OSError:
+        pass
+    _handoff(path, action="delete")
+    return True
 
 
 # ── 받은 목록 ──
@@ -217,7 +249,7 @@ def _public_history():
     for h in load_history():
         item = {k: h.get(k) for k in ("id", "key", "kind", "title", "author", "url", "chapters", "images",
                                       "restricted", "skipped", "at", "size", "status", "file_name", "scan",
-                                      "checked_at", "check_error")}
+                                      "checked_at", "check_error", "yaml")}
         item["auto"] = h.get("kind") == "book" and h.get("auto", True) is not False
         item["watched"] = watched(h)
         item["exists"] = bool(h.get("file")) and os.path.isfile(h["file"])
@@ -250,6 +282,10 @@ def start(stop_event=None):
 
 def _loop(stop_event):
     started = time.time()
+    try:
+        migrate_layout()
+    except Exception as e:  # noqa: BLE001
+        log.warning("브런치 책 폴더 옮기기 실패: %s", e)
     while not (stop_event and stop_event.is_set()):
         job = None
         with _LOCK:
@@ -333,7 +369,7 @@ def _run(job):
         eps = [{"num": "", "title": "", "user_id": uid, "article_no": int(no)}]
         meta, cover_url = None, ""
     job["total"] = len(eps)
-    chapters, skipped, restricted = [], [], 0
+    chapters, skipped, restricted, first_pub = [], [], 0, 0
     for ep in eps:
         try:
             art = c.article(ep["user_id"], ep["article_no"])
@@ -346,6 +382,8 @@ def _run(job):
             cover_url = art["cover"]
             job["title"] = art["title"]
         restricted += art["restricted"]
+        if art.get("publish_time") and (not first_pub or art["publish_time"] < first_pub):
+            first_pub = art["publish_time"]
         chapters.append({"num": ep.get("num") or "", "title": art["title"] or ep.get("title") or "",
                          "subtitle": art["subtitle"], "url": art["url"], "restricted": art["restricted"],
                          "body": fetch.sanitize(art["html"], on_img)})
@@ -361,14 +399,27 @@ def _run(job):
     local = os.path.join(work, job["id"] + ".epub")
     ident = "brunch:" + job["key"]
     epub.build(local, meta, chapters, images, cover=cover, identifier=ident)
+    yaml_ok = False
+    if settings["kavita_yaml"]:   # 책 폴더에 메타데이터 먼저 (EPUB이 들어오며 스캔될 때 같이 읽히게)
+        try:
+            os.makedirs(os.path.dirname(final), exist_ok=True)
+            data = kavita.build_data(job["key"], dict(meta, cover_url=cover_url), os.path.basename(final),
+                                     kavita.word_count(chapters), kavita.shrink_cover(cover[0]) if cover else "", first_pub)
+            yaml_ok = bool(kavita.write(os.path.dirname(final), data))
+        except Exception as e:  # noqa: BLE001 - 메타데이터는 덤, EPUB 받기를 막지 않는다
+            log.warning("브런치 kavita.yaml을 만들지 못했습니다 (%s): %s", meta["title"], e)
     _move(local, final)
     size = os.path.getsize(final)
+    old = _entry_by_key(job["key"])
+    if old and old.get("file"):   # 예전 위치(예전 작가 폴더·바뀐 제목)에 받은 파일은 치운다
+        _remove_book_file(old["file"], keep=final)
     scan = _handoff(final)
     entry = {"id": uuid.uuid4().hex[:12], "key": job["key"], "kind": job["kind"], "title": meta["title"], "author": meta["author"],
              "url": meta["url"], "chapters": len(chapters), "images": len(images), "restricted": restricted,
              "skipped": skipped, "status": meta.get("status") or "", "file": final, "file_name": os.path.basename(final),
              "size": size, "scan": scan, "at": _now(), "checked_at": _now(),
-             "episode_ids": [int(e["article_no"]) for e in eps], "auto": job["kind"] == "book"}
+             "episode_ids": [int(e["article_no"]) for e in eps], "auto": job["kind"] == "book",
+             "yaml": yaml_ok, "layout": LAYOUT}
     _remember(entry)
     job["history_id"] = entry["id"]
     job["note"] = "%d화 · 그림 %d장 · %.1fMB%s" % (len(chapters), len(images), size / 1048576,
@@ -387,13 +438,13 @@ def _move(src, dst):
         os.remove(src)
 
 
-def _handoff(path):
+def _handoff(path, action="create"):
     """보관함 안에 저장했으면 드라이브 변경 감시에 바로 넘겨 BookOasis가 스캔하게 (웹툰 다운로더와 같은 길)"""
     if not config.env_bool("GDW_ENABLED", os.name != "nt"):
         return False
     try:
         from gdw import handoff
-        return bool(handoff.enqueue(path, source="브런치"))
+        return bool(handoff.enqueue(path, source="브런치", action=action))
     except Exception:  # noqa: BLE001
         return False
 
@@ -407,6 +458,31 @@ def _state():
             "jobs": _public_jobs(), "history": _public_history(), "check_hours": list(CHECK_HOURS),
             "check": {"last": last, "next": (last + s["check_hours"] * 3600) if (s["auto_check"] and last) else 0,
                       "found": chk.get("found", 0), "error": chk.get("error", ""), "running": _STATE["checking"]}}
+
+
+def _entry_by_key(key):
+    return next((h for h in load_history() if h.get("key") == key), None)
+
+
+def migrate_layout():
+    """2.55.0까지 작가 폴더에 바로 받은 책(kavita.yaml을 둘 수 없는 위치)을 한 번 다시 받아 책 폴더로 옮긴다.
+    새로 받으면 kavita.yaml이 생기고 예전 파일은 지운다. 반환: 대기열에 넣은 수"""
+    if not load_settings()["kavita_yaml"]:
+        return 0
+    n = 0
+    for h in load_history():
+        if int(h.get("layout") or 1) >= LAYOUT or not h.get("file") or not os.path.isfile(h["file"]):
+            continue
+        kind, _, rest = h["key"].partition(":")
+        if kind == "book":
+            enqueue("book", rest, h.get("title") or "")
+        else:
+            uid, _, no = rest.partition("/")
+            enqueue("article", (uid, int(no)), h.get("title") or "")
+        n += 1
+    if n:
+        log.info("브런치: 예전에 받은 책 %d권을 책 폴더로 옮기며 kavita.yaml을 만듭니다 (다시 받기)", n)
+    return n
 
 
 def _entry(hid):
@@ -492,8 +568,8 @@ def api_post(path, body):
             h = _entry(str(body.get("id") or ""))
             if not h:
                 raise ApiError(404, "받은 목록에 없습니다.")
-            if body.get("remove_file") and h.get("file") and os.path.isfile(h["file"]):
-                os.remove(h["file"])
+            if body.get("remove_file") and h.get("file"):
+                _remove_book_file(h["file"])   # 책 폴더의 kavita.yaml도 같이
             with _LOCK:
                 _write_json(_history_path(), [x for x in load_history() if x.get("id") != h["id"]])
             return _state()

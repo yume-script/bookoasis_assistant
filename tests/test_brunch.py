@@ -154,12 +154,12 @@ class ServiceTest(unittest.TestCase):
         s = self.s
         with self.assertRaises(ValueError):
             s.clean_settings({"save_dir": "relative/dir"})
-        self.assertEqual(s.clean_settings({"save_dir": "/a/b/../c", "by_author": False}), {"save_dir": "/a/c", "by_author": False, "auto_check": True, "check_hours": 6})
+        self.assertEqual(s.clean_settings({"save_dir": "/a/b/../c", "by_author": False}), {"save_dir": "/a/c", "by_author": False, "auto_check": True, "check_hours": 6, "kavita_yaml": True})
         self.assertEqual(s.safe_name('a/b:c*?"d.'), "a b c d")
         self.assertEqual(s.safe_name("..."), "브런치")
         p = s.target_path({"save_dir": "/books", "by_author": True}, "작가/이름", "책 제목")
-        self.assertEqual(p, "/books/작가 이름/책 제목.epub")
-        self.assertEqual(s.target_path({"save_dir": "/books", "by_author": False}, "작가", "책"), "/books/책.epub")
+        self.assertEqual(p, "/books/작가 이름/책 제목/책 제목.epub")          # 책마다 폴더 하나 (kavita.yaml)
+        self.assertEqual(s.target_path({"save_dir": "/books", "by_author": False}, "작가", "책"), "/books/책/책.epub")
 
     def test_run_book(self):
         """받기 흐름 (브런치 대신 예시 페이지를 돌려주는 가짜 Client)"""
@@ -184,8 +184,17 @@ class ServiceTest(unittest.TestCase):
             job = {"id": "t1", "key": "book:example1", "kind": "book", "target": "example1", "title": "", "state": "running",
                    "done": 0, "total": 0, "error": "", "note": ""}
             s._run(job)
-            out = os.path.join(save, "예시 작가", "예시 & 책.epub")
+            out = os.path.join(save, "예시 작가", "예시 & 책", "예시 & 책.epub")
             self.assertTrue(os.path.isfile(out))
+            # 책 폴더의 kavita.yaml (웹툰 다운로더와 같은 형식)
+            yml = open(os.path.join(save, "예시 작가", "예시 & 책", "kavita.yaml"), encoding="utf-8").read()
+            for want in ('code: "BRBexample1"', 'Name: "예시 & 책"', 'Person Writers: "예시 작가"', 'Person Publisher: "브런치"',
+                         'Summary: "예시 소개입니다."', 'Publication Status: "0"', 'Web Links: "https://brunch.co.kr/brunchbook/example1"',
+                         '"예시 & 책.epub":', "page: 1"):
+                self.assertIn(want, yml)
+            self.assertNotIn('cover: "FIRST"', yml)      # 표지가 들어감
+            self.assertTrue(s.load_history()[0]["yaml"])
+            mtime = os.path.getmtime(os.path.join(save, "예시 작가", "예시 & 책", "kavita.yaml"))
             h = s.load_history()[0]
             self.assertEqual((h["chapters"], h["images"], h["key"]), (1, 1, "book:example1"))
             self.assertEqual(len(h["skipped"]), 1)          # 삭제된 글은 빠지고 나머지로 만든다
@@ -193,6 +202,7 @@ class ServiceTest(unittest.TestCase):
             # 같은 책을 다시 받으면 받은 목록에 한 줄만 남는다
             s._run(dict(job, id="t2"))
             self.assertEqual(len([x for x in s.load_history() if x["key"] == "book:example1"]), 1)
+            self.assertEqual(os.path.getmtime(os.path.join(save, "예시 작가", "예시 & 책", "kavita.yaml")), mtime)   # 같으면 다시 안 씀
             got = s.api_get("/api/brunch/file", {"id": s.load_history()[0]["id"]})
             self.assertEqual(got[1], "application/epub+zip")
             with self.assertRaises(s.ApiError):
@@ -290,6 +300,69 @@ class AutoCheckTest(unittest.TestCase):
         self.assertFalse(s._has_new(h, book))
         self.assertTrue(s._has_new({"chapters": 1, "skipped": []}, book))
         self.assertTrue(s._has_new({"episode_ids": [10]}, book))
+
+
+@unittest.skipUnless(HAVE_REQUESTS, "requests 없음")
+class KavitaTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        from brunch import kavita, service
+        cls.k, cls.s = kavita, service
+
+    def test_build_data(self):
+        k = self.k
+        d = k.build_data("article:abc/7", {"title": "글", "author": "작가", "description": "부제", "url": "u", "status": "COMPLETE"},
+                         "글.epub", 120, "", 1794700000000)
+        self.assertEqual(d["action"]["code"], "BRAabc_7")
+        self.assertEqual(d["meta"]["Publication Status"], "2")
+        self.assertEqual(d["files"]["글.epub"], {"cover": "FIRST", "page": 1, "wordcount": 120})
+        self.assertEqual(len(d["meta"]["Release Date"]), 8)
+        self.assertEqual(k.word_count([{"body": "<p>하나 둘</p><p>셋</p>"}, {"body": ""}]), 3)
+        text = k.dump_yaml(d)
+        self.assertTrue(text.startswith("action:\n    all_file_is_special: false\n"))
+
+    def test_migrate_old_layout(self):
+        """2.55.0까지 작가 폴더에 바로 받은 책은 다시 받아 책 폴더로 옮기고 예전 파일을 지운다"""
+        s = self.s
+        save = os.path.join(TMP, "books3")
+        old = os.path.join(save, "예시 작가", "예시 & 책.epub")
+        os.makedirs(os.path.dirname(old), exist_ok=True)
+        open(old, "wb").close()
+        s._write_json(s._settings_path(), {"save_dir": save})
+        s._write_json(s._history_path(), [{"id": "o1", "key": "book:example1", "kind": "book", "title": "예시 & 책", "file": old}])
+        with s._LOCK:
+            s._JOBS.clear()
+        s._STATE["thread"] = threading.Thread()
+        s._STATE["thread"].is_alive = lambda: True   # 대기열 스레드를 띄우지 않게
+        from brunch import fetch as f
+
+        class FakeClient:
+            def book(self, address):
+                return f.parse_book(BOOK_PAGE, address)
+
+            def article(self, uid, no):
+                return f.parse_article(ARTICLE_PAGE % "false", f.article_url(uid, no))
+
+            def get_image(self, url):
+                return None
+        s._STATE["client"] = FakeClient()
+        try:
+            self.assertEqual(s.migrate_layout(), 1)
+            job = s._JOBS[0]
+            s._run(job)
+            self.assertFalse(os.path.exists(old))
+            new = os.path.join(save, "예시 작가", "예시 & 책", "예시 & 책.epub")
+            self.assertTrue(os.path.isfile(new) and os.path.isfile(os.path.join(os.path.dirname(new), "kavita.yaml")))
+            self.assertEqual(s.load_history()[0]["layout"], s.LAYOUT)
+            with s._LOCK:
+                s._JOBS.clear()
+            self.assertEqual(s.migrate_layout(), 0)       # 한 번만
+            # 목록에서 빼며 파일도 지우면 kavita.yaml과 빈 책 폴더도 치운다
+            s.api_post("/api/brunch/forget", {"id": s.load_history()[0]["id"], "remove_file": True})
+            self.assertFalse(os.path.exists(os.path.dirname(new)))
+        finally:
+            s._STATE["client"] = None
+            s._STATE["thread"] = None
 
 
 def tearDownModule():

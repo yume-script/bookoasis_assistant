@@ -236,7 +236,8 @@ Plex 라이브러리나 rclone 드라이브 폴더에 **새로 들어온 동영�
 
 **먼저 설정 탭에서 저장 폴더를 정하세요.** BookOasis 보관함 안의 폴더(예: `/mnt/books/브런치`)로 두면 받은 뒤 바로 BookOasis 스캔이 걸립니다.
 비워 두면 `.env`의 `BRUNCH_DOWNLOAD_ROOT`, 그것도 없으면 데이터 폴더(`data/brunch/files`)에 저장합니다.
-기본은 `<저장 폴더>/<작가>/<브런치북 제목>.epub`입니다.
+기본은 `<저장 폴더>/<작가>/<브런치북 제목>/<브런치북 제목>.epub`이고, 같은 폴더에 웹툰처럼 **kavita.yaml**(BookOasis 메타데이터:
+제목·작가·소개·연재 상태·첫 회 발행일·원문 주소·표지)을 같이 만듭니다. 끄려면 설정의 **kavita.yaml 만들기**를 끄세요.
 
 ![설정](images/26-brunch-settings.png)
 

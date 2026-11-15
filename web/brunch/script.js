@@ -261,7 +261,7 @@
             }));
             const sub = [x.author, `${x.chapters}화`, x.images ? `그림 ${x.images}장` : '', fmtSize(x.size), x.at,
                 x.restricted ? `멤버십 글 ${x.restricted}개는 앞부분만` : '', (x.skipped || []).length ? `빠진 글 ${x.skipped.length}개` : '',
-                x.scan ? 'BookOasis 스캔 요청함' : ''].filter(Boolean).join(' · ');
+                x.yaml ? 'kavita.yaml' : '', x.scan ? 'BookOasis 스캔 요청함' : ''].filter(Boolean).join(' · ');
             list.appendChild(h('div', { class: 'br-row' },
                 h('div', { class: 'br-row-main' },
                     h('span', { class: 'br-row-title', text: x.title }),
@@ -303,12 +303,13 @@
         const dirIn = h('input', { class: 'input', value: s.save_dir, placeholder: state.env_root || '비우면 기본 위치' });
         const byAuthor = h('input', { type: 'checkbox', checked: s.by_author });
         const autoIn = h('input', { type: 'checkbox', checked: s.auto_check });
+        const yamlIn = h('input', { type: 'checkbox', checked: s.kavita_yaml !== false });
         const hoursSel = h('select', { class: 'select', style: 'width:auto' },
             (state.check_hours || [1, 2, 3, 6, 12, 24]).map((n) => h('option', { value: String(n), text: `${n}시간마다`, selected: n === s.check_hours })));
         const save = h('button', { class: 'btn btn-accent', type: 'button' }, icon('floppy-disk'), ' 저장');
         save.addEventListener('click', () => busy(save, async () => {
             state = await post('api/brunch/settings', { save_dir: dirIn.value.trim(), by_author: byAuthor.checked,
-                auto_check: autoIn.checked, check_hours: Number(hoursSel.value) });
+                auto_check: autoIn.checked, check_hours: Number(hoursSel.value), kavita_yaml: yamlIn.checked });
             toast('저장했습니다.', 'success');
             renderSettings(pane);
         }));
@@ -317,7 +318,10 @@
                 h('span', { class: 'field-hint', text: `지금 저장하는 곳: ${state.root}` }),
                 h('span', { class: 'field-hint', text: 'BookOasis 보관함 안의 폴더(예: /mnt/books/브런치)로 두면 받은 뒤 드라이브 변경 감시가 바로 BookOasis 스캔을 요청합니다. '
                     + '비우면 .env의 BRUNCH_DOWNLOAD_ROOT, 그것도 없으면 데이터 폴더(DATA_DIR/brunch/files)에 둡니다.' })),
-            h('label', { class: 'check' }, byAuthor, ' 작가 이름으로 폴더 나누기 (<저장 폴더>/<작가>/<브런치북 제목>.epub)'),
+            h('label', { class: 'check' }, byAuthor, ' 작가 이름으로 폴더 나누기 (<저장 폴더>/<작가>/<브런치북 제목>/<브런치북 제목>.epub)'),
+            h('div', { class: 'field' }, h('label', { class: 'check' }, yamlIn, ' kavita.yaml 만들기 (BookOasis 메타데이터)'),
+                h('span', { class: 'field-hint', text: '웹툰 다운로더처럼 책 폴더에 kavita.yaml을 같이 둡니다: 제목·작가·소개·연재 상태·첫 회 발행일·원문 주소·표지(출판사 "브런치"). '
+                    + '책마다 폴더 하나에 받습니다. 예전에 작가 폴더에 바로 받은 책은 프로그램을 다시 켤 때 한 번 다시 받아 책 폴더로 옮깁니다.' })),
             h('div', { class: 'field' }, h('span', { class: 'field-label', text: '새 글 자동 받기' }),
                 h('div', { class: 'toolbar' }, h('label', { class: 'check' }, autoIn, ' 받은 연재 중 브런치북에 새 글이 오르면 자동으로 받기'), hoursSel),
                 h('span', { class: 'field-hint', text: '정한 간격마다 받은 목록의 연재 중인 브런치북을 확인해, 발행된 회차가 늘었으면 새 회차까지 담아 다시 받아 덮어씁니다 '
