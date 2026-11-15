@@ -44,6 +44,8 @@
     'cloud-arrow-up': '<path d="M4 14.9A7 7 0 1 1 15.7 8h1.8a4.5 4.5 0 0 1 2.5 8.2"/><path d="M12 12v9"/><path d="m16 16-4-4-4 4"/>',
     'paper-plane': '<path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/>',
     'chevron-up': '<path d="m18 15-6-6-6 6"/>',
+    'book-down': '<path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"/><path d="M12 7v7"/><path d="m9 11 3 3 3-3"/>',
+    'link': '<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>',
     'palette': '<circle cx="13.5" cy="6.5" r="1.2" fill="currentColor"/><circle cx="17.5" cy="10.5" r="1.2" fill="currentColor"/><circle cx="8.5" cy="7.5" r="1.2" fill="currentColor"/><circle cx="6.5" cy="12.5" r="1.2" fill="currentColor"/><path d="M12 2a10 10 0 0 0 0 20 2 2 0 0 0 2-2c0-.5-.2-1-.5-1.3-.3-.4-.5-.8-.5-1.3a2 2 0 0 1 2-2h2.4A5.6 5.6 0 0 0 22 9.8C22 5.5 17.5 2 12 2z"/>'
   };
   var MENU = [
@@ -75,6 +77,14 @@
         { tab: 'status', label: '진행 상태', icon: 'list-check' },
         { tab: 'rules', label: '규칙', icon: 'sliders' },
         { tab: 'account', label: '텔레그램 계정', icon: 'paper-plane' }
+      ] },
+    // 브런치 EPUB 받기 (brunch.co.kr 브런치북·글 -> EPUB)
+    { id: 'brunch', title: '브런치 EPUB', icon: 'book-down', href: 'brunch', tabsSel: '.brunch-tabs',
+      items: [
+        { tab: 'browse', label: '연재 목록', icon: 'table-cells' },
+        { tab: 'url', label: '주소로 받기', icon: 'link' },
+        { tab: 'history', label: '받은 목록', icon: 'clock-rotate-left' },
+        { tab: 'settings', label: '설정', icon: 'gear' }
       ] },
     // 미니게임: 게임 목록은 서버(/api/modules의 games)에서 받아 채운다. 탭 막대 대신 주소의 #게임id로 고른다
     { id: 'mini', title: '미니게임', icon: 'gamepad', href: 'games', hashNav: true, items: [] },
@@ -286,7 +296,7 @@
       'MCP': mcpPane,
       '정보': function () {
         var list = h('div', { class: 'about-list' });
-        var names = { wtm: '웹툰 다운로더', gdw: '드라이브 변경 감시', tgup: '텔레그램 자동 올리기', mini: '미니게임' };
+        var names = { wtm: '웹툰 다운로더', gdw: '드라이브 변경 감시', tgup: '텔레그램 자동 올리기', brunch: '브런치 EPUB', mini: '미니게임' };
         Object.keys(names).forEach(function (k) {
           list.appendChild(h('div', { class: 'about-row' }, [h('span', { text: names[k] }),
             h('b', { text: (info.versions && info.versions[k] ? 'v' + info.versions[k] : '-') +

@@ -35,9 +35,10 @@ STATIC = {"/watch": "index.html", "/style.css": "style.css", "/script.js": "scri
           "/theme.css": "theme.css", "/shell.js": "shell.js", "/webtoon": "webtoon/index.html", "/webtoon/": "webtoon/index.html",
           "/webtoon/style.css": "webtoon/style.css", "/webtoon/script.js": "webtoon/script.js",
           "/login": "login.html", "/login.js": "login.js",
-          "/tgup": "tgup/index.html", "/tgup/style.css": "tgup/style.css", "/tgup/script.js": "tgup/script.js"}
+          "/tgup": "tgup/index.html", "/tgup/style.css": "tgup/style.css", "/tgup/script.js": "tgup/script.js",
+          "/brunch": "brunch/index.html", "/brunch/style.css": "brunch/style.css", "/brunch/script.js": "brunch/script.js"}
 PUBLIC = {"/login", "/login.js", "/theme.css", "/shell.js", "/healthz", "/api/auth/state", "/api/auth/login", "/api/auth/setup"}
-PAGES = {"/", "/index.html", "/watch", "/webtoon", "/webtoon/", "/games", "/games/", "/library3d", "/tgup"}  # 로그인 안 했으면 로그인 화면으로 보낼 주소
+PAGES = {"/", "/index.html", "/watch", "/webtoon", "/webtoon/", "/games", "/games/", "/library3d", "/tgup", "/brunch"}  # 로그인 안 했으면 로그인 화면으로 보낼 주소
 OFF_PAGE = """<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{title}</title><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
 <link rel="stylesheet" href="theme.css"></head><body data-module=""><main class="gdw-page"><div class="app-off"><h2>{title}: 꺼져 있음</h2>
@@ -90,7 +91,7 @@ def module_versions():
     """모듈별 버전 (왼쪽 위 아이콘 배지: 지금 보는 화면의 모듈 버전)."""
     out = {"gdw": service._plugin_version()}
     for key, path, field in (("wtm", ("wtm", "VERSION"), "plugin version"), ("mini", ("mini", "VERSION"), "plugin version"),
-                             ("tgup", ("tgup", "VERSION"), "plugin version")):
+                             ("tgup", ("tgup", "VERSION"), "plugin version"), ("brunch", ("brunch", "VERSION"), "plugin version")):
         try:
             with open(os.path.join(config.ROOT, *path), encoding="utf-8") as f:
                 out[key] = str(json.load(f).get(field) or "")
@@ -183,6 +184,8 @@ def modules():
             "gdwplx": gdw and config.plex_enabled(), "mini": config.env_bool("MINI_ENABLED", True),
             # 텔레그램 자동 올리기 (Plex·rclone 드라이브 -> 텔레그램 채널, YMPlayer와 같은 기능). 기본 켬 - 규칙이 없으면 아무것도 안 함
             "tgup": config.env_bool("TGUP_ENABLED", True),
+            # 브런치 EPUB 받기 (brunch.co.kr 브런치북·글 -> EPUB, 보관함에 넣으면 바로 스캔). 기본 켬 - 받기를 누를 때만 일함
+            "brunch": config.env_bool("BRUNCH_ENABLED", True),
             "lib3d": bool(lib3d_url())}
 
 
@@ -305,6 +308,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(500, {"success": False, "error": str(e)})
         if path.startswith("/api/tgup"):
             return self._tgup("GET", path, None, mods)
+        if path.startswith("/api/brunch"):
+            return self._brunch("GET", path, None, mods)
+        if path == "/brunch" and not mods["brunch"]:
+            return self._send(200, OFF_PAGE.format(title="브런치 EPUB 받기", note=".env에 <code>BRUNCH_ENABLED=true</code>를 넣고 다시 시작하세요.").encode(), "text/html; charset=utf-8")
         if path == "/tgup" and not mods["tgup"]:
             return self._send(200, OFF_PAGE.format(title="텔레그램 자동 올리기", note=".env에 <code>TGUP_ENABLED=true</code>를 넣고 다시 시작하세요.").encode(), "text/html; charset=utf-8")
         if path == "/library3d":   # 예전 주소·북마크: 따로 설치한 3D 서재로
@@ -359,6 +366,31 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(500, {"success": False, "error": str(e)})
         if isinstance(res, tuple):   # (bytes, content-type) - 장면 그림
             return self._send(200, res[0], res[1], extra={"Cache-Control": "private, max-age=300"})
+        return self._send(200, res)
+
+    def _brunch(self, method, path, body, mods):
+        """브런치 EPUB 받기 API (brunch/service.py)"""
+        if not mods.get("brunch"):
+            return self._send(404, {"success": False, "error": "브런치 EPUB 받기가 꺼져 있습니다 (BRUNCH_ENABLED)."})
+        from urllib.parse import parse_qs, quote
+        from brunch import service as brunch_service
+        try:
+            if method == "GET":
+                query = {k: v[0] for k, v in parse_qs(self.path.partition("?")[2]).items()}
+                res = brunch_service.api_get(path, query)
+            else:
+                res = brunch_service.api_post(path, body)
+        except brunch_service.ApiError as e:
+            return self._send(e.status, {"success": False, "error": str(e)})
+        except Exception as e:  # noqa: BLE001
+            log.exception("브런치 요청 실패: %s", path)
+            return self._send(500, {"success": False, "error": str(e)})
+        if isinstance(res, tuple):   # (bytes, content-type, 파일 이름) - EPUB 내려받기
+            name = res[2]
+            stem, ext = os.path.splitext(name)
+            ascii_name = (re.sub(r"[^A-Za-z0-9._-]+", "_", stem).strip("_.") or "brunch") + ext   # 옛 브라우저용 (한글은 filename*)
+            return self._send(200, res[0], res[1], extra={
+                "Content-Disposition": "attachment; filename=\"%s\"; filename*=UTF-8''%s" % (ascii_name, quote(name))})
         return self._send(200, res)
 
     def _games(self, path, mods):
@@ -420,7 +452,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._deny(path)
         if user and not auth.is_admin(user) and path not in VIEWER_POST:
             return self._send(403, {"success": False, "error": "관람자 계정은 할 수 없는 일입니다."})
-        if not path.startswith(("/api/rpc/", "/api/auth/", "/api/users", "/api/tgup/")) and path not in ("/api/wtm/action", "/api/ui-prefs", "/api/mcp"):
+        if not path.startswith(("/api/rpc/", "/api/auth/", "/api/users", "/api/tgup/", "/api/brunch/")) and path not in ("/api/wtm/action", "/api/ui-prefs", "/api/mcp"):
             return self._send(404, {"success": False, "error": "없는 주소입니다."})
         if (self.headers.get("Content-Type") or "").split(";")[0].strip().lower() != "application/json":
             return self._send(415, {"success": False, "error": "Content-Type은 application/json이어야 합니다."})
@@ -440,6 +472,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._auth_post(path, context, user)
         if path.startswith("/api/tgup/"):
             return self._tgup("POST", path, context, modules())
+        if path.startswith("/api/brunch/"):
+            return self._brunch("POST", path, context, modules())
         if path == "/api/mcp":  # 설정 > MCP: 토큰 만들기 / 끄기
             if config.overridden(["MCP_TOKEN"]):
                 return self._send(400, {"success": False, "error": "MCP_TOKEN이 실제 환경변수로 지정돼 있어 화면에서 바꿀 수 없습니다."})

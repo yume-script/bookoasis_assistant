@@ -8,6 +8,7 @@ BookOasis 플러그인으로 쓰던 세 가지를 **BookOasis 밖에서 따로 �
 | **웹툰 다운로더** | [webtoon_manager](https://github.com/yume-script/webtoon_manager) v1.39.3 | 네이버웹툰·카카오웹툰·카카오웹소설 구독/다운로드, kavita.yaml 등 | `WTM_ENABLED=true` (기본 · 첫 화면) |
 | **드라이브 변경 감시** | [gdrive_watch](https://github.com/yume-script/gdrive_watch) v1.18.8 | Google Drive·로컬 폴더 변경 감지 → rclone VFS 새로고침 → 바뀐 폴더만 BookOasis 부분 스캔 | `GDW_ENABLED=true` (기본, rclone 마운트를 쓸 때) · **리눅스 전용 - 윈도우에서는 사용 불가** |
 | **텔레그램 자동 올리기** | [YMPlayer](https://github.com/yume-script/ym_player)의 설정 > 자동 올리기 | Plex 라이브러리·rclone 드라이브에 새로 들어온 동영상 → 내 텔레그램 계정으로 채널에 (텔레그램에서 바로 재생되는 mp4, 큰 파일은 나눠서) | `TGUP_ENABLED=true` (기본, 규칙이 없으면 아무것도 안 함) |
+| **브런치 EPUB 받기** | [YMPlayer](https://github.com/yume-script/ym_player)의 브런치 소스 | [브런치](https://brunch.co.kr) 브런치북을 EPUB 한 권으로 (회차 = 장, 목차·표지·본문 그림) → 저장 폴더가 보관함 안이면 바로 BookOasis 스캔 | `BRUNCH_ENABLED=true` (기본, 받기를 누를 때만 일함) |
 | **미니게임** | [ym_mini_game](https://github.com/yume-script/ym_mini_game) v2.0.2 | 테트리스·지뢰찾기·오목·홀덤 등 12종 (브라우저에서만 돔, 서버 부하 없음) | `MINI_ENABLED=true` (기본) |
 
 감지·다운로드 로직과 화면은 플러그인과 같고, 플러그인이라서 생기던 제약만 걷어냈습니다.
@@ -401,6 +402,24 @@ venv\Scripts\python app.py
   (도커는 이미지를 다시 만들면 됩니다: `git pull && docker compose up -d --build`)
 - YMPlayer에서 같은 계정·채널로 이미 자동 올리기를 쓰고 있다면 한쪽에서만 켜세요(올린 기록을 따로 가지므로 둘 다 켜면 두 번 올라갑니다).
 
+## 브런치 EPUB 받기
+`/brunch` (사이드바 **브런치 EPUB**). [브런치](https://brunch.co.kr)의 브런치북을 EPUB 한 권으로 받습니다. 로그인은 필요 없습니다.
+
+- **연재 목록**: 요일별(월~일)·완결 브런치북 오리지널 연재. [EPUB 받기]는 그 글이 든 브런치북 전체를 받습니다.
+- **주소로 받기**: 브런치북 주소(`https://brunch.co.kr/brunchbook/…`)는 그 책 전체를, 글 주소(`https://brunch.co.kr/@@…/번호`, `/@필명/번호`)는
+  그 글이 든 브런치북 전체 또는 그 글 하나를 받습니다.
+- **만드는 모양**: 브런치북 하나 = EPUB 한 권. 발행된 회차가 차례대로 장이 되고, 목차(EPUB 3 nav + 옛 리더용 toc.ncx)·표지·책 정보(소개·원문 주소)·
+  본문 그림(카카오 CDN의 가로 1280px JPEG)이 들어갑니다. 발행 예정 회차는 빠지고, 지워진 글은 건너뛰고 나머지로 만듭니다(받은 목록에 "빠진 글"로 표시).
+- **멤버십(유료) 글**은 브런치 페이지에 공개된 앞부분만 담고 원문 링크를 붙입니다(유료 부분을 우회하지 않습니다).
+- **저장 위치**: 화면의 설정 > 저장 폴더 → 비우면 `.env`의 `BRUNCH_DOWNLOAD_ROOT` → 그것도 없으면 `DATA_DIR/brunch/files`.
+  기본은 `<저장 폴더>/<작가>/<브런치북 제목>.epub`(설정에서 작가 폴더를 끌 수 있음). 저장 폴더가 BookOasis 보관함 안이면
+  웹툰처럼 드라이브 변경 감시가 바로 VFS 새로고침 → BookOasis 부분 스캔을 합니다.
+- **받은 목록**: [내려받기](브라우저로 EPUB 받기), [다시 받기](연재 중인 책의 새 회차까지 담아 덮어쓰기), 목록에서 빼기(파일도 지울지 묻습니다).
+- 받기는 한 번에 한 권씩 차례로 하고, 브런치에 너무 빨리 묻지 않게 글 사이를 띄웁니다(11화·그림 37장 책이 1분 남짓).
+  설정·기록은 `DATA_DIR/brunch/`(settings.json, history.json). 끄려면 `BRUNCH_ENABLED=false`.
+- 브런치 화면용(비공식) 페이지·API를 읽으므로 브런치가 바뀌면 깨질 수 있습니다 - 그때는 `brunch/fetch.py`의 `parse_*`만 고치면 됩니다.
+  받은 EPUB은 개인 소장용으로만 쓰세요(글의 저작권은 작가에게 있습니다).
+
 ## 미니게임
 `/games` (사이드바 **미니게임**). 게임 12종이 사이드바 서브 메뉴로 나오고, 주소의 `#게임id`(예: `/games#tetris`)로 바로 열 수 있습니다.
 - 게임은 `mini/games/<id>/`(manifest.json · template.html · style.css · game.js) 그대로이고, 서버가 읽어서 화면 하나로 묶어 줍니다.
@@ -420,7 +439,8 @@ venv\Scripts\python app.py
   마우스를 올리거나 [설정 > 정보]에서 최신 버전을 볼 수 있습니다. 6시간마다 GitHub의 `VERSION`을 확인하며,
   `.env`에 `UPDATE_CHECK_URL=`(빈 값)을 넣으면 확인하지 않습니다.
 
-- `GET /` 드라이브 변경 감시 (현황, 변경 기록, 감시 설정, 스캔 일정, 로그) · `GET /webtoon` 웹툰 다운로더 · `GET /games` 미니게임 · `GET /tgup` 텔레그램 자동 올리기
+- `GET /` 드라이브 변경 감시 (현황, 변경 기록, 감시 설정, 스캔 일정, 로그) · `GET /webtoon` 웹툰 다운로더 · `GET /games` 미니게임 · `GET /tgup` 텔레그램 자동 올리기 · `GET /brunch` 브런치 EPUB 받기
+- `GET /api/brunch`(설정·받기 진행·받은 목록) · `GET /api/brunch/list|resolve|book|file` · `POST /api/brunch/download|redownload|forget|settings|clear-jobs` 브런치 EPUB 받기 (`brunch/service.py`)
 - `GET /api/tgup`(설정·진행 상태·계정) · `GET /api/tgup/options|channels|folders|shot` · `POST /api/tgup/settings|check|test|item|account` 텔레그램 자동 올리기 (`tgup/service.py`)
 - `POST /api/rpc/<동작>` 드라이브 변경 감시 RPC, `GET /api/wtm/data`·`POST /api/wtm/action` 웹툰 다운로더.
   `Content-Type: application/json`만 받습니다(다른 사이트 폼 전송 차단).
@@ -453,9 +473,10 @@ venv\Scripts\python app.py
 | `worker.py` | 드라이브 변경 감시 워커: 변경 감지, VFS 새로고침, 스캔 요청 (플러그인과 같은 코드) |
 | `tgup/` | 텔레그램 자동 올리기 (`plex_to_tg.py`·`folder_watch.py` YMPlayer 코드 그대로 + `compat.py`·`tgaccount.py`: 설정·텔레그램 계정, `service.py`: asyncio 루프·화면 API) |
 | `tools/sync_tgup_from_ymp.py` | YMPlayer의 자동 올리기 코드를 `tgup/`로 다시 가져오기 |
+| `brunch/` | 브런치 EPUB 받기 (`fetch.py`: 목록·브런치북 목차·글 읽기, `epub.py`: EPUB 만들기, `service.py`: 받기 대기열·받은 목록·화면 API) |
 | `mini/` | 미니게임 (`games/` 게임 폴더 그대로 + `bundle.py`: /games 화면 만들기) |
 | `wtm/` | 웹툰 다운로더 (플러그인 코드 그대로 + `host.py`: 설정·DB·데이터 폴더, `service.py`: 화면 연결) |
-| `web/` | 관리 화면 (`theme.css` 공용, `index.html`·`style.css`·`script.js` 드라이브 감시, `webtoon/` 웹툰, `tgup/` 텔레그램 자동 올리기) |
+| `web/` | 관리 화면 (`theme.css` 공용, `index.html`·`style.css`·`script.js` 드라이브 감시, `webtoon/` 웹툰, `tgup/` 텔레그램 자동 올리기, `brunch/` 브런치 EPUB 받기) |
 | `docs/webtoon_manager_CHANGELOG.md` | 웹툰 다운로더 플러그인 시절 변경 기록 |
 | `deploy/`, `Dockerfile`, `docker-compose.example.yml` | 배포 예시 |
 

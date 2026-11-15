@@ -1,0 +1,210 @@
+# -*- coding: utf-8 -*-
+"""브런치 EPUB 받기 (brunch) - python3 -m unittest discover -s tests
+
+브런치에는 붙지 않는다 (예시 HTML로 목차·본문 읽기, EPUB 만들기, 받기 흐름을 확인).
+"""
+import os
+import shutil
+import sys
+import tempfile
+import unittest
+import zipfile
+from xml.dom import minidom
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, ROOT)
+TMP = tempfile.mkdtemp(prefix="brunch-test-")
+os.environ.setdefault("GDW_ENV_FILE", os.path.join(TMP, ".env"))
+os.environ.setdefault("DATA_DIR", os.path.join(TMP, "data"))
+
+try:
+    import requests  # noqa: F401
+    HAVE_REQUESTS = True
+except ImportError:
+    HAVE_REQUESTS = False
+
+BOOK_PAGE = """<html><head>
+<meta property="og:title" content="[연재 브런치북] 예시 &amp; 책">
+<meta property="og:description" content="예시 소개입니다.">
+<meta property="og:image" content="http://t1.kakaocdn.net/brunch/service/user/abc/image/cover">
+</head><body><strong class="bb-book-title">예시 &amp; 책</strong><strong class="bb-tit-bloger">예시 작가</strong>
+<span data-testid="article-total-count">3<!-- -->화</span>
+<div class="post_article"><a class="cont_post" href="/@@abc/10" aria-disabled="false" data-testid="brunchbook-article-10">
+<em class="num_txt" aria-label="1화">01<!-- --> </em><strong class="tit_post">첫 글</strong></a></div>
+<div class="post_article"><a class="cont_post" href="/@@abc/12" aria-disabled="false" data-testid="brunchbook-article-12">
+<em class="num_txt" aria-label="2화">02<!-- --> </em><strong class="tit_post">둘째 <b>글</b></strong></a></div>
+<div class="post_article"><a class="cont_post" href="/@@abc/0" aria-disabled="true">
+<em class="num_txt" aria-label="3화">03</em><strong class="tit_post">곧 발행</strong></a></div>
+</body></html>"""
+
+ARTICLE_PAGE = """<html><body>
+<script type="application/json" id="ARTICLE_DATA">{"title": "첫 글", "subTitle": "부제", "authorName": "예시 작가",
+ "articleImageUrl": "http://t1.kakaocdn.net/x.jpg", "isMembershipContent": %s}</script>
+<a class="link_magazinetit #brunchbook_title" href="/brunchbook/example1">예시 책</a>
+<div id="ArticleView" class="text_align_left">
+<p class="item_type_text">첫 줄 &amp; &lt;괄호&gt;<br>둘째 줄</p>
+<script>alert(1)</script><input type="hidden" value="x"><p>input 뒤도 남아야 함</p>
+<div class="item_type_img"><img src="http://t1.kakaocdn.net/a.jpg" alt="그림"></div>
+<img src="https://evil.example.com/b.png"><p><strike>지운 글</strike> <a href="/@abc/3">링크</a> <a href="javascript:x()">나쁜 링크</a></p>
+</div><div class="info_keyword">키워드</div></body></html>"""
+
+
+class ParseTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        from brunch import fetch
+        cls.f = fetch
+
+    def test_parse_input(self):
+        f = self.f
+        self.assertEqual(f.parse_input("https://brunch.co.kr/brunchbook/abc_1"), ("book", "abc_1"))
+        self.assertEqual(f.parse_input("brunch.co.kr/@@4r3L/12?x=1"), ("article", ("4r3L", 12)))
+        self.assertEqual(f.parse_input("http://m.brunch.co.kr/@napurta/7"), ("article", ("@napurta", 7)))
+        for bad in ("", "https://example.com/brunchbook/a", "https://brunch.co.kr/@@a/b", "https://brunch.co.kr/"):
+            with self.assertRaises(ValueError):
+                f.parse_input(bad)
+        self.assertEqual(f.article_url("@napurta", 7), f.WEB_URL + "/@napurta/7")
+        with self.assertRaises(ValueError):
+            f.article_url("../x", 1)
+        with self.assertRaises(ValueError):
+            f.book_url("a/b")
+
+    def test_parse_book(self):
+        b = self.f.parse_book(BOOK_PAGE, "example1")
+        self.assertEqual(b["title"], "예시 & 책")
+        self.assertEqual(b["author"], "예시 작가")
+        self.assertEqual(b["status"], "ONGOING")
+        self.assertTrue(b["cover"].startswith("https://"))
+        self.assertEqual([(e["num"], e["title"], e["article_no"]) for e in b["episodes"]], [("01", "첫 글", 10), ("02", "둘째 글", 12)])
+        self.assertEqual(b["planned"], 1)
+        self.assertEqual(b["total"], 3)
+        done = self.f.parse_book(BOOK_PAGE.replace("[연재 브런치북]", "[브런치북]"), "example1")
+        self.assertEqual(done["status"], "COMPLETE")
+
+    def test_article_and_sanitize(self):
+        a = self.f.parse_article(ARTICLE_PAGE % "false", "https://brunch.co.kr/@@abc/10")
+        self.assertEqual(a["book_address"], "example1")
+        self.assertFalse(a["restricted"])
+        self.assertTrue(self.f.parse_article(ARTICLE_PAGE % "true", "u")["restricted"])
+        asked = []
+
+        def on_img(src):
+            asked.append(src)
+            return "images/img0001.jpg" if self.f.image_allowed(src) else None
+        body = self.f.sanitize(a["html"], on_img)
+        self.assertNotIn("alert", body)
+        self.assertIn("input 뒤도 남아야 함", body)          # 닫는 태그 없는 <input> 뒤가 사라지지 않음
+        self.assertIn("<br/>", body)
+        self.assertIn("&amp; &lt;괄호&gt;", body)
+        self.assertIn('<img src="images/img0001.jpg" alt="그림"/>', body)
+        self.assertNotIn("evil.example.com", body)            # 허용하지 않은 곳의 그림은 뺀다
+        self.assertIn("<s>지운 글</s>", body)
+        self.assertIn('href="https://brunch.co.kr/@abc/3"', body)
+        self.assertNotIn("javascript", body)
+        self.assertEqual(asked, ["https://t1.kakaocdn.net/a.jpg", "https://evil.example.com/b.png"])
+        minidom.parseString("<div>%s</div>" % body)           # XHTML로 읽힘
+
+    def test_image_allowed(self):
+        ok = self.f.image_allowed
+        self.assertTrue(ok("https://img1.kakaocdn.net/thumb/x.jpg"))
+        self.assertTrue(ok("https://t1.daumcdn.net/brunch/x"))
+        self.assertFalse(ok("http://t1.kakaocdn.net/x"))
+        self.assertFalse(ok("https://kakaocdn.net.evil.com/x"))
+        self.assertFalse(ok("https://127.0.0.1/x"))
+
+
+class EpubTest(unittest.TestCase):
+    def test_build(self):
+        from brunch import epub
+        path = os.path.join(TMP, "book.epub")
+        chapters = [{"num": "01", "title": "첫 글 & 시작", "subtitle": "부제", "body": '<p>본문</p><img src="images/img0001.png" alt=""/>',
+                     "url": "https://brunch.co.kr/@@abc/10", "restricted": False},
+                    {"num": "02", "title": "둘째", "subtitle": "", "body": "<p>유료 앞부분</p>", "url": "https://brunch.co.kr/@@abc/12", "restricted": True}]
+        epub.build(path, {"title": "예시 & 책", "author": "작가", "description": "소개", "url": "https://brunch.co.kr/brunchbook/x"},
+                   chapters, {"img0001.png": (b"\x89PNG....", "image/png")}, cover=(b"jpg", "image/jpeg"), identifier="brunch:book:x")
+        with zipfile.ZipFile(path) as z:
+            names = z.namelist()
+            self.assertEqual(names[0], "mimetype")
+            self.assertEqual(z.getinfo("mimetype").compress_type, zipfile.ZIP_STORED)
+            for n in names:
+                if n.endswith((".xhtml", ".opf", ".ncx", ".xml")):
+                    minidom.parseString(z.read(n))
+            opf = z.read("OEBPS/content.opf").decode()
+            nav = z.read("OEBPS/nav.xhtml").decode()
+            self.assertIn("text/images/cover.jpg", opf)
+            self.assertIn('properties="cover-image"', opf)
+            self.assertIn("<dc:title>예시 &amp; 책</dc:title>", opf)
+            self.assertIn("01. 첫 글 &amp; 시작", nav)
+            self.assertIn("멤버십 글", z.read("OEBPS/text/ch002.xhtml").decode())
+            self.assertIn("OEBPS/text/images/img0001.png", names)
+        self.assertFalse(os.path.exists(path + ".tmp"))
+        with self.assertRaises(ValueError):
+            epub.build(path, {"title": "x"}, [], {})
+
+
+@unittest.skipUnless(HAVE_REQUESTS, "requests 없음")
+class ServiceTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        from brunch import fetch, service
+        cls.f, cls.s = fetch, service
+
+    def test_settings_and_names(self):
+        s = self.s
+        with self.assertRaises(ValueError):
+            s.clean_settings({"save_dir": "relative/dir"})
+        self.assertEqual(s.clean_settings({"save_dir": "/a/b/../c", "by_author": False}), {"save_dir": "/a/c", "by_author": False})
+        self.assertEqual(s.safe_name('a/b:c*?"d.'), "a b c d")
+        self.assertEqual(s.safe_name("..."), "브런치")
+        p = s.target_path({"save_dir": "/books", "by_author": True}, "작가/이름", "책 제목")
+        self.assertEqual(p, "/books/작가 이름/책 제목.epub")
+        self.assertEqual(s.target_path({"save_dir": "/books", "by_author": False}, "작가", "책"), "/books/책.epub")
+
+    def test_run_book(self):
+        """받기 흐름 (브런치 대신 예시 페이지를 돌려주는 가짜 Client)"""
+        f, s = self.f, self.s
+
+        class FakeClient:
+            def book(self, address):
+                return f.parse_book(BOOK_PAGE, address)
+
+            def article(self, uid, no):
+                if no == 12:
+                    raise f.BrunchError("삭제된 글")
+                return f.parse_article(ARTICLE_PAGE % "false", f.article_url(uid, no))
+
+            def get_image(self, url):
+                return (b"img", "image/jpeg") if f.image_allowed(url) else None
+
+        save = os.path.join(TMP, "books")
+        s._write_json(s._settings_path(), {"save_dir": save, "by_author": True})
+        s._STATE["client"] = FakeClient()
+        try:
+            job = {"id": "t1", "key": "book:example1", "kind": "book", "target": "example1", "title": "", "state": "running",
+                   "done": 0, "total": 0, "error": "", "note": ""}
+            s._run(job)
+            out = os.path.join(save, "예시 작가", "예시 & 책.epub")
+            self.assertTrue(os.path.isfile(out))
+            h = s.load_history()[0]
+            self.assertEqual((h["chapters"], h["images"], h["key"]), (1, 1, "book:example1"))
+            self.assertEqual(len(h["skipped"]), 1)          # 삭제된 글은 빠지고 나머지로 만든다
+            self.assertEqual(job["done"], 2)
+            # 같은 책을 다시 받으면 받은 목록에 한 줄만 남는다
+            s._run(dict(job, id="t2"))
+            self.assertEqual(len([x for x in s.load_history() if x["key"] == "book:example1"]), 1)
+            got = s.api_get("/api/brunch/file", {"id": s.load_history()[0]["id"]})
+            self.assertEqual(got[1], "application/epub+zip")
+            with self.assertRaises(s.ApiError):
+                s.api_get("/api/brunch/file", {"id": "nope"})
+            with self.assertRaises(s.ApiError):
+                s.api_post("/api/brunch/settings", {"save_dir": "rel"})
+        finally:
+            s._STATE["client"] = None
+
+
+def tearDownModule():
+    shutil.rmtree(TMP, ignore_errors=True)
+
+
+if __name__ == "__main__":
+    unittest.main()
