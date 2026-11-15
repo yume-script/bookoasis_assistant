@@ -321,6 +321,26 @@
     // ── 진행 상태 ──
     const fmtB = (n) => (n >= 1024 ** 3 ? `${(n / 1024 ** 3).toFixed(2)}GB` : `${Math.round(n / 1024 ** 2)}MB`);
     let statusTimer = 0;
+    // 취소·건너뛴 항목 다시 올리기 (최근 7일 / 30일 / 전체) - 이미 올린 같은 파일·같은 회차는 빼고 까닭을 보여 줌
+    function againBox(s, pane) {
+        if (!s.skipped) return null;
+        const daysSel = h('select', { class: 'select' }, [['7', '최근 7일'], ['30', '최근 30일'], ['0', '전체']].map(([v, t]) => h('option', { value: v, text: t })));
+        const go = h('button', { class: 'btn btn-sm', type: 'button' }, icon('rotate-left'), ' 다시 올리기');
+        go.addEventListener('click', async () => {
+            go.disabled = true;
+            try {
+                const r = await post('api/tgup/requeue', { days: Number(daysSel.value) });
+                toast(`${r.queued.length}개를 다시 올릴 차례에 넣었습니다${r.excluded.length ? ` (${r.excluded.length}개는 이미 올라가 있어 뺌)` : ''}.`, 'success', 6000);
+                if (r.excluded.length) {
+                    modal('다시 올리지 않은 것', h('div', {}, r.excluded.slice(0, 200).map((x) => h('div', {}, h('b', { text: x.title }), h('span', { class: 'muted', text: ` - ${x.reason}` })))));
+                }
+            } catch (e) { toast(e.message, 'error'); } finally { go.disabled = false; }
+            renderStatus(pane);
+        });
+        return h('div', { class: 'mirror-wait' }, h('span', { class: 'muted', text: `취소·건너뛴 항목 ${s.skipped}개:` }), daysSel, go,
+            h('span', { class: 'muted', text: '이미 올린 같은 회차는 빼고 바로 올릴 차례에 넣습니다.' }));
+    }
+
     async function renderStatus(pane) {
         clearTimeout(statusTimer);
         if (!pane.firstChild) pane.appendChild(loading());
@@ -404,6 +424,7 @@
                     renderStatus(pane);
                 } } }, icon('ban'), ' 전체 취소') : null),
             live.length ? h('div', { class: 'mirror-table', role: 'table' }, head(), ...live) : h('p', { class: 'muted', text: '올릴 것이 없습니다.' }),
+            againBox(s, pane),
             h('h4', { text: '최근 기록' }),
             hist.length ? h('div', { class: 'mirror-table', role: 'table' }, head(), ...hist) : h('p', { class: 'muted', text: '아직 올린 것이 없습니다.' })));
         // 이 탭을 보는 동안만 새로 고친다 (올리는 중이면 2초, 아니면 15초마다 / 브라우저 탭이 가려져 있으면 쉼)

@@ -259,6 +259,14 @@ def api_post(path, body):
             return {"success": True, "title": RUNNER.call(m.test_latest(str(body.get("rule") or "")))}
         except Exception as e:  # noqa: BLE001
             raise ApiError(400, str(e))
+    if path == "/api/tgup/requeue":   # 취소·건너뛴 항목 다시 올리기 {days: 7 | 30 | 0(전체)} - 이미 올린 같은 파일·회차는 빼고
+        try:
+            days = int(body.get("days") or 0)
+        except (TypeError, ValueError):
+            days = 0
+        if days not in (0, 7, 30):
+            raise ApiError(400, "기간은 7, 30, 0(전체) 중 하나입니다.")
+        return {"success": True, **RUNNER.run(m.requeue_skipped, days or None, str(body.get("rule") or "") or None)}
     if path == "/api/tgup/item":
         rule, key, action = str(body.get("rule") or ""), str(body.get("key") or ""), body.get("action")
         fns = {"upload": m.force_item, "drop": m.drop_item, "cancel": m.cancel_item}
