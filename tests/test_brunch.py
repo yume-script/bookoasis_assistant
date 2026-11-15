@@ -241,7 +241,8 @@ class AutoCheckTest(unittest.TestCase):
             def get_image(self, url):
                 return None
         s._STATE["client"] = FakeClient()
-        s._STATE["thread"] = threading.Thread()   # 대기열 스레드를 띄우지 않게 (직접 _run)
+        s._STATE["thread"] = threading.Thread()   # 대기열 스레드를 띄우지 않게 (직접 _run) - 돌고 있는 것처럼 보이게
+        s._STATE["thread"].is_alive = lambda: True
 
     def tearDown(self):
         self.s._STATE["client"] = None
