@@ -415,6 +415,9 @@ venv\Scripts\python app.py
   기본은 `<저장 폴더>/<작가>/<브런치북 제목>.epub`(설정에서 작가 폴더를 끌 수 있음). 저장 폴더가 BookOasis 보관함 안이면
   웹툰처럼 드라이브 변경 감시가 바로 VFS 새로고침 → BookOasis 부분 스캔을 합니다.
 - **받은 목록**: [내려받기](브라우저로 EPUB 받기), [다시 받기](연재 중인 책의 새 회차까지 담아 덮어쓰기), 목록에서 빼기(파일도 지울지 묻습니다).
+- **새 글 자동 받기**(기본 켬): 정한 간격(1·2·3·6·12·24시간, 기본 6시간)마다 받은 목록의 연재 중 브런치북을 확인해, 발행된 회차가 늘었으면
+  새 회차까지 담아 다시 받아 덮어씁니다(보관함 안이면 BookOasis 스캔도 다시). 책마다 받은 목록의 [자동 받기]로 끌 수 있고,
+  완결된 책은 확인하지 않습니다. 받은 목록 위 [지금 새 글 확인]으로 바로 확인할 수도 있습니다. 확인 기록은 `DATA_DIR/brunch/check.json`.
 - 받기는 한 번에 한 권씩 차례로 하고, 브런치에 너무 빨리 묻지 않게 글 사이를 띄웁니다(11화·그림 37장 책이 1분 남짓).
   설정·기록은 `DATA_DIR/brunch/`(settings.json, history.json). 끄려면 `BRUNCH_ENABLED=false`.
 - 브런치 화면용(비공식) 페이지·API를 읽으므로 브런치가 바뀌면 깨질 수 있습니다 - 그때는 `brunch/fetch.py`의 `parse_*`만 고치면 됩니다.
@@ -440,7 +443,7 @@ venv\Scripts\python app.py
   `.env`에 `UPDATE_CHECK_URL=`(빈 값)을 넣으면 확인하지 않습니다.
 
 - `GET /` 드라이브 변경 감시 (현황, 변경 기록, 감시 설정, 스캔 일정, 로그) · `GET /webtoon` 웹툰 다운로더 · `GET /games` 미니게임 · `GET /tgup` 텔레그램 자동 올리기 · `GET /brunch` 브런치 EPUB 받기
-- `GET /api/brunch`(설정·받기 진행·받은 목록) · `GET /api/brunch/list|resolve|book|file` · `POST /api/brunch/download|redownload|forget|settings|clear-jobs` 브런치 EPUB 받기 (`brunch/service.py`)
+- `GET /api/brunch`(설정·받기 진행·받은 목록·새 글 확인) · `GET /api/brunch/list|resolve|book|file` · `POST /api/brunch/download|redownload|forget|settings|auto|check|clear-jobs` 브런치 EPUB 받기 (`brunch/service.py`)
 - `GET /api/tgup`(설정·진행 상태·계정) · `GET /api/tgup/options|channels|folders|shot` · `POST /api/tgup/settings|check|test|item|account` 텔레그램 자동 올리기 (`tgup/service.py`)
 - `POST /api/rpc/<동작>` 드라이브 변경 감시 RPC, `GET /api/wtm/data`·`POST /api/wtm/action` 웹툰 다운로더.
   `Content-Type: application/json`만 받습니다(다른 사이트 폼 전송 차단).

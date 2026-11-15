@@ -6,7 +6,9 @@
   기본은 <저장 폴더>/<작가>/<브런치북 제목>.epub. 같은 책을 다시 받으면 새 회차까지 담아 덮어쓴다.
 - 저장 폴더가 BookOasis 보관함 안이면 웹툰처럼 드라이브 변경 감시에 넘겨 바로 스캔한다 (gdw/handoff.py).
 - 화면의 [내려받기]로 브라우저에도 받을 수 있다.
-설정·기록: DATA_DIR/brunch/ (settings.json, history.json)
+- 새 글 자동 받기: 받은 브런치북(연재 중)을 정해 둔 간격(기본 6시간)마다 확인해, 발행된 회차가 늘었으면 다시 받아 덮어쓴다.
+  책마다 [자동 받기]를 끌 수 있고, 완결된 책은 확인하지 않는다.
+설정·기록: DATA_DIR/brunch/ (settings.json, history.json, check.json)
 """
 import json
 import logging
@@ -29,7 +31,9 @@ MAX_IMAGES = 600          # 책 하나에 넣는 그림 수 (넘으면 그 뒤 �
 _LOCK = threading.RLock()
 _JOBS = deque(maxlen=50)  # 최근 작업 (대기·진행·끝)
 _WAKE = threading.Event()
-_STATE = {"thread": None, "client": None}
+_STATE = {"thread": None, "client": None, "checking": False}
+CHECK_HOURS = (1, 2, 3, 6, 12, 24)
+FIRST_CHECK_DELAY = 120   # 켠 뒤 처음 확인까지 (시작을 무겁게 하지 않게)
 
 
 class ApiError(Exception):
@@ -70,7 +74,13 @@ def _write_json(path, data):
 
 def load_settings():
     s = _read_json(_settings_path(), {})
-    return {"save_dir": str(s.get("save_dir") or ""), "by_author": s.get("by_author", True) is not False}
+    try:
+        hours = int(s.get("check_hours") or 6)
+    except (TypeError, ValueError):
+        hours = 6
+    return {"save_dir": str(s.get("save_dir") or ""), "by_author": s.get("by_author", True) is not False,
+            "auto_check": s.get("auto_check", True) is not False,
+            "check_hours": hours if hours in CHECK_HOURS else 6}
 
 
 def save_root(settings=None):
@@ -85,7 +95,14 @@ def clean_settings(body):
         if "\x00" in save_dir or not os.path.isabs(save_dir):
             raise ValueError("저장 폴더는 서버의 절대 경로로 적으세요 (예: /mnt/books/브런치).")
         save_dir = os.path.normpath(save_dir)
-    return {"save_dir": save_dir, "by_author": bool(body.get("by_author", True))}
+    try:
+        hours = int(body.get("check_hours") or 6)
+    except (TypeError, ValueError):
+        hours = 6
+    if hours not in CHECK_HOURS:
+        raise ValueError("새 글 확인 간격은 %s시간 중 하나입니다." % ", ".join(map(str, CHECK_HOURS)))
+    return {"save_dir": save_dir, "by_author": bool(body.get("by_author", True)),
+            "auto_check": bool(body.get("auto_check", True)), "check_hours": hours}
 
 
 _BAD = re.compile(r'[\\/:*?"<>|\x00-\x1f]+')
@@ -110,16 +127,99 @@ def load_history():
 
 def _remember(entry):
     with _LOCK:
-        hist = [h for h in load_history() if h.get("key") != entry["key"]]
+        hist = load_history()
+        old = next((h for h in hist if h.get("key") == entry["key"]), None)
+        if old is not None and "auto" in old:   # 다시 받아도 [자동 받기] 선택은 그대로
+            entry["auto"] = old["auto"]
+        hist = [h for h in hist if h.get("key") != entry["key"]]
         hist.insert(0, entry)
         _write_json(_history_path(), hist[:MAX_HISTORY])
+
+
+def _update_entry(hid, **fields):
+    with _LOCK:
+        hist = load_history()
+        for h in hist:
+            if h.get("id") == hid:
+                h.update(fields)
+                _write_json(_history_path(), hist)
+                return h
+    return None
+
+
+# ── 새 글 자동 받기 ──
+def _check_path():
+    return os.path.join(data_dir(), "check.json")
+
+
+def check_state():
+    return _read_json(_check_path(), {})
+
+
+def watched(h):
+    """자동으로 새 글을 확인할 책: 브런치북이고, [자동 받기]가 켜져 있고, 완결이 아닌 것"""
+    return h.get("kind") == "book" and h.get("auto", True) is not False and h.get("status") != "COMPLETE"
+
+
+def _has_new(h, book):
+    """받은 뒤 새로 발행된 회차가 있는지 (회차 번호를 기억해 둔 책은 번호로, 예전 기록은 회차 수로)"""
+    now_ids = {int(e["article_no"]) for e in book["episodes"]}
+    if h.get("episode_ids"):
+        return bool(now_ids - set(int(x) for x in h["episode_ids"]))
+    return len(now_ids) > int(h.get("chapters") or 0) + len(h.get("skipped") or [])
+
+
+def check_now(reason="자동"):
+    """받은 연재 중 브런치북을 모두 확인해 새 회차가 있으면 다시 받기 대기열에. 반환: 새 글이 있는 책 수"""
+    if _STATE["checking"]:
+        return 0
+    _STATE["checking"] = True
+    found = 0
+    try:
+        c = _client()
+        for h in [x for x in load_history() if watched(x)]:
+            address = h["key"].partition(":")[2]
+            try:
+                book = c.book(address)
+            except fetch.BrunchError as e:
+                log.info("브런치 새 글 확인 실패 (%s): %s", h.get("title"), e)
+                _update_entry(h["id"], checked_at=_now(), check_error=str(e))
+                continue
+            new = _has_new(h, book)
+            fields = {"checked_at": _now(), "check_error": ""}
+            if book.get("status") == "COMPLETE" and not new:
+                fields["status"] = "COMPLETE"   # 완결됐고 다 받았으면 더 확인하지 않는다
+            _update_entry(h["id"], **fields)
+            if new:
+                found += 1
+                log.info("브런치 새 글: %s (발행 %d화) - 다시 받습니다", book["title"], len(book["episodes"]))
+                enqueue("book", address, book["title"], auto=True)
+        _write_json(_check_path(), {"last": time.time(), "found": found, "reason": reason})
+    finally:
+        _STATE["checking"] = False
+    return found
+
+
+def _now():
+    return datetime.now().strftime("%Y-%m-%d %H:%M")
+
+
+def _check_due(started):
+    s = load_settings()
+    if not s["auto_check"] or time.time() - started < FIRST_CHECK_DELAY:
+        return False
+    last = float(check_state().get("last") or 0)
+    return time.time() - last >= s["check_hours"] * 3600
 
 
 def _public_history():
     out = []
     for h in load_history():
         item = {k: h.get(k) for k in ("id", "key", "kind", "title", "author", "url", "chapters", "images",
-                                      "restricted", "skipped", "at", "size", "status", "file_name", "scan")}
+                                      "restricted", "skipped", "at", "size", "status", "file_name", "scan",
+                                      "checked_at", "check_error")}
+        item["auto"] = h.get("kind") == "book" and h.get("auto", True) is not False
+        item["watched"] = watched(h)
         item["exists"] = bool(h.get("file")) and os.path.isfile(h["file"])
         item["path"] = h.get("file") or ""
         out.append(item)
@@ -149,6 +249,7 @@ def start(stop_event=None):
 
 
 def _loop(stop_event):
+    started = time.time()
     while not (stop_event and stop_event.is_set()):
         job = None
         with _LOCK:
@@ -157,7 +258,14 @@ def _loop(stop_event):
                 job["state"] = "running"
                 job["started"] = time.time()
         if not job:
-            _WAKE.wait(5)
+            if _check_due(started):
+                try:
+                    check_now()
+                except Exception as e:  # noqa: BLE001
+                    log.warning("브런치 새 글 확인 실패: %s", e)
+                    _write_json(_check_path(), {"last": time.time(), "found": 0, "error": str(e)})
+                continue
+            _WAKE.wait(30)
             _WAKE.clear()
             continue
         try:
@@ -169,7 +277,7 @@ def _loop(stop_event):
         job["finished"] = time.time()
 
 
-def enqueue(kind, target, title=""):
+def enqueue(kind, target, title="", auto=False):
     """kind: book(target=브런치북 주소) / article(target=(user_id, 번호)). 같은 것이 이미 대기·진행 중이면 그 작업을 돌려준다"""
     key = "book:%s" % target if kind == "book" else "article:%s/%s" % tuple(target)
     with _LOCK:
@@ -177,7 +285,7 @@ def enqueue(kind, target, title=""):
             if j["key"] == key and j["state"] in ("queued", "running"):
                 return j
         job = {"id": uuid.uuid4().hex[:12], "key": key, "kind": kind, "target": target, "title": title,
-               "state": "queued", "done": 0, "total": 0, "error": "", "note": "", "added": time.time()}
+               "state": "queued", "done": 0, "total": 0, "error": "", "note": "", "added": time.time(), "auto": auto}
         _JOBS.appendleft(job)
     if not (_STATE["thread"] and _STATE["thread"].is_alive()):
         start()
@@ -187,7 +295,7 @@ def enqueue(kind, target, title=""):
 
 def _public_jobs():
     with _LOCK:
-        return [{k: j.get(k) for k in ("id", "key", "kind", "title", "state", "done", "total", "error", "note", "added", "history_id")}
+        return [{k: j.get(k) for k in ("id", "key", "kind", "title", "state", "done", "total", "error", "note", "added", "history_id", "auto")}
                 for j in _JOBS]
 
 
@@ -259,7 +367,8 @@ def _run(job):
     entry = {"id": uuid.uuid4().hex[:12], "key": job["key"], "kind": job["kind"], "title": meta["title"], "author": meta["author"],
              "url": meta["url"], "chapters": len(chapters), "images": len(images), "restricted": restricted,
              "skipped": skipped, "status": meta.get("status") or "", "file": final, "file_name": os.path.basename(final),
-             "size": size, "scan": scan, "at": datetime.now().strftime("%Y-%m-%d %H:%M")}
+             "size": size, "scan": scan, "at": _now(), "checked_at": _now(),
+             "episode_ids": [int(e["article_no"]) for e in eps], "auto": job["kind"] == "book"}
     _remember(entry)
     job["history_id"] = entry["id"]
     job["note"] = "%d화 · 그림 %d장 · %.1fMB%s" % (len(chapters), len(images), size / 1048576,
@@ -292,8 +401,12 @@ def _handoff(path):
 # ── 화면 API ──
 def _state():
     s = load_settings()
+    chk = check_state()
+    last = float(chk.get("last") or 0)
     return {"success": True, "settings": s, "root": save_root(s), "env_root": config.env("BRUNCH_DOWNLOAD_ROOT", "").strip(),
-            "jobs": _public_jobs(), "history": _public_history()}
+            "jobs": _public_jobs(), "history": _public_history(), "check_hours": list(CHECK_HOURS),
+            "check": {"last": last, "next": (last + s["check_hours"] * 3600) if (s["auto_check"] and last) else 0,
+                      "found": chk.get("found", 0), "error": chk.get("error", ""), "running": _STATE["checking"]}}
 
 
 def _entry(hid):
@@ -386,6 +499,17 @@ def api_post(path, body):
             return _state()
         if path == "/api/brunch/settings":
             _write_json(_settings_path(), clean_settings(body))
+            return _state()
+        if path == "/api/brunch/auto":   # 받은 목록의 [자동 받기] 켜고 끄기 {id, auto}
+            h = _entry(str(body.get("id") or ""))
+            if not h or h.get("kind") != "book":
+                raise ApiError(404, "자동 받기는 받은 브런치북에만 쓸 수 있습니다.")
+            _update_entry(h["id"], auto=bool(body.get("auto")))
+            return _state()
+        if path == "/api/brunch/check":   # [지금 새 글 확인] - 백그라운드에서 확인하고 바로 돌아온다
+            if not _STATE["checking"]:
+                threading.Thread(target=check_now, kwargs={"reason": "수동"}, name="brunch-check", daemon=True).start()
+                time.sleep(0.2)
             return _state()
         if path == "/api/brunch/clear-jobs":   # 끝난 작업 줄 지우기
             with _LOCK:

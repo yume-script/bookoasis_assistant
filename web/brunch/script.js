@@ -99,7 +99,7 @@
             list.appendChild(h('div', { class: 'br-row' },
                 h('span', { class: `br-state ${j.state}`, text: STATE_TEXT[j.state] || j.state }),
                 h('div', { class: 'br-row-main' },
-                    h('span', { class: 'br-row-title', text: j.title || j.key }),
+                    h('span', { class: 'br-row-title', text: (j.auto ? '[새 글] ' : '') + (j.title || j.key) }),
                     h('span', { class: 'br-row-sub' + (j.state === 'error' ? ' error-text' : ''), text: j.error || j.note || (j.kind === 'book' ? '브런치북' : '글 하나') })),
                 j.state === 'running' ? h('div', { class: 'br-bar' }, h('div', { style: `width:${pct}%` })) : null));
         });
@@ -232,8 +232,24 @@
         clear(pane);
         const hist = state.history || [];
         if (!hist.length) { pane.appendChild(h('p', { class: 'muted', text: '아직 받은 책이 없습니다. [연재 목록]이나 [주소로 받기]에서 받으세요.' })); return; }
+        pane.appendChild(checkBar(() => renderHistory(pane)));
         const list = h('div', { class: 'br-list' });
         hist.forEach((x) => {
+            // 새 글 자동 받기 (브런치북만, 완결된 책은 확인하지 않음)
+            let autoBox = null;
+            if (x.kind === 'book') {
+                const chk = h('input', { type: 'checkbox', checked: !!x.auto, disabled: x.status === 'COMPLETE' });
+                chk.addEventListener('change', async () => {
+                    chk.disabled = true;
+                    try { state = await post('api/brunch/auto', { id: x.id, auto: chk.checked }); toast(chk.checked ? `새 글이 오르면 자동으로 받습니다: ${x.title}` : `자동 받기를 껐습니다: ${x.title}`, 'success'); }
+                    catch (e) { chk.checked = !chk.checked; toast(e.message, 'error'); }
+                    finally { chk.disabled = false; }
+                });
+                autoBox = h('label', { class: 'check', title: x.status === 'COMPLETE' ? '완결된 책은 새 글을 확인하지 않습니다' : '새 회차가 발행되면 자동으로 다시 받아 덮어씁니다' },
+                    chk, x.status === 'COMPLETE' ? ' 완결' : ' 자동 받기');
+            }
+            const checked = x.kind === 'book' && x.status !== 'COMPLETE' && x.auto
+                ? (x.check_error ? `새 글 확인 실패: ${x.check_error}` : (x.checked_at ? `새 글 확인: ${x.checked_at}` : '')) : '';
             const again = h('button', { class: 'btn btn-sm', type: 'button', title: '새 회차까지 담아 다시 만들어 덮어씁니다' }, icon('rotate'), ' 다시 받기');
             again.addEventListener('click', () => busy(again, async () => { await post('api/brunch/redownload', { id: x.id }); toast(`다시 받습니다: ${x.title}`, 'success'); refresh(); }));
             const forget = h('button', { class: 'btn btn-sm danger', type: 'button', title: '받은 목록에서 빼기' }, icon('trash'));
@@ -251,13 +267,31 @@
                     h('span', { class: 'br-row-title', text: x.title }),
                     h('span', { class: 'br-row-sub', text: sub }),
                     h('span', { class: 'br-row-sub', text: x.exists ? x.path : `파일 없음 (옮겼거나 지움): ${x.path}` }),
-                    (x.skipped || []).length ? h('span', { class: 'br-row-sub error-text', text: `빠진 글: ${x.skipped.join(', ')}` }) : null),
-                h('div', { class: 'toolbar' },
+                    (x.skipped || []).length ? h('span', { class: 'br-row-sub error-text', text: `빠진 글: ${x.skipped.join(', ')}` }) : null,
+                    checked ? h('span', { class: 'br-row-sub' + (x.check_error ? ' error-text' : ''), text: checked }) : null),
+                h('div', { class: 'toolbar' }, autoBox,
                     x.exists ? h('a', { class: 'btn btn-sm btn-accent', href: `api/brunch/file?id=${encodeURIComponent(x.id)}` }, icon('download'), ' 내려받기') : null,
                     again, x.url ? h('a', { class: 'btn btn-sm', href: x.url, target: '_blank', rel: 'noopener noreferrer', title: '브런치에서 보기' }, icon('arrow-up-right-from-square')) : null,
                     forget)));
         });
         pane.appendChild(list);
+    }
+
+    // 새 글 확인 상태 줄 + [지금 새 글 확인]
+    const fmtTime = (sec) => { if (!sec) return ''; const d = new Date(sec * 1000); return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
+    function checkBar(again) {
+        const c = state.check || {};
+        const s = state.settings || {};
+        const btn = h('button', { class: 'btn btn-sm', type: 'button', disabled: !!c.running }, icon('magnifying-glass'), c.running ? ' 확인하는 중...' : ' 지금 새 글 확인');
+        btn.addEventListener('click', () => busy(btn, async () => {
+            state = await post('api/brunch/check');
+            toast('연재 중인 브런치북의 새 글을 확인합니다. 새 글이 있으면 받기 진행에 나옵니다.', 'success');
+            setTimeout(() => { refresh(); again(); }, 4000);
+        }));
+        const text = !s.auto_check ? '새 글 자동 받기가 꺼져 있습니다 (설정 탭).'
+            : `새 글 자동 받기: ${s.check_hours}시간마다` + (c.last ? ` · 마지막 확인 ${fmtTime(c.last)}` + (c.found ? ` (새 글 ${c.found}권)` : '') : '')
+              + (c.next ? ` · 다음 확인 ${fmtTime(c.next)}` : '') + (c.error ? ` · 실패: ${c.error}` : '');
+        return h('div', { class: 'toolbar' }, h('span', { class: 'field-hint', text }), btn);
     }
 
     // ── 설정 ──
@@ -268,9 +302,13 @@
         const s = state.settings;
         const dirIn = h('input', { class: 'input', value: s.save_dir, placeholder: state.env_root || '비우면 기본 위치' });
         const byAuthor = h('input', { type: 'checkbox', checked: s.by_author });
+        const autoIn = h('input', { type: 'checkbox', checked: s.auto_check });
+        const hoursSel = h('select', { class: 'select', style: 'width:auto' },
+            (state.check_hours || [1, 2, 3, 6, 12, 24]).map((n) => h('option', { value: String(n), text: `${n}시간마다`, selected: n === s.check_hours })));
         const save = h('button', { class: 'btn btn-accent', type: 'button' }, icon('floppy-disk'), ' 저장');
         save.addEventListener('click', () => busy(save, async () => {
-            state = await post('api/brunch/settings', { save_dir: dirIn.value.trim(), by_author: byAuthor.checked });
+            state = await post('api/brunch/settings', { save_dir: dirIn.value.trim(), by_author: byAuthor.checked,
+                auto_check: autoIn.checked, check_hours: Number(hoursSel.value) });
             toast('저장했습니다.', 'success');
             renderSettings(pane);
         }));
@@ -280,10 +318,14 @@
                 h('span', { class: 'field-hint', text: 'BookOasis 보관함 안의 폴더(예: /mnt/books/브런치)로 두면 받은 뒤 드라이브 변경 감시가 바로 BookOasis 스캔을 요청합니다. '
                     + '비우면 .env의 BRUNCH_DOWNLOAD_ROOT, 그것도 없으면 데이터 폴더(DATA_DIR/brunch/files)에 둡니다.' })),
             h('label', { class: 'check' }, byAuthor, ' 작가 이름으로 폴더 나누기 (<저장 폴더>/<작가>/<브런치북 제목>.epub)'),
+            h('div', { class: 'field' }, h('span', { class: 'field-label', text: '새 글 자동 받기' }),
+                h('div', { class: 'toolbar' }, h('label', { class: 'check' }, autoIn, ' 받은 연재 중 브런치북에 새 글이 오르면 자동으로 받기'), hoursSel),
+                h('span', { class: 'field-hint', text: '정한 간격마다 받은 목록의 연재 중인 브런치북을 확인해, 발행된 회차가 늘었으면 새 회차까지 담아 다시 받아 덮어씁니다 '
+                    + '(저장 폴더가 보관함 안이면 BookOasis 스캔도 다시). 책마다 [받은 목록 > 자동 받기]로 끌 수 있고, 완결된 책은 확인하지 않습니다.' })),
             h('div', { class: 'toolbar' }, save)),
         h('div', { class: 'card' }, h('b', { text: '알아 두기' }),
             h('p', { class: 'field-hint', text: '브런치북 하나 = EPUB 한 권입니다. 발행된 회차가 차례대로 장이 되고, 목차·표지·책 정보(소개·원문 주소)와 본문 그림이 함께 들어갑니다. '
-                + '연재 중인 책은 [받은 목록 > 다시 받기]로 새 회차까지 담아 덮어쓸 수 있습니다.' }),
+                + '연재 중인 책은 새 글이 오르면 자동으로 다시 받고(위 설정), [받은 목록 > 다시 받기]로 바로 받을 수도 있습니다.' }),
             h('p', { class: 'field-hint', text: '멤버십(유료) 글은 브런치 페이지에 공개된 앞부분만 담기고 원문 링크가 붙습니다. 받은 EPUB은 개인 소장용으로만 쓰세요 (글의 저작권은 작가에게 있습니다).' })));
     }
 

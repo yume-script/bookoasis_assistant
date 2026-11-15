@@ -7,6 +7,7 @@ import os
 import shutil
 import sys
 import tempfile
+import threading
 import unittest
 import zipfile
 from xml.dom import minidom
@@ -153,7 +154,7 @@ class ServiceTest(unittest.TestCase):
         s = self.s
         with self.assertRaises(ValueError):
             s.clean_settings({"save_dir": "relative/dir"})
-        self.assertEqual(s.clean_settings({"save_dir": "/a/b/../c", "by_author": False}), {"save_dir": "/a/c", "by_author": False})
+        self.assertEqual(s.clean_settings({"save_dir": "/a/b/../c", "by_author": False}), {"save_dir": "/a/c", "by_author": False, "auto_check": True, "check_hours": 6})
         self.assertEqual(s.safe_name('a/b:c*?"d.'), "a b c d")
         self.assertEqual(s.safe_name("..."), "브런치")
         p = s.target_path({"save_dir": "/books", "by_author": True}, "작가/이름", "책 제목")
@@ -200,6 +201,95 @@ class ServiceTest(unittest.TestCase):
                 s.api_post("/api/brunch/settings", {"save_dir": "rel"})
         finally:
             s._STATE["client"] = None
+
+
+@unittest.skipUnless(HAVE_REQUESTS, "requests 없음")
+class AutoCheckTest(unittest.TestCase):
+    """새 글 자동 받기: 받은 브런치북에 새 회차가 오르면 다시 받기 대기열에"""
+
+    @classmethod
+    def setUpClass(cls):
+        from brunch import fetch, service
+        cls.f, cls.s = fetch, service
+
+    def setUp(self):
+        s = self.s
+        with s._LOCK:
+            s._JOBS.clear()
+        s._write_json(s._history_path(), [])
+        s._write_json(s._settings_path(), {"save_dir": os.path.join(TMP, "books2")})
+        self.page = BOOK_PAGE
+        f, test = self.f, self
+
+        class FakeClient:
+            def book(self, address):
+                return f.parse_book(test.page, address)
+
+            def article(self, uid, no):
+                return f.parse_article(ARTICLE_PAGE % "false", f.article_url(uid, no))
+
+            def get_image(self, url):
+                return None
+        s._STATE["client"] = FakeClient()
+        s._STATE["thread"] = threading.Thread()   # 대기열 스레드를 띄우지 않게 (직접 _run)
+
+    def tearDown(self):
+        self.s._STATE["client"] = None
+        self.s._STATE["thread"] = None
+
+    def _download(self):
+        job = {"id": "a1", "key": "book:example1", "kind": "book", "target": "example1", "title": "", "state": "running",
+               "done": 0, "total": 0, "error": "", "note": "", "auto": False}
+        self.s._run(job)
+        return self.s.load_history()[0]
+
+    def test_settings(self):
+        s = self.s
+        self.assertEqual(s.load_settings()["check_hours"], 6)
+        self.assertTrue(s.load_settings()["auto_check"])
+        self.assertEqual(s.clean_settings({"check_hours": "12", "auto_check": False})["check_hours"], 12)
+        with self.assertRaises(ValueError):
+            s.clean_settings({"check_hours": 5})
+
+    def test_new_episode_queues_redownload(self):
+        s = self.s
+        h = self._download()
+        self.assertEqual(h["episode_ids"], [10, 12])
+        self.assertTrue(h["auto"] and s.watched(h))
+        self.assertEqual(s.check_now(), 0)              # 그대로면 아무것도 안 함
+        self.assertEqual(len(s._JOBS), 0)
+        self.page = BOOK_PAGE.replace('href="/@@abc/0" aria-disabled="true"', 'href="/@@abc/15" aria-disabled="false"')
+        self.assertEqual(s.check_now(), 1)              # 발행 예정이던 3화가 올라옴
+        self.assertEqual([(j["key"], j["auto"]) for j in s._JOBS], [("book:example1", True)])
+        self.assertEqual(s.check_now(), 1)
+        self.assertEqual(len(s._JOBS), 1)               # 이미 대기 중이면 또 넣지 않음
+        self.assertTrue(s.load_history()[0]["checked_at"])
+
+    def test_auto_off_and_complete(self):
+        s = self.s
+        h = self._download()
+        s.api_post("/api/brunch/auto", {"id": h["id"], "auto": False})
+        self.assertFalse(s.load_history()[0]["auto"])
+        h = self._download()                            # 다시 받아도 끈 선택은 그대로
+        self.assertFalse(h["auto"])
+        self.page = BOOK_PAGE.replace('href="/@@abc/0" aria-disabled="true"', 'href="/@@abc/15" aria-disabled="false"')
+        self.assertEqual(s.check_now(), 0)              # 자동 받기를 끈 책은 확인하지 않음
+        s.api_post("/api/brunch/auto", {"id": h["id"], "auto": True})
+        self.page = BOOK_PAGE.replace("[연재 브런치북]", "[브런치북]")
+        self.assertEqual(s.check_now(), 0)
+        self.assertEqual(s.load_history()[0]["status"], "COMPLETE")   # 완결 + 다 받음 -> 더 확인하지 않음
+        self.assertFalse(s.watched(s.load_history()[0]))
+        with self.assertRaises(s.ApiError):
+            s.api_post("/api/brunch/auto", {"id": "nope", "auto": True})
+
+    def test_old_history_without_ids(self):
+        """예전 기록(회차 번호 없음)은 회차 수로 비교"""
+        s = self.s
+        h = {"chapters": 2, "skipped": []}
+        book = self.f.parse_book(BOOK_PAGE, "example1")
+        self.assertFalse(s._has_new(h, book))
+        self.assertTrue(s._has_new({"chapters": 1, "skipped": []}, book))
+        self.assertTrue(s._has_new({"episode_ids": [10]}, book))
 
 
 def tearDownModule():
