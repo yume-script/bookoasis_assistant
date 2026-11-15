@@ -86,6 +86,42 @@ class TgupTest(unittest.TestCase):
         self.assertEqual(tgaccount.api_conf()["api_id"], "123")
         self.assertEqual(oct(os.stat(os.path.join(self.data, "settings.json")).st_mode & 0o777), "0o600")
 
+    def test_many_accounts(self):
+        """텔레그램 계정 여러 개: 첫 계정(tg)은 예전 세션 그대로, 더한 계정은 따로 세션 파일, 규칙이 쓰는 계정은 못 뺌"""
+        from tgup import tgaccount
+        api_post, api_get, ApiError = self.service.api_post, self.service.api_get, self.service.ApiError
+        data = self.compat.load()
+        data.pop("telegram", None)   # API 값이 없으면 텔레그램에 붙지 않는다
+        data.pop("accounts", None)
+        self.compat.save(data)
+        self.assertEqual([a["id"] for a in tgaccount.accounts()], ["tg"])
+        new = api_post("/api/tgup/account", {"action": "add", "name": "부계정"})["id"]
+        self.assertEqual(new, "tg2")
+        api_post("/api/tgup/account", {"action": "rename", "account": new, "name": "두 번째"})
+        got = api_get("/api/tgup", {})
+        self.assertEqual([(a["id"], a["title"]) for a in got["accounts"]][1], ("tg2", "두 번째"))
+        self.assertTrue(all(not a["authorized"] for a in got["accounts"]))
+        acc1, acc2 = self.service.RUNNER.get_account("tg"), self.service.RUNNER.get_account(new)
+        self.assertTrue(acc1.session_path.endswith("/telegram.session"))           # 예전 계정 그대로
+        self.assertTrue(acc2.session_path.endswith("/telegram_tg2.session"))
+        self.assertNotEqual(acc1.peers_path, acc2.peers_path)
+        folder = tempfile.mkdtemp(prefix="tgup-folder-")
+        try:
+            api_post("/api/tgup/settings", {"rules": [{"kind": "folder", "folder": folder, "tg": new, "channel": "-1001", "channel_title": "B"}]})
+            with self.assertRaises(ApiError):   # 이 계정으로 올리는 규칙이 있음
+                api_post("/api/tgup/account", {"action": "remove", "account": new})
+            api_post("/api/tgup/settings", {"rules": []})
+            api_post("/api/tgup/account", {"action": "remove", "account": new})
+            self.assertEqual([a["id"] for a in tgaccount.accounts()], ["tg"])
+            with self.assertRaises(ApiError):   # 첫 계정은 못 뺌
+                api_post("/api/tgup/account", {"action": "remove", "account": "tg"})
+            with self.assertRaises(ApiError):   # 없는 계정
+                api_post("/api/tgup/account", {"action": "send_code", "account": "tg9"})
+            with self.assertRaises(tgaccount.TgError):   # 지운 계정을 쓰는 규칙이 올리려 하면
+                self.service.RUNNER.get_account("tg7")
+        finally:
+            shutil.rmtree(folder, ignore_errors=True)
+
     def test_discord_notify(self):
         import time
         from aiohttp import web

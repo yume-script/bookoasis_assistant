@@ -99,14 +99,42 @@
                 + (a.from_env ? '.env의 TGUP_API_ID / TGUP_API_HASH로 정해져 있어 여기서는 바꿀 수 없습니다.' : '화면에서 넣으면 data/tgup/settings.json에 저장됩니다.') }),
             h('div', { class: 'row-2' }, field('API ID', apiId), field('API Hash', apiHash)),
             h('div', { class: 'toolbar' }, saveApi));
-        const box = h('div', { class: 'src-card tg-account' }, h('h3', { class: 'pane-title' }, h('i', { class: 'fa-brands fa-telegram' }), ' 로그인'));
+        const accounts = d.accounts && d.accounts.length ? d.accounts : [{ ...a, id: 'tg' }];
+        const cards = accounts.map((acc, n) => accountCard(acc, n, pane, accounts.length));
+        const add = h('button', { class: 'btn', type: 'button', on: { click: async () => {
+            const name = prompt('새 텔레그램 계정의 이름 (구분용, 비워도 됨)', '');
+            if (name === null) return;
+            try { await post('api/tgup/account', { action: 'add', name }); toast('계정을 더했습니다. 그 카드에서 로그인하세요.', 'success'); renderAccount(pane); }
+            catch (e) { toast(e.message, 'error'); }
+        } } }, icon('plus'), ' 텔레그램 계정 더하기');
+        const intro = h('p', { class: 'field-hint', text: '텔레그램 계정을 여러 개 넣을 수 있습니다. 규칙마다 올릴 계정을 고르고, 계정마다 따로 동시에 올립니다 '
+            + '(같은 계정은 차례로, 한 계정이 요청 제한에 걸려도 다른 계정은 계속). 위의 API ID/Hash는 모든 계정이 같이 씁니다.' });
+        clear(pane).append(apiCard, intro, ...cards, h('div', { class: 'toolbar' }, add));
+    }
+
+    // 계정 하나의 카드 (로그인 / 로그인된 계정 / 이름 바꾸기 / 빼기)
+    function accountCard(a, n, pane, count) {
+        const say = (body) => post('api/tgup/account', { ...body, account: a.id });
+        const title = a.title || a.label || a.name || (n === 0 ? '첫 계정' : a.id);
+        const rename = h('button', { class: 'btn btn-sm', type: 'button', title: '구분용 이름', on: { click: async () => {
+            const name = prompt('이 계정의 이름 (구분용)', a.label || '');
+            if (name === null) return;
+            try { await say({ action: 'rename', name }); renderAccount(pane); } catch (e) { toast(e.message, 'error'); }
+        } } }, icon('pen'));
+        const remove = n === 0 ? null : h('button', { class: 'btn btn-sm danger', type: 'button', title: '이 계정 빼기', on: { click: async () => {
+            if (!confirm(`"${title}" 계정을 뺄까요? (로그인돼 있으면 로그아웃하고 세션을 지웁니다. 이 계정으로 올리는 규칙이 있으면 못 뺍니다)`)) return;
+            try { await say({ action: 'remove' }); toast('계정을 뺐습니다.', 'success'); renderAccount(pane); } catch (e) { toast(e.message, 'error', 6000); }
+        } } }, icon('trash'));
+        const box = h('div', { class: 'src-card tg-account' },
+            h('div', { class: 'toolbar' }, h('h3', { class: 'pane-title', style: 'flex:1' }, h('i', { class: 'fa-brands fa-telegram' }),
+                ` ${count > 1 ? `계정 ${n + 1}: ` : ''}${title}`), rename, remove));
         if (!a.telethon) box.appendChild(h('p', { class: 'muted error', text: '서버에 telethon이 없습니다: pip install -r requirements.txt 후 다시 시작하세요.' }));
         else if (a.authorized) {
             box.append(h('p', {}, h('span', { class: 'ok', text: `✓ ${a.name || '로그인됨'}` }), h('span', { class: 'muted', text: ` ${a.phone || ''}${a.premium ? ' · 프리미엄 (4GB까지)' : ' · 일반 계정 (2GB까지)'}` })),
                 a.fast_crypto ? null : h('p', { class: 'field-hint', text: 'cryptg가 없어 올리기가 느릴 수 있습니다: pip install cryptg' }),
                 h('div', { class: 'toolbar' }, h('button', { class: 'btn danger', on: { click: async () => {
-                    if (!confirm('텔레그램에서 로그아웃할까요? (자동 올리기가 멈춥니다)')) return;
-                    try { await post('api/tgup/account', { action: 'logout' }); renderAccount(pane); } catch (e) { toast(e.message, 'error'); }
+                    if (!confirm('이 계정을 텔레그램에서 로그아웃할까요? (이 계정으로 올리는 규칙이 멈춥니다)')) return;
+                    try { await say({ action: 'logout' }); renderAccount(pane); } catch (e) { toast(e.message, 'error'); }
                 } } }, icon('right-from-bracket'), ' 로그아웃')));
         } else {
             const phone = h('input', { class: 'input', type: 'tel', value: a.phone || '', placeholder: '+821012345678' });
@@ -116,13 +144,13 @@
             pwField.classList.add('hidden');
             const send = h('button', { class: 'btn', on: { click: async () => {
                 send.disabled = true;
-                try { await post('api/tgup/account', { action: 'send_code', phone: phone.value.trim() }); toast('인증 코드를 보냈습니다. 텔레그램 앱을 보세요.', 'success'); code.focus(); }
+                try { await say({ action: 'send_code', phone: phone.value.trim() }); toast('인증 코드를 보냈습니다. 텔레그램 앱을 보세요.', 'success'); code.focus(); }
                 catch (e) { toast(e.message, 'error', 6000); } finally { send.disabled = false; }
             } } }, icon('paper-plane'), ' 인증 코드 받기');
             const login = h('button', { class: 'btn btn-accent', on: { click: async () => {
                 login.disabled = true;
                 try {
-                    const r = await post('api/tgup/account', { action: 'sign_in', code: code.value.trim(), password: pw.value });
+                    const r = await say({ action: 'sign_in', code: code.value.trim(), password: pw.value });
                     if (r.password_required) { pwField.classList.remove('hidden'); pw.focus(); toast('2단계 인증 비밀번호를 넣어 주세요.'); }
                     else if (r.authorized) { toast('로그인했습니다.', 'success'); renderAccount(pane); }
                 } catch (e) { toast(e.message, 'error', 6000); } finally { login.disabled = false; }
@@ -132,7 +160,7 @@
                 h('div', { class: 'tg-login' }, field('전화번호 (국가번호 포함)', phone), send),
                 h('div', { class: 'tg-login' }, field('인증 코드', code), pwField, login));
         }
-        clear(pane).append(apiCard, box);
+        return box;
     }
 
     // ── 폴더 고르기 ──
@@ -176,8 +204,9 @@
         try { [data, opts] = await Promise.all([api('api/tgup'), api('api/tgup/options')]); }
         catch (e) { clear(pane).appendChild(h('p', { class: 'muted error', text: e.message })); return; }
         const st = data.settings;
-        let channelsP = null;
-        const loadChannels = () => (channelsP = channelsP || api('api/tgup/channels').then((r) => r.channels).catch((e) => { channelsP = null; throw e; }));
+        const channelsP = {};   // 계정 id -> 채널 목록 (한 번 받은 것은 기억)
+        const loadChannels = (acc) => (channelsP[acc] = channelsP[acc]
+            || api(`api/tgup/channels?account=${encodeURIComponent(acc)}`).then((r) => r.channels).catch((e) => { delete channelsP[acc]; throw e; }));
         const intervalIn = h('input', { class: 'input', type: 'number', min: '2', max: '1440', value: String(st.interval) });
         const hw = opts.encoders || {};
         const encSel = h('select', { class: 'select' }, [['auto', `자동 (${['nvenc', 'qsv', 'vaapi'].filter((n) => hw[n]).map((n) => ({ nvenc: 'NVIDIA', qsv: 'Intel Quick Sync', vaapi: 'VAAPI' })[n])[0] || '그래픽 인코더 없음 - CPU'})`],
@@ -205,6 +234,10 @@
                 ...opts.plex.flatMap((p) => p.sections.map((sec) => opt(`${p.id}|${sec.key}`, `${sec.title} (${sec.type === 'show' ? 'TV' : '영화'})`,
                     r.plex === p.id && r.section === sec.key, sec.title))));
             const chSel = h('select', { class: 'select' }, r.channel ? opt(r.channel, r.channel_title || r.channel, true) : opt('', '채널 고르기', true));
+            // 올릴 텔레그램 계정 (로그인한 계정들 - 규칙의 계정이 지금 로그인 안 돼 있어도 그대로 보여 준다)
+            const accIds = opts.telegram.map((t) => t.id);
+            const accSel = h('select', { class: 'select' }, ...opts.telegram.map((t) => opt(t.id, t.name, (r.tg || 'tg') === t.id)),
+                ...(r.tg && !accIds.includes(r.tg) ? [opt(r.tg, `${r.tg} (로그인 안 됨)`, true)] : []));
             const waitIn = h('input', { type: 'checkbox', checked: r.wait_subs !== false });
             const burnIn = h('input', { type: 'checkbox', checked: r.burn_subs !== false });
             const hoursIn = h('input', { class: 'input mirror-days', type: 'number', min: '0', max: '8760', value: String(r.wait_hours ?? 12) });
@@ -213,12 +246,13 @@
             const fillChannels = async () => {
                 const keep = chSel.value;
                 try {
-                    const list = await loadChannels();
+                    const list = await loadChannels(accSel.value || 'tg');
                     clear(chSel).append(opt('', '채널 고르기', !keep),
                         ...list.map((c) => opt(String(c.id), `${c.title}${c.kind === 'group' ? ' (그룹)' : ''}`, String(c.id) === keep, c.title)));
                 } catch (e) { toast(`텔레그램 채널 목록을 못 받았습니다: ${e.message}`, 'error'); }
             };
             chSel.addEventListener('focus', fillChannels, { once: true });
+            accSel.addEventListener('change', () => { clear(chSel).append(opt('', '채널 고르기', true)); fillChannels(); });
             const test = h('button', { class: 'btn btn-sm', title: '저장한 뒤에 쓰세요', on: { click: async () => {
                 try { const t = await post('api/tgup/test', { rule: row.id }); toast(`"${t.title}"을(를) 올리기 시작합니다. 진행 상태에서 보세요.`); }
                 catch (e) { toast(e.message, 'error', 6000); }
@@ -242,7 +276,7 @@
             kindSel.addEventListener('change', syncKind);
             const card = h('div', { class: 'mirror-rule' },
                 h('div', { class: 'toolbar' }, h('label', { class: 'check' }, enabledIn, ' 켜기'), kindSel),
-                h('div', { class: 'row-2 mirror-pick' }, plexField, folderField, field('올릴 텔레그램 채널', h('div', { class: 'toolbar' }, chSel))),
+                h('div', { class: 'row-2 mirror-pick' }, plexField, folderField, field('올릴 텔레그램 계정 · 채널', h('div', { class: 'toolbar' }, opts.telegram.length > 1 || (r.tg && r.tg !== 'tg') ? accSel : null, chSel))),
                 h('div', { class: 'mirror-wait' }, h('span', { class: 'muted', text: '화질:' }), heightSel, encText),
                 h('div', { class: 'mirror-wait' }, h('label', { class: 'check' }, waitIn, ' 자막이 생길 때까지 기다렸다가 올리기'),
                     h('span', { class: 'muted', text: ' 최대' }), hoursIn, h('span', { class: 'muted', text: '시간 (0이면 계속 기다림, 하드섭은 진행 상태에서 [지금 올리기])' })),
@@ -254,7 +288,7 @@
                 const [plex, section] = plexSel.value.split('|');
                 return { id: row.id, enabled: enabledIn.checked, kind: kindSel.value, folder: folderIn.value.trim(),
                     height: Number(heightSel.value), plex, section, section_title: ((plexSel.selectedOptions[0] || {}).dataset || {}).name || '',
-                    tg: 'tg', channel: chSel.value, channel_title: ((chSel.selectedOptions[0] || {}).dataset || {}).name || '', caption: capIn.value,
+                    tg: accSel.value || r.tg || 'tg', channel: chSel.value, channel_title: ((chSel.selectedOptions[0] || {}).dataset || {}).name || '', caption: capIn.value,
                     wait_subs: waitIn.checked, wait_hours: Number(hoursIn.value) || 0, burn_subs: burnIn.checked };
             } };
             rows.push(row);
@@ -366,19 +400,28 @@
             renderStatus(pane);
         } } }, label);
         const cancelBtn = (w, running) => act(w, 'cancel', '취소', running ? `지금 올리는 "${w.title}"을(를) 멈추고 취소할까요? (다시 올리지 않음)` : null);
-        if (cur) {
-            const pct = cur.total ? Math.min(100, (cur.done / cur.total) * 100) : 0;
-            const r = row(cur.title, chip('run', '올리는 중'), '', `${cur.phase}${cur.speed && /인코딩/.test(cur.phase) ? ` · ${cur.speed}` : ''}${cur.total && /올리는|받는/.test(cur.phase) ? ` · ${fmtB(cur.done)} / ${fmtB(cur.total)}` : ''}`,
+        // 계정마다 지금 올리는 것 (같은 계정은 차례로, 다른 계정은 동시에 - 요청 제한은 그 계정만 기다림)
+        const accName = (id) => ((d.accounts || []).find((x) => x.id === id) || {}).title || id;
+        const many = (d.accounts || []).length > 1;
+        const lanes = s.lanes || (cur ? [{ tg: 'tg', current: cur }] : []);
+        const shown = new Set();
+        for (const l of lanes) {
+            const c = l.current;
+            if (!c) continue;
+            const pct = c.total ? Math.min(100, (c.done / c.total) * 100) : 0;
+            const flood = l.flood_until && /요청 제한/.test(c.phase || '');
+            const r = row(c.title, chip(flood ? 'wait' : 'run', flood ? '계정 대기' : '올리는 중'), '',
+                `${many ? `[${accName(l.tg)}] ` : ''}${c.phase}${c.speed && /인코딩/.test(c.phase) ? ` · ${c.speed}` : ''}${c.total && /올리는|받는/.test(c.phase) ? ` · ${fmtB(c.done)} / ${fmtB(c.total)}` : ''}`,
                 h('div', { class: 'cache-bar mirror-bar' }, h('div', { style: { width: `${pct}%` } })));
-            r.lastChild.append(h('span', { class: 'mirror-actions' }, cancelBtn({ rule: cur.rule, key: cur.key, title: cur.title }, true)));
+            if (c.rule) r.lastChild.append(h('span', { class: 'mirror-actions' }, cancelBtn({ rule: c.rule, key: c.key, title: c.title }, true)));
             live.push(r);
+            shown.add(`${c.rule}/${c.key}`);
         }
-        const shown = new Set([cur ? `${cur.rule}/${cur.key}` : '']);
         for (const q of s.queue) {
             const k = `${q.rule}/${q.key}`;
             if (shown.has(k) || waitKeys.has(k)) continue;
             shown.add(k);
-            const r = row(q.title, chip('queue', '올릴 차례'), '확인 전', '');
+            const r = row(q.title, chip('queue', '올릴 차례'), '확인 전', many ? accName(q.tg) : '');
             r.lastChild.append(h('span', { class: 'mirror-actions' }, cancelBtn(q)));
             live.push(r);
         }
@@ -405,13 +448,13 @@
         const hist = s.history.map((x) => row(x.title,
             x.ok ? chip('ok', '완료') : String(x.note || '').startsWith('건너뜀') ? chip('skip', '건너뜀') : chip('fail', '실패'),
             x.subs || (x.ok ? '' : '-'),
-            [when(x.at), x.channel ? `→ ${x.channel}` : '',
+            [when(x.at), many && x.tg ? accName(x.tg) : '', x.channel ? `→ ${x.channel}` : '', x.again ? '다시 올림' : '',
                 ...String(x.note || '').split(', ').filter((n) => n && !(x.subs && /^(자막 파일 \d+개 첨부|내장 자막|자막 없음|자막 입혀 인코딩)$/.test(n)))]
                 .filter(Boolean).join(' · ')));
         const nRules = (d.settings.rules || []).filter((r) => r.enabled).length;
         clear(pane).append(h('div', { class: 'src-card' },
             h('div', { class: 'toolbar' },
-                h('span', { class: 'muted', text: `${d.account && d.account.authorized ? `텔레그램 ${d.account.name || '로그인됨'}` : '텔레그램 로그인 안 됨'} · 켜진 규칙 ${nRules}개 · `
+                h('span', { class: 'muted', text: `${(d.accounts || []).length > 1 ? `텔레그램 계정 ${(d.accounts || []).filter((x) => x.authorized).length}/${d.accounts.length}개 로그인` : d.account && d.account.authorized ? `텔레그램 ${d.account.name || '로그인됨'}` : '텔레그램 로그인 안 됨'} · 켜진 규칙 ${nRules}개 · `
                     + (s.last_check ? `마지막 확인 ${new Date(s.last_check * 1000).toLocaleString()}` : '아직 확인 전') }),
                 h('button', { class: 'btn btn-sm', on: { click: async () => { await post('api/tgup/check'); toast('지금 확인합니다.'); setTimeout(() => renderStatus(pane), 2000); } } }, icon('rotate-right'), ' 지금 확인')),
             s.error ? h('p', { class: 'muted error', text: s.error }) : null,

@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""자동 올리기에 쓰는 텔레그램 계정 하나 (telethon 사용자 로그인 - 봇이 아니라 내 계정이라 2GB/4GB 파일을 올린다).
+"""자동 올리기에 쓰는 텔레그램 계정들 (telethon 사용자 로그인 - 봇이 아니라 내 계정이라 2GB/4GB 파일을 올린다).
+
+계정은 여러 개 넣을 수 있다 (규칙마다 올릴 계정을 고른다 - 계정마다 따로 동시에 올리고, 요청 제한은 그 계정만 기다린다).
+API ID / API Hash는 계정들이 같이 쓴다 (my.telegram.org의 앱 하나로 여러 계정이 로그인할 수 있다).
+  계정 목록: data/tgup/settings.json의 "accounts" [{id, name, phone}] - 첫 계정 id는 "tg" (예전 하나뿐이던 계정 그대로)
+  세션 파일: 첫 계정 data/tgup/telegram.session, 그 밖 data/tgup/telegram_<id>.session (계정 열쇠 - 권한 600)
 
 YMPlayer의 텔레그램 소스(TelegramSource)에서 자동 올리기가 쓰는 부분만 옮겼다: 로그인(전화번호 → 인증 코드 → 2단계 비밀번호),
 채널 목록, 채널 주소(peer), 로그인된 클라이언트.
@@ -17,7 +22,9 @@ from . import compat
 
 log = logging.getLogger("tgup.telegram")
 KEEP_PLEX_META = False   # plex_to_tg._save_meta: 작품 정보는 YMPlayer 텔레그램 색인에만 쓰여 여기선 남기지 않는다
-ACCOUNT_ID = "tg"        # 규칙의 tg 칸 (계정이 하나뿐)
+ACCOUNT_ID = "tg"        # 첫 계정의 id (규칙의 tg 칸 - 예전에 계정이 하나뿐일 때의 값 그대로)
+MAX_ACCOUNTS = 10
+_ID_RE = re.compile(r"^tg[0-9]{0,3}$")
 
 
 class TgError(Exception):
@@ -52,8 +59,36 @@ def api_conf():
             "from_env": bool(compat.config.env("TGUP_API_ID") and compat.config.env("TGUP_API_HASH"))}
 
 
+def accounts():
+    """[{id, name, phone}] - 비어 있으면 첫 계정 하나 (예전 설정)"""
+    data = compat.load()
+    out, seen = [], set()
+    for a in data.get("accounts") or []:
+        if isinstance(a, dict) and _ID_RE.match(str(a.get("id") or "")) and a["id"] not in seen:
+            seen.add(a["id"])
+            out.append({"id": a["id"], "name": str(a.get("name") or "")[:40], "phone": str(a.get("phone") or "")})
+    if ACCOUNT_ID not in seen:
+        out.insert(0, {"id": ACCOUNT_ID, "name": "", "phone": str((data.get("telegram") or {}).get("phone") or "")})
+    return out
+
+
+def save_accounts(items):
+    data = compat.load()
+    data["accounts"] = [{"id": a["id"], "name": a.get("name", ""), "phone": a.get("phone", "")} for a in items]
+    compat.save(data)
+
+
+def new_account_id():
+    used = {a["id"] for a in accounts()}
+    n = 2
+    while f"tg{n}" in used:
+        n += 1
+    return f"tg{n}"
+
+
 class TelegramAccount:
-    def __init__(self):
+    def __init__(self, acc_id=ACCOUNT_ID):
+        self.id = acc_id
         self.client = None
         self._key = None
         self._lock = asyncio.Lock()
@@ -61,12 +96,30 @@ class TelegramAccount:
         self.phone = ""
 
     @property
+    def _suffix(self):
+        return "" if self.id == ACCOUNT_ID else f"_{self.id}"
+
+    @property
     def session_path(self):
-        return os.path.join(compat.DATA_DIR, "telegram.session")
+        return os.path.join(compat.DATA_DIR, f"telegram{self._suffix}.session")
 
     @property
     def peers_path(self):
-        return os.path.join(compat.DATA_DIR, "peers.json")
+        return os.path.join(compat.DATA_DIR, f"peers{self._suffix}.json")
+
+    def _saved_phone(self):
+        return next((a["phone"] for a in accounts() if a["id"] == self.id), "")
+
+    def _save_phone(self, phone):
+        items = accounts()
+        for a in items:
+            if a["id"] == self.id:
+                a["phone"] = phone
+        save_accounts(items)
+        if self.id == ACCOUNT_ID:   # 예전 설정 자리에도 (되돌려도 그대로)
+            data = compat.load()
+            data.setdefault("telegram", {})["phone"] = phone
+            compat.save(data)
 
     async def get_client(self):
         conf = api_conf()
@@ -109,7 +162,8 @@ class TelegramAccount:
 
     async def status(self):
         conf = api_conf()
-        base = {"authorized": False, "phone": self.phone or conf["phone"], "api_id": conf["api_id"],
+        base = {"id": self.id, "authorized": False, "phone": self.phone or self._saved_phone() or (conf["phone"] if self.id == ACCOUNT_ID else ""),
+                "api_id": conf["api_id"],
                 "has_hash": bool(conf["api_hash"]), "from_env": conf["from_env"], "telethon": available(),
                 "fast_crypto": fast_crypto()}
         try:
@@ -126,15 +180,13 @@ class TelegramAccount:
             return {**base, "error": f"텔레그램에 연결하지 못했습니다: {e}"}
 
     async def send_code(self, phone=""):
-        phone = re.sub(r"[\s-]", "", phone or self.phone or api_conf()["phone"])
+        phone = re.sub(r"[\s-]", "", phone or self.phone or self._saved_phone())
         if not phone:
             raise TgError("전화번호를 넣어 주세요 (국가번호 포함, 예: +821012345678).")
         client = await self.get_client()
         sent = await client.send_code_request(phone)
         self.phone, self._code_hash = phone, sent.phone_code_hash
-        data = compat.load()
-        data.setdefault("telegram", {})["phone"] = phone
-        compat.save(data)
+        self._save_phone(phone)
         return {"code_sent": True, "phone": phone}
 
     async def sign_in(self, code="", password=""):

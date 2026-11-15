@@ -7,7 +7,7 @@
 
   GET  /api/tgup              설정 + 진행 상태 + 텔레그램 계정 + Plex 연결 여부
   GET  /api/tgup/options      규칙 고르기용: Plex 영화·TV 라이브러리, rclone 드라이브, 쓸 수 있는 그래픽 인코더
-  GET  /api/tgup/channels     로그인한 계정이 들어가 있는 채널·그룹
+  GET  /api/tgup/channels?account=  그 계정이 들어가 있는 채널·그룹 (비우면 첫 계정)
   GET  /api/tgup/folders?path= 폴더 고르기 (비우면 rclone mount 폴더·원격 목록)
   GET  /api/tgup/shot?rule=&key=  자막 기다리는 항목의 10분 지점 장면 (JPEG)
   POST /api/tgup/settings     설정 저장 (규칙들)
@@ -15,7 +15,8 @@
   POST /api/tgup/test         {rule} 가장 최근 것 하나 올려 보기
   POST /api/tgup/item         {rule, key, action: upload|drop|cancel|cancel_all}
   POST /api/tgup/notify       {action: save|test, webhook, bot_token, channel_id, ok, fail, skip} 디스코드 알림
-  POST /api/tgup/account      {action: save_api|send_code|sign_in|logout, api_id, api_hash, phone, code, password}
+  POST /api/tgup/account      {action: save_api|send_code|sign_in|logout|add|remove|rename, account, api_id, api_hash, phone, code,
+                              password, name} - 텔레그램 계정은 여러 개 (API ID/Hash는 같이 씀)
 """
 import asyncio
 import logging
@@ -26,14 +27,14 @@ from . import compat, folder_watch, notify, plex_to_tg, tgaccount
 
 log = logging.getLogger("tgup")
 CALL_TIMEOUT = 120
-_ACC_FAIL = {}   # 텔레그램에 닿지 않았던 때와 그때 돌려준 상태
+_ACC_FAIL = {}   # 계정 id -> {"at": 텔레그램에 닿지 않았던 때, "status": 그때 돌려준 상태}
 
 
 class _Runner:
     def __init__(self):
         self.loop = None
         self.mirror = None
-        self.account = None
+        self.accounts = {}       # 계정 id -> TelegramAccount
         self.http = None
         self.thread = None
         self._ready = threading.Event()
@@ -62,15 +63,14 @@ class _Runner:
     async def _setup(self):
         from aiohttp import ClientSession
         self.http = ClientSession()
-        self.account = tgaccount.TelegramAccount()
         cfg = {"client_id": "bookoasis_assistant"}
 
         def plex_src(_sid):
             src = compat.plex_conf()
             return cfg, (src if src["url"] else None)
 
-        def tg_for(_sid):
-            return self.account
+        def tg_for(sid):
+            return self.get_account(sid or tgaccount.ACCOUNT_ID)
 
         async def plex_json(_cfg, src, path, params=None):
             if not src:
@@ -96,11 +96,25 @@ class _Runner:
                     await task
                 except BaseException:  # noqa: BLE001 - 끝내는 중
                     pass
-        try:
-            await self.account.close()
-        except Exception:  # noqa: BLE001
-            pass
+        for acc in list(self.accounts.values()):
+            try:
+                await acc.close()
+            except Exception:  # noqa: BLE001
+                pass
         await self.http.close()
+
+    @property
+    def account(self):
+        """첫 계정 (예전 코드·테스트용)"""
+        return self.get_account(tgaccount.ACCOUNT_ID)
+
+    def get_account(self, acc_id):
+        """계정 id -> TelegramAccount (목록에 없는 id면 TgError - 지운 계정을 쓰는 규칙)"""
+        if acc_id not in self.accounts:
+            if acc_id not in {a["id"] for a in tgaccount.accounts()}:
+                raise tgaccount.TgError(f"텔레그램 계정({acc_id})이 없습니다 - 규칙에서 올릴 계정을 다시 골라 주세요.")
+            self.accounts[acc_id] = tgaccount.TelegramAccount(acc_id)
+        return self.accounts[acc_id]
 
     def stop(self):
         if self.loop and self.loop.is_running():
@@ -140,20 +154,34 @@ class ApiError(Exception):
         self.status = status
 
 
-async def _account_status():
+async def _account_status(acc_id=tgaccount.ACCOUNT_ID):
     """계정 상태 - 텔레그램에 닿지 않아도 화면이 오래 기다리지 않게 8초까지만"""
-    last = _ACC_FAIL.get("at", 0)
-    if time.time() - last < 60:   # 방금 닿지 않았으면 1분 동안은 다시 기다리지 않는다 (진행 상태가 15초마다 묻는다)
-        return _ACC_FAIL["status"]
+    fail = _ACC_FAIL.get(acc_id) or {}
+    if time.time() - fail.get("at", 0) < 60:   # 방금 닿지 않았으면 1분 동안은 다시 기다리지 않는다 (진행 상태가 15초마다 묻는다)
+        return fail["status"]
+    name = next((a["name"] for a in tgaccount.accounts() if a["id"] == acc_id), "")
     try:
-        return await asyncio.wait_for(RUNNER.account.status(), 8)
+        st = await asyncio.wait_for(RUNNER.get_account(acc_id).status(), 8)
     except asyncio.TimeoutError:
         base = tgaccount.api_conf()
-        _ACC_FAIL["at"] = time.time()
-        _ACC_FAIL["status"] = {"authorized": False, "api_id": base["api_id"], "has_hash": bool(base["api_hash"]), "from_env": base["from_env"],
-                "phone": base["phone"], "telethon": tgaccount.available(), "fast_crypto": tgaccount.fast_crypto(),
-                "error": "텔레그램에 연결하지 못했습니다 (시간 초과) - 서버의 인터넷 연결을 확인하세요."}
-        return _ACC_FAIL["status"]
+        st = {"id": acc_id, "authorized": False, "api_id": base["api_id"], "has_hash": bool(base["api_hash"]), "from_env": base["from_env"],
+              "phone": base["phone"] if acc_id == tgaccount.ACCOUNT_ID else "", "telethon": tgaccount.available(),
+              "fast_crypto": tgaccount.fast_crypto(), "error": "텔레그램에 연결하지 못했습니다 (시간 초과) - 서버의 인터넷 연결을 확인하세요."}
+        _ACC_FAIL[acc_id] = {"at": time.time(), "status": st}
+    return {**st, "label": name}
+
+
+async def _accounts_status():
+    """모든 계정의 상태 (동시에 물어본다)"""
+    ids = [a["id"] for a in tgaccount.accounts()]
+    return list(await asyncio.gather(*(_account_status(i) for i in ids)))
+
+
+def account_title(st):
+    """화면에 보일 계정 이름: 붙인 이름 > 텔레그램 이름 > 전화번호 > id"""
+    acc_id = st.get("id") or tgaccount.ACCOUNT_ID
+    fallback = "첫 계정" if acc_id == tgaccount.ACCOUNT_ID else f"계정 {acc_id[2:]}"
+    return st.get("label") or st.get("name") or st.get("phone") or fallback
 
 
 def _state():
@@ -168,12 +196,14 @@ def api_get(path, query):
         raise ApiError(503, "자동 올리기가 꺼져 있습니다 (aiohttp·telethon 설치 후 다시 시작).")
     if path == "/api/tgup":
         RUNNER.run(RUNNER.mirror.prepare_shots)
-        return {**_state(), "account": RUNNER.call(_account_status(), 30)}
+        accs = RUNNER.call(_accounts_status(), 40)
+        return {**_state(), "account": accs[0], "accounts": [{**a, "title": account_title(a)} for a in accs]}
     if path == "/api/tgup/options":
         return RUNNER.call(_options(), 60)
     if path == "/api/tgup/channels":
         try:
-            return {"success": True, "channels": RUNNER.call(RUNNER.account.list_channels(), 60)}
+            acc = RUNNER.get_account(query.get("account") or tgaccount.ACCOUNT_ID)
+            return {"success": True, "channels": RUNNER.call(acc.list_channels(), 60)}
         except tgaccount.TgError as e:
             raise ApiError(400, str(e))
     if path == "/api/tgup/folders":
@@ -199,8 +229,7 @@ async def _options():
         except Exception as e:  # noqa: BLE001
             item["error"] = f"Plex에 연결하지 못했습니다: {e}"
         plex.append(item)
-    acc = await _account_status()
-    tgs = [{"id": tgaccount.ACCOUNT_ID, "name": acc.get("name") or "내 텔레그램 계정"}] if acc.get("authorized") else []
+    tgs = [{"id": a["id"], "name": account_title(a)} for a in await _accounts_status() if a.get("authorized")]
     remotes, note = await folder_watch.list_remotes()
     mounts = folder_watch.rclone_mounts()
     encoders = {n: await folder_watch.hw_works(n) for n in ("nvenc", "qsv", "vaapi")}
@@ -284,7 +313,39 @@ def api_post(path, body):
 
 
 def _account(body):
-    acc, action = RUNNER.account, body.get("action")
+    action = body.get("action")
+    acc_id = str(body.get("account") or tgaccount.ACCOUNT_ID)
+    if action == "add":   # 계정 더하기 (로그인은 그 계정 카드에서)
+        items = tgaccount.accounts()
+        if len(items) >= tgaccount.MAX_ACCOUNTS:
+            raise ApiError(400, f"텔레그램 계정은 {tgaccount.MAX_ACCOUNTS}개까지 넣을 수 있습니다.")
+        new = {"id": tgaccount.new_account_id(), "name": str(body.get("name") or "").strip()[:40], "phone": ""}
+        tgaccount.save_accounts([*items, new])
+        return {"success": True, "id": new["id"]}
+    if acc_id not in {a["id"] for a in tgaccount.accounts()}:
+        raise ApiError(404, "없는 텔레그램 계정입니다.")
+    if action == "rename":
+        items = tgaccount.accounts()
+        for a in items:
+            if a["id"] == acc_id:
+                a["name"] = str(body.get("name") or "").strip()[:40]
+        tgaccount.save_accounts(items)
+        return {"success": True}
+    if action == "remove":   # 계정 빼기: 그 계정을 쓰는 규칙이 있으면 못 뺀다. 로그인돼 있으면 로그아웃까지
+        if acc_id == tgaccount.ACCOUNT_ID:
+            raise ApiError(400, "첫 계정은 뺄 수 없습니다 (로그아웃은 됩니다).")
+        used = [r.get("section_title") or r.get("channel_title") or r["id"] for r in plex_to_tg.load_settings()["rules"] if r.get("tg") == acc_id]
+        if used:
+            raise ApiError(400, f"이 계정으로 올리는 규칙이 있습니다 ({', '.join(used[:3])}) - 규칙의 계정을 먼저 바꿔 주세요.")
+        try:
+            RUNNER.call(RUNNER.get_account(acc_id).logout(), 30)
+        except Exception as e:  # noqa: BLE001 - 텔레그램에 못 닿아도 목록에서는 뺀다 (세션 파일은 logout이 지움)
+            log.info("텔레그램 계정 %s 로그아웃 실패 (목록에서는 뺌): %s", acc_id, e)
+        RUNNER.accounts.pop(acc_id, None)
+        _ACC_FAIL.pop(acc_id, None)
+        tgaccount.save_accounts([a for a in tgaccount.accounts() if a["id"] != acc_id])
+        return {"success": True}
+    acc = RUNNER.get_account(acc_id)
     try:
         if action == "save_api":
             api_id, api_hash = str(body.get("api_id") or "").strip(), str(body.get("api_hash") or "").strip()
@@ -299,18 +360,22 @@ def _account(body):
                 raise ApiError(400, "API Hash를 넣어 주세요.")
             compat.save(data)
             _ACC_FAIL.clear()
-            return {"success": True, "account": RUNNER.call(_account_status(), 30)}
+            for a in list(RUNNER.accounts.values()):   # 모든 계정이 새 API 값으로 다시 연결
+                RUNNER.call(a.close(), 15)
+            return {"success": True, "account": RUNNER.call(_account_status(acc_id), 30)}
         if action == "send_code":
             return {"success": True, **RUNNER.call(acc.send_code(str(body.get("phone") or "")), 60)}
         if action == "sign_in":
+            _ACC_FAIL.pop(acc_id, None)
             return {"success": True, **RUNNER.call(acc.sign_in(str(body.get("code") or ""), str(body.get("password") or "")), 60)}
         if action == "logout":
             RUNNER.call(acc.logout(), 30)
-            return {"success": True, "account": RUNNER.call(_account_status(), 30)}
+            _ACC_FAIL.pop(acc_id, None)
+            return {"success": True, "account": RUNNER.call(_account_status(acc_id), 30)}
     except tgaccount.TgError as e:
         raise ApiError(400, str(e))
     except ApiError:
         raise
     except Exception as e:  # noqa: BLE001 - 텔레그램 쪽 오류 (번호 형식, 너무 잦은 요청 등)
         raise ApiError(400, f"텔레그램: {e}")
-    raise ApiError(400, "action은 save_api, send_code, sign_in, logout 중 하나입니다.")
+    raise ApiError(400, "action은 save_api, send_code, sign_in, logout, add, remove, rename 중 하나입니다.")
