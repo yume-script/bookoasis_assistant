@@ -255,6 +255,21 @@ class AutoCheckTest(unittest.TestCase):
         self.s._run(job)
         return self.s.load_history()[0]
 
+    def test_history_epub_state(self):
+        """받은 목록의 EPUB 상태: 최신 / 새 회차 미반영(발행 수 > 담은 수) / 만드는 중 / 파일 없음"""
+        s = self.s
+        h = self._download()
+        st = lambda: next(x for x in s._public_history() if x["id"] == s.load_history()[0]["id"])  # noqa: E731
+        self.assertEqual((st()["epub_state"], st()["published"], st()["new_count"]), ("latest", 2, 0))
+        self.page = BOOK_PAGE.replace('href="/@@abc/0" aria-disabled="true"', 'href="/@@abc/15" aria-disabled="false"')
+        s._JOBS.clear()
+        s.check_now()                                   # 새 회차 발견 -> 다시 받기 대기열
+        self.assertEqual(st()["epub_state"], "queued")
+        s._JOBS.clear()
+        self.assertEqual((st()["epub_state"], st()["new_count"], st()["published"]), ("behind", 1, 3))
+        os.remove(h["file"])
+        self.assertEqual(st()["epub_state"], "missing")
+
     def test_epub_state_and_bulk_complete(self):
         """연재 목록의 회차가 받아 둔 EPUB에 들어 있는지 표시하고, [완결작 모두 EPUB으로]는 아직 안 받은 책만 대기열에"""
         s = self.s

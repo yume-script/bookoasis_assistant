@@ -229,7 +229,9 @@ def check_now(reason="자동"):
                 _update_entry(h["id"], checked_at=_now(), check_error=str(e))
                 continue
             new = _has_new(h, book)
-            fields = {"checked_at": _now(), "check_error": ""}
+            # 받은 목록에 보일 "브런치에 발행된 회차 수 / 마지막 회차" (EPUB에 다 들었는지)
+            fields = {"checked_at": _now(), "check_error": "", "published": len(book["episodes"]),
+                      "latest_title": (book["episodes"][-1].get("title") or "") if book["episodes"] else ""}
             if book.get("status") == "COMPLETE" and not new:
                 fields["status"] = "COMPLETE"   # 완결됐고 다 받았으면 더 확인하지 않는다
             _update_entry(h["id"], **fields)
@@ -257,6 +259,8 @@ def _check_due(started):
 
 def _public_history():
     out = []
+    with _LOCK:
+        busy = {j["key"] for j in _JOBS if j["state"] in ("queued", "running")}
     for h in load_history():
         item = {k: h.get(k) for k in ("id", "key", "kind", "title", "author", "url", "chapters", "images",
                                       "restricted", "skipped", "at", "size", "status", "file_name", "scan",
@@ -264,6 +268,20 @@ def _public_history():
         item["auto"] = h.get("kind") == "book" and h.get("auto", True) is not False
         item["watched"] = watched(h)
         item["exists"] = bool(h.get("file")) and os.path.isfile(h["file"])
+        # EPUB 상태: missing(파일 없음) / queued(만드는 중) / behind(브런치에 새 회차가 있는데 아직 안 담음) / latest(최신 회차까지)
+        have = int(h.get("chapters") or 0) + len(h.get("skipped") or [])
+        published = int(h.get("published") or have)
+        item["published"] = published
+        item["latest_title"] = h.get("latest_title") or ""
+        item["new_count"] = max(0, published - have)
+        if h.get("key") in busy:
+            item["epub_state"] = "queued"
+        elif not item["exists"]:
+            item["epub_state"] = "missing"
+        elif item["new_count"]:
+            item["epub_state"] = "behind"
+        else:
+            item["epub_state"] = "latest"
         item["path"] = h.get("file") or ""
         out.append(item)
     return out
@@ -523,6 +541,7 @@ def _run(job):
              "size": size, "scan": scan, "at": _now(), "checked_at": _now(),
              "episode_ids": [int(e["article_no"]) for e in eps], "auto": job["kind"] == "book",
              "episode_keys": ["%s/%s" % (e.get("user_id") or "", int(e["article_no"])) for e in eps],
+             "published": len(eps), "latest_title": (eps[-1].get("title") or "") if eps else "",
              "yaml": yaml_ok, "layout": LAYOUT}
     _remember(entry)
     job["history_id"] = entry["id"]
