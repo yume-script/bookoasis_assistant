@@ -1088,7 +1088,7 @@ class WebtoonManagerMetadataProvider(BaseMetadataProvider):
         cfg = self._get_cfg("general")
         chans = discord_notify.configured_channels(cfg)
         warn = (" (%s로 보냅니다)" % ", ".join(chans)) if chans \
-            else " (알림 받을 곳 설정이 비어 있어 아직 보내지 못합니다 - [설정] > [공통] > 알림 받을 곳)"
+            else " (알림 받을 곳 설정이 비어 있어 아직 보내지 못합니다 - [설정] > 공통 > 알림)"
         return True, ("'%s' 새 회차 알림을 켰습니다%s" % (t.get("title", tid), warn)) if on \
             else "'%s' 새 회차 알림을 껐습니다" % t.get("title", tid)
 
@@ -1674,7 +1674,8 @@ class WebtoonManagerMetadataProvider(BaseMetadataProvider):
     # (섹션, 그룹 제목, 키들[, 그룹 설명]) - 섹션은 설정 화면의 탭
     _SETTINGS_GROUPS = [
         ("common", "자동 실행", ("ENABLE_SCHEDULER", "SCHEDULE_CRON", "FINISHED_SCAN_HOUR", "NEW_EP_SCOPE",
-                                "CHECK_PLAN_ENABLE")),
+                                "CHECK_PLAN_ENABLE", "COOKIE_KEEPALIVE_HOURS"),
+         "요일별 스캔 + 새 회차 다운로드를 언제 돌릴지 정합니다. 쿠키 자동 갱신은 자동 실행을 꺼 둬도 따로 돕니다."),
         ("common", "구독 / 다운로드 대상", ("AUTO_SUBSCRIBE_NEW_TITLES", "INITIAL_EPISODES_LIMIT",
                                          "ALLOW_BL", "ALLOW_GL", "HIDE_BL_GL"),
          "매일+·기다무 작품과 이미 갖고 있는 작품을 받을지는 각 플랫폼 탭에서 정합니다."),
@@ -1687,19 +1688,17 @@ class WebtoonManagerMetadataProvider(BaseMetadataProvider):
         ("common", "저장 파일", ("TEMP_DOWNLOAD_ROOT", "ZIP_STORED", "ADD_COVER_AS_FIRST_PAGE",
                                 "GENERATE_COMICINFO_XML", "GENERATE_SERIES_JSON", "GENERATE_KAVITA_YAML",
                                 "KAVITA_YAML_EMBED_COVER", "KAVITA_YAML_COVER_WIDTH", "FOLDER_ZERO_FILL", "IMAGE_ZERO_FILL")),
-        ("common", "알림 받을 곳", ("#디스코드", "DISCORD_WEBHOOK_URL", "DISCORD_BOT_TOKEN", "DISCORD_CHANNEL_ID",
+        ("common", "알림", ("NOTIFY_NEW_EPISODES_ALL", "#디스코드", "DISCORD_WEBHOOK_URL", "DISCORD_BOT_TOKEN", "DISCORD_CHANNEL_ID",
                                    "#텔레그램", "NOTIFY_TELEGRAM_BOT_TOKEN", "NOTIFY_TELEGRAM_CHAT_ID",
                                    "#슬랙", "NOTIFY_SLACK_WEBHOOK_URL",
                                    "#ntfy (휴대폰 푸시)", "NOTIFY_NTFY_URL", "NOTIFY_NTFY_TOKEN"),
          "채워 넣은 곳 전부로 같은 알림(새 회차, 완결, 쿠키 만료, 다운로드 실패 요약)을 보냅니다. "
-         "저장 후 아래 '알림 테스트 보내기'로 곳마다 성공 여부를 확인하세요."),
+         "새 회차 알림은 작품 카드의 🔔 버튼으로 작품마다 켜고 끕니다. 저장 후 [알림 테스트 보내기]로 곳마다 성공 여부를 확인하세요."),
         ("common", "텔레그램 채널 업로드", ("TELEGRAM_UPLOAD_CHAT_ID", "TELEGRAM_UPLOAD_BOT_TOKEN",
                                         "TELEGRAM_UPLOAD_MAX_MB", "TELEGRAM_UPLOAD_API_URL"),
          "작품 카드의 📤 버튼을 켠 작품만 올립니다: 켜는 순간 이미 받은 회차를 회차 순서대로 전부, 그 뒤로는 새 회차를 받을 때마다. "
          "#작품명 해시태그를 붙입니다. 채널 ID·토큰·주소는 .env의 WTM_TELEGRAM_UPLOAD_…에 저장됩니다. "
          "저장 후 '알림 테스트 보내기'로 채널에 글이 올라가는지 확인하세요."),
-        ("common", "알림 종류 / 쿠키 유지", ("NOTIFY_NEW_EPISODES_ALL", "COOKIE_KEEPALIVE_HOURS"),
-         "새 회차 알림은 작품 카드의 🔔 버튼으로 작품마다 켜고 끕니다."),
 
         ("naver", "계정", ("NAVER_COOKIE_JSON", "NAVER_KEEP_LOGIN")),
         ("naver", "다운로드", ("DOWNLOAD_ROOT", "NAVER_DOWNLOAD_DAILY_PLUS", "NAVER_TRY_OWNED_PAID")),
@@ -1728,6 +1727,23 @@ class WebtoonManagerMetadataProvider(BaseMetadataProvider):
                           ("novel", "카카오웹소설")]
     # 설정 탭의 다른 UI(중복 확인 라이브러리 드롭다운)가 따로 관리하는 키
     _SETTINGS_HIDDEN = ()
+    # 칸 -> 이 칸이 쓰이려면 켜져 있어야 하는 체크 칸 (화면에서 꺼져 있으면 흐리게 - 값은 그대로 저장)
+    _SETTINGS_REQUIRES = {
+        "SCHEDULE_CRON": "ENABLE_SCHEDULER", "FINISHED_SCAN_HOUR": "ENABLE_SCHEDULER", "NEW_EP_SCOPE": "ENABLE_SCHEDULER",
+        "CHECK_PLAN_ENABLE": "ENABLE_SCHEDULER",
+        "DOWNLOAD_NICE_LEVEL": "LOW_PRIORITY_MODE",
+        "KAVITA_YAML_EMBED_COVER": "GENERATE_KAVITA_YAML", "KAVITA_YAML_COVER_WIDTH": "GENERATE_KAVITA_YAML",
+        "NAVER_SPREAD_START": "NAVER_SPREAD_ENABLE", "NAVER_SPREAD_END": "NAVER_SPREAD_ENABLE",
+        "KAKAO_COOKIE": "KAKAO_ENABLE", "KAKAO_AUTO": "KAKAO_ENABLE",
+        "KAKAO_COOKIE_2": "KAKAO_ENABLE", "KAKAO_COOKIE_3": "KAKAO_ENABLE", "KAKAO_COOKIE_4": "KAKAO_ENABLE", "KAKAO_COOKIE_5": "KAKAO_ENABLE",
+        "KAKAO_DOWNLOAD_ROOT": "KAKAO_ENABLE", "KAKAO_DOWNLOAD_WAITFREE": "KAKAO_ENABLE", "KAKAO_SYNC_PURCHASED": "KAKAO_ENABLE",
+        "WAITFREE_CHECK_MINUTES": "KAKAO_USE_WAITFREE", "WAITFREE_SPREAD_ENABLE": "KAKAO_USE_WAITFREE",
+        "WAITFREE_SPREAD_START": "WAITFREE_SPREAD_ENABLE", "WAITFREE_SPREAD_END": "WAITFREE_SPREAD_ENABLE",
+        "WAITFREE_NIGHT_ENABLE": "KAKAO_USE_WAITFREE", "WAITFREE_NIGHT_START": "WAITFREE_NIGHT_ENABLE",
+        "KAKAO_USE_PAID_TICKETS": "KAKAO_USE_OWNED_TICKETS",
+        "KAKAO_NOVEL_DOWNLOAD_ROOT": "KAKAO_NOVEL_ENABLE", "KAKAO_NOVEL_DOWNLOAD_WAITFREE": "KAKAO_NOVEL_ENABLE",
+        "COMPARE_FOLDERS_NOVEL": "KAKAO_NOVEL_ENABLE", "KAKAO_NOVEL_DOWNLOAD_OWNED": "KAKAO_NOVEL_ENABLE",
+    }
 
     def _settings_fields(self):
         by_key = {f["key"]: f for f in self.settings_schema}
@@ -1737,6 +1753,9 @@ class WebtoonManagerMetadataProvider(BaseMetadataProvider):
             # "#제목"은 묶음 안의 소제목(한 줄 전체를 차지해서 다음 칸들이 새 줄에서 시작)
             fields = [({"key": "_h_%d" % i, "type": "heading", "label": k[1:]} if k.startswith("#")
                        else dict(by_key[k])) for i, k in enumerate(keys) if k.startswith("#") or k in by_key]
+            for f in fields:
+                if f["key"] in self._SETTINGS_REQUIRES:
+                    f["requires"] = self._SETTINGS_REQUIRES[f["key"]]
             seen.update(f["key"] for f in fields)
             if fields:
                 groups.append({"section": section, "label": glabel, "fields": fields,
@@ -1765,7 +1784,12 @@ class WebtoonManagerMetadataProvider(BaseMetadataProvider):
                     values[k] = ""
                 else:
                     values[k] = v
+        # 다음 실행 시각 (crontab 칸 아래에 보여 줌)
+        from . import cronspec
+        next_runs = cronspec.describe(cfg.get("SCHEDULE_CRON") or "")
         return True, json.dumps({"sections": [{"id": a, "label": b} for a, b in self._SETTINGS_SECTIONS],
+                                 "defaults": {f["key"]: f.get("default") for f in self.settings_schema if "default" in f},
+                                 "next_runs": next_runs,
                                  "groups": groups, "values": values, "secret_set": secret_set},
                                 ensure_ascii=False)
 

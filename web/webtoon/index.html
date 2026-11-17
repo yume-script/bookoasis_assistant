@@ -164,22 +164,21 @@
   </div>
 
   <div class="wtm-panel" data-panel-view="settings" style="display:none">
-    <div class="wtm-box">
-      <div class="wtm-box-title" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-        <span style="flex:1">설정</span>
-        <button class="wtm-btn wtm-btn-ghost wtm-btn-small" data-el="settings-reload">다시 불러오기</button>
-        <button class="wtm-btn wtm-btn-primary" data-el="settings-save">설정 저장</button>
-      </div>
+    <div class="wtm-box wtm-sx-box">
+      <div class="wtm-box-title">설정</div>
       <p class="wtm-hint">
-        [공통]은 모든 플랫폼에 적용되고, [네이버웹툰]·[카카오웹툰]·[카카오웹소설]은 해당 플랫폼에만 적용됩니다.
-        탭을 바꿔도 입력한 값은 유지되며 <b>설정 저장</b> 한 번으로 모두 저장됩니다.
+        왼쪽에서 묶음을 고르거나 위 칸에서 찾으세요. 여러 묶음을 고쳐도 아래 <b>[설정 저장]</b> 한 번으로 모두 저장됩니다(바꾼 칸은 표시됨).
         쿠키/토큰 칸은 보안상 비어 보이며 <b>비워두고 저장하면 기존 값이 유지</b>됩니다(지우려면 옆의 "지우기"를 체크).
+        흐린 칸은 위쪽 스위치를 켜야 쓰이는 설정입니다.
       </p>
       <div data-el="settings-form"><div class="wtm-hint">불러오는 중...</div></div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
+      <div class="wtm-sx-bar">
+        <span class="wtm-sx-bar-msg" data-el="settings-dirty-count">바꾼 설정 없음</span>
+        <span class="wtm-hint" data-el="settings-save-msg" style="margin:0"></span>
+        <span style="flex:1"></span>
+        <button class="wtm-btn wtm-btn-secondary wtm-btn-small" data-action="test_discord">알림 테스트 보내기</button>
+        <button class="wtm-btn wtm-btn-ghost wtm-btn-small" data-el="settings-reload">되돌리기</button>
         <button class="wtm-btn wtm-btn-primary" data-el="settings-save">설정 저장</button>
-        <button class="wtm-btn wtm-btn-secondary" data-action="test_discord">알림 테스트 보내기</button>
-        <span class="wtm-hint" data-el="settings-save-msg" style="margin:0;align-self:center"></span>
       </div>
       <div class="wtm-settings-summary" data-el="settings-summary" style="display:none"></div>
     </div>
@@ -545,7 +544,7 @@
     <details class="wtm-box">
       <summary class="wtm-box-title">🔔 알림 (디스코드 / 텔레그램 / 슬랙 / ntfy)</summary>
       <ul class="wtm-hint wtm-help-list">
-        <li><b>알림 받을 곳</b>([설정] &gt; [공통]): 채워 넣은 곳 전부로 같은 알림을 보냅니다. 저장 후 <b>알림 테스트 보내기</b>를 누르면 곳마다 ✅/❌ 결과가 나옵니다.
+        <li><b>알림</b>([설정] &gt; 공통 &gt; 알림): 채워 넣은 곳 전부로 같은 알림을 보냅니다. 저장 후 <b>알림 테스트 보내기</b>를 누르면 곳마다 ✅/❌ 결과가 나옵니다.
           <ul>
             <li><b>디스코드</b>: 웹훅 URL(또는 봇 토큰 + 채널 ID).</li>
             <li><b>텔레그램</b>: @BotFather에서 <code>/newbot</code>으로 봇을 만들어 토큰을 받고, 그 봇에게 아무 메시지나 보낸 뒤
