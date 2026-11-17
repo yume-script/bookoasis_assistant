@@ -374,7 +374,7 @@
                 field('CPU 인코딩 빠르기', presetSel, 'CPU로 할 때만. 빠를수록 같은 화질에 파일이 조금 커집니다.')),
             h('div', { class: 'row-2' }, field('올리기 시간대', hoursSel, '받기·인코딩·올리기를 이 시간에만 합니다. 새 항목 찾기는 늘 하고, 쌓아 두었다가 이 시간에 올립니다.'),
                 field('동시 인코딩 개수', slotsSel, '계정이 여럿이면 올리기는 계정마다 동시에 하지만, 인코딩은 CPU·그래픽 카드를 많이 써서 이만큼만 동시에 합니다. 나머지는 "인코딩 차례 기다리는 중".')),
-            field('제외할 파일 (정규식, 한 줄에 하나)', excludeIn, '파일 이름이나 제목에 맞으면 올리지 않고 최근 기록에 "제외"로 남깁니다. 예: S101, S201, (?i)\\bpreview\\b (대소문자 무시는 (?i)를 앞에).'),
+            field('제외할 파일 (정규식, 한 줄에 하나)', excludeIn, '파일 이름·제목·경로에 맞으면 올리지 않고 최근 기록에 "제외"로 남깁니다. 예: S101, S201, Featurettes 폴더 아래는 (?i)(^|[\\\\/])featurettes[\\\\/] (대소문자 무시는 (?i)를 앞에).'),
             rulesBox,
             h('div', { class: 'toolbar' }, h('button', { class: 'btn', on: { click: () => addRule() } }, icon('plus'), ' 규칙 추가'), save),
             h('p', { class: 'field-hint', text: '올리려면 그 채널에 글을 쓸 수 있어야 합니다(채널 관리자). Plex 서버의 파일 경로가 이 컴퓨터에서 보이면(PLEX_PATH_MAP으로 바꿈) 그대로 쓰고, '
