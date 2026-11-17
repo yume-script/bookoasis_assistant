@@ -52,6 +52,9 @@ def enqueue(path, source="웹툰 다운로더", action="create"):
         return False
     immediate = config.env_bool("WTM_SCAN_IMMEDIATE", True)
     buffer_seconds = 0 if immediate else max(0, int(runtime.get("buffer_seconds", 60) or 0))
+    # 수정(같은 경로에 새 내용 - 브런치북에 새 회차를 담아 덮어씀 등): BookOasis에 이미 있는 경로라도 다시 스캔해야 한다.
+    # 중복 확인(screener)은 '추가'만 보지만, 모아 처리하기·전체 스캔 회피에 묶이지 않게 바로 처리로 표시한다
+    forced = immediate or action == "edit"
     db = sqlite3.connect(db_path, timeout=30)
     try:
         db.execute("PRAGMA busy_timeout=30000")
@@ -65,7 +68,7 @@ def enqueue(path, source="웹툰 다운로더", action="create"):
                        "VALUES(?,?,?,?,?,?,?,?,?)",
                        (source, action, "file", path, path if action == "delete" else "",
                         datetime.now().isoformat(timespec="seconds"), time.time() + buffer_seconds,
-                        1 if immediate else 0, 1 if immediate else 0))
+                        1 if forced else 0, 1 if forced else 0))
     except sqlite3.Error:
         return False
     finally:

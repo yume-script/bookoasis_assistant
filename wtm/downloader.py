@@ -552,6 +552,10 @@ def download_episode(session, download_root, temp_root, title, title_id, episode
                 raise
             except naver_api.NaverPaidEpisode:
                 raise
+            except naver_api.NaverVideoOnly as e:   # 동영상만 있는 회차: 받은 것으로 보고 건너뜀 (다음 회차로 이어 감)
+                if log:
+                    log("%s - 받을 그림이 없어 받은 것으로 보고 건너뜀" % e)
+                return True, True, 0, None
             except Exception as e:  # noqa: BLE001
                 return False, False, 0, str(e)
 

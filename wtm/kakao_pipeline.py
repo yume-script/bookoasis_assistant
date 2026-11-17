@@ -1368,7 +1368,8 @@ def download_series(cfg, session, sid, log=print, full=False, cancel_check=None,
     t.update(patch)
 
     series_dir = downloader.title_dir(root, title, sid)
-    have = _existing_nos(series_dir) | _outbox_nos(temp_root, sid)
+    # 동영상만 있는 회차는 받은 것으로 친다 (파일은 없지만 빠진 회차로 보지 않음)
+    have = _existing_nos(series_dir) | _outbox_nos(temp_root, sid) | set(int(n) for n in t.get("video_nos") or [])
     checked_no = int(t.get("checked_no") or 0)
     use_waitfree = bool(cfg.get("KAKAO_USE_WAITFREE", False))
 
@@ -1621,6 +1622,17 @@ def download_series(cfg, session, sid, log=print, full=False, cancel_check=None,
             res["adult_blocked"] = True
             res["adult_reason"] = reason
             break
+        except kakao_api.KakaoVideoOnly as e:
+            # 동영상만 있는 회차: 받을 그림·글이 없다 - 받은 것으로 보고(마지막 받은 회차를 넘김) 다음부터 시도 안 함
+            log("%s %s(%s): 동영상만 있는 회차라 받은 것으로 보고 건너뜀 - %s" % (title, _ep_label(no), ep.get("subtitle", ""), e))
+            res["skipped"] = res.get("skipped", 0) + 1
+            skip_pids.add(ep["product_id"])
+            video_nos = sorted(set((ss.get_kakao_title(sid) or t).get("video_nos") or []) | {no})
+            ss.upsert_kakao_title({sid: {"skip_pids": sorted(skip_pids), "video_nos": video_nos}})
+            max_checked = max(max_checked, ep.get("order", no))
+            if no < kakao_api.SPECIAL_EP_BASE and (last_ok is None or no > last_ok):
+                last_ok = no
+            continue
         except kakao_api.KakaoSkip as e:
             log("%s %s(%s): 받을 수 없는 회차(동영상 트레일러 등)라 건너뜀, 다음부터 시도 안 함 - %s" % (
                 title, _ep_label(no), ep.get("subtitle", ""), e))
@@ -1678,7 +1690,7 @@ def download_series(cfg, session, sid, log=print, full=False, cancel_check=None,
                 title, _ep_label(no), cnt, ep.get("subtitle", ""), no))
             _record_special(series_dir, title, no, ep.get("subtitle", ""))
         elif is_novel:
-            log("%s %d화 EPUB 저장 (%d단어)" % (title, no, cnt))
+            log("%s %d화 EPUB 저장 (%s)" % (title, no, "스캔본 - 페이지 그림" if cnt == 0 else "%d단어" % cnt))
         else:
             log("%s %d화 완료 (%d장)" % (title, no, cnt))
         # 예전엔 회차 하나 받을 때마다 갱신(표지 다운로드 포함)해서 너무 잦았다.

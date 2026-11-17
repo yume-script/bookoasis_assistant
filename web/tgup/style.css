@@ -96,3 +96,18 @@ textarea.input { resize: vertical; }
 .mirror-folder-row { flex-wrap: nowrap; }
 .mirror-folder-row .input { flex: 1; min-width: 0; }
 [data-pane]:not([hidden]) { display: flex; flex-direction: column; gap: 1rem; }
+/* 진행 상태: 계정 탭 · 계정 카드 */
+.tgup-subtabs { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+.tgup-subtabs button { font: inherit; font-size: 0.85rem; padding: 0.3rem 0.8rem; border-radius: 999px; cursor: pointer;
+    border: 1px solid var(--border); background: var(--bg); color: var(--text-soft); }
+.tgup-subtabs button.is-on { border-color: var(--accent); color: var(--accent); background: rgba(var(--accent-rgb), 0.12); font-weight: 600; }
+.tgup-accs { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 0.5rem; }
+.tgup-acc { border: 1px solid var(--border); border-radius: var(--radius); padding: 0.55rem 0.7rem; display: flex; flex-direction: column; gap: 0.2rem;
+    font-size: 0.82rem; min-width: 0; }
+.tgup-acc.is-down { border-color: color-mix(in srgb, var(--danger) 45%, transparent); }
+.tgup-acc-head { display: flex; align-items: center; gap: 0.35rem; flex-wrap: wrap; font-size: 0.9rem; }
+.tgup-acc-head .mirror-chip { margin-left: auto; }
+.tgup-acc .muted { overflow-wrap: anywhere; }
+.mirror-actions .btn-sm { padding: 0.2rem 0.45rem; }
+.select-sm { padding: 0.2rem 0.4rem; font-size: 0.78rem; }
+.mirror-alt { flex-wrap: wrap; gap: 0.75rem; }

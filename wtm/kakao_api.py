@@ -75,6 +75,27 @@ class KakaoUnsupported(Exception):
     """이미지 웹툰이 아닌 회차(웹소설 텍스트 뷰어 등)"""
 
 
+class KakaoVideoOnly(KakaoSkip):
+    """동영상만 있는 회차(영상 트레일러·영상툰 등) - 받을 그림·글이 없어 받은 것으로 보고 건너뛴다"""
+
+
+def _image_files(vd):
+    idd = vd.get("imageDownloadData") or vd.get("image_download_data") or {}
+    files = idd.get("files") if isinstance(idd, dict) else None
+    files = sorted((f for f in files or [] if isinstance(f, dict)), key=lambda f: f.get("no") or 0)
+    return [u for u in (f.get("secureUrl") or f.get("secure_url") for f in files) if u]
+
+
+def video_only(vd):
+    """뷰어 데이터가 동영상뿐인지 (그림 목록·글 본문이 없고 동영상 표시가 있음)"""
+    if not isinstance(vd, dict) or _image_files(vd) or vd.get("contents_list"):
+        return False
+    kind = str(vd.get("type") or vd.get("viewer_type") or vd.get("viewerType") or "").lower()
+    if "video" in kind or "movie" in kind:
+        return True
+    return any(("video" in str(k).lower() or "movie" in str(k).lower()) and v for k, v in vd.items())
+
+
 def parse_series_id(text):
     """'https://page.kakao.com/content/54801072' 또는 '54801072' -> '54801072'"""
     text = str(text or "").strip()
@@ -574,13 +595,11 @@ def _fetch_viewer(session, series_id, product_id):
 def fetch_episode_images(session, series_id, product_id):
     """회차 이미지 URL 목록(페이지 순). 볼 수 없는 회차면 KakaoNotPurchased."""
     vd = _fetch_viewer(session, series_id, product_id)
+    if video_only(vd):
+        raise KakaoVideoOnly("동영상만 있는 회차")
     if vd.get("contents_list") or str(vd.get("type") or "").lower().startswith("text"):
         raise KakaoUnsupported("웹소설(텍스트) 회차라 이미지로 받을 수 없음")
-    idd = vd.get("imageDownloadData") or vd.get("image_download_data") or {}
-    files = idd.get("files") or []
-    files = sorted((f for f in files if isinstance(f, dict)), key=lambda f: f.get("no") or 0)
-    urls = [f.get("secureUrl") or f.get("secure_url") for f in files]
-    urls = [u for u in urls if u]
+    urls = _image_files(vd)
     if not urls:
         raise KakaoNotPurchased("이미지 목록이 비어 있음(구매/대여가 필요한 회차로 보임)")
     return urls
@@ -665,6 +684,11 @@ def fetch_novel_episode(session, series_id, product_id, log=None):
     contents = vd.get("contents_list") or []
     base = vd.get("ats_server_url") or "https://dn-img-page.kakao.com/sdownload/resource?kid="
     if not contents:
+        if video_only(vd):
+            raise KakaoVideoOnly("동영상만 있는 회차")
+        scans = _image_files(vd)
+        if scans:   # 스캔본 웹소설: 글 대신 페이지 그림만 있다 - 그림을 페이지로 담아 EPUB으로
+            return _novel_from_scans(session, scans, log=log)
         raise KakaoUnsupported("웹소설 본문이 없음(웹툰 회차이거나 구매가 필요한 회차)")
     images, css_parts, sections, seen_css = {}, [], [], set()
     img_counter = {"n": 0}
@@ -708,6 +732,32 @@ def fetch_novel_episode(session, series_id, product_id, log=None):
     return {"sections": sections,
             "images": {k: (v[0], v[1]) for k, v in images.items()},
             "css": "\n".join(css_parts), "words": words}
+
+
+def _novel_from_scans(session, urls, log=None):
+    """스캔본 웹소설 회차 -> fetch_novel_episode와 같은 모양 (페이지 그림 하나가 한 단락, 글자 수 0, scan=True)"""
+    images, sections = {}, []
+    for i, url in enumerate(urls, 1):
+        r = None
+        for attempt in range(3):
+            try:
+                r = session.get(url, timeout=session.request_timeout, headers={"Referer": BASE + "/"})
+                r.raise_for_status()
+                break
+            except Exception as e:  # noqa: BLE001
+                r = None
+                if attempt == 2:
+                    raise RuntimeError("스캔 페이지 %d/%d를 받지 못함: %s" % (i, len(urls), e))
+                time.sleep(1 + attempt)
+        ct = (r.headers.get("Content-Type") or "image/jpeg").split(";")[0].strip()
+        ext = {"image/png": ".png", "image/gif": ".gif", "image/webp": ".webp"}.get(ct, ".jpg")
+        name = "page%04d%s" % (i, ext)
+        images[name] = (r.content, ct if ct.startswith("image/") else "image/jpeg")
+        sections.append('<div class="img scan"><img src="images/%s" alt="%d"/></div>' % (name, i))
+    if log:
+        log("스캔본 웹소설 회차: 페이지 그림 %d장을 EPUB으로" % len(urls))
+    return {"sections": sections, "images": images, "css": ".scan img{width:100%;height:auto}", "words": 0,
+            "scan": True, "pages": len(urls)}
 
 
 # ---------------------------------------------------------------------------

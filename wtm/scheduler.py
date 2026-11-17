@@ -137,6 +137,31 @@ def _is_finished_scan_due(job, target_hour):
 
 
 WAITFREE_TICK_SECONDS = 300
+def _cycle_due(cfg, job, interval_min, now=None):
+    """요일별 스캔+새 회차 다운로드를 지금 돌릴지 -> (돌릴지, 처리한 실행 시각).
+    SCHEDULE_CRON(crontab 식)이 있으면 그 시각마다, 없으면(예전 설정) INTERVAL_MINUTES 주기로"""
+    now = time.time() if now is None else now
+    expr = str(cfg.get("SCHEDULE_CRON") or "").strip()
+    if expr:
+        from . import cronspec
+        try:
+            spec = cronspec.parse(expr)
+        except cronspec.CronError as e:
+            _bad = "crontab 식 오류(%s) - 실행 주기(분)로 돕니다: %s" % (expr, e)
+            if _BAD_CRON.get("msg") != _bad:
+                _BAD_CRON["msg"] = _bad
+                ss.append_log(_bad)
+        else:
+            last = job.get("cron_slot")
+            if last is None:   # 처음: 마지막 실행(없으면 지금) 뒤의 시각부터
+                last = job.get("last_scan_at") or now - 60
+            slot = cronspec.due(spec, last, now)
+            return bool(slot), slot
+    last = job.get("last_scan_at")
+    return (last is None or (now - last) >= interval_min * 60), None
+
+
+_BAD_CRON = {}
 _wf_gen = {"n": 0}   # 기다무 확인 스레드 세대 - 스케줄러를 다시 시작하면 예전 스레드는 끝난다
 
 
@@ -183,9 +208,10 @@ def _loop(get_cfg_func, run_full_cycle_func, run_finished_scan_func):
         if enabled:
             job = _ss.load_job_state()
             if not job.get("running"):
-                due = (job.get("last_scan_at") is None or
-                       (time.time() - job.get("last_scan_at", 0)) >= interval_min * 60)
+                due, slot = _cycle_due(cfg, job, interval_min)
                 if due:
+                    if slot:   # 이 실행 시각은 처리함 (실행이 길어져 다음 시각을 지나도 한 번만 더)
+                        _ss.save_job_state({"cron_slot": slot})
                     # try_acquire_job()으로 확인+저장을 원자적으로 처리한다.
                     # 예전에는 위의 job.get("running") 확인과 실제 실행 사이에
                     # 짧은 틈이 있어서, 그 사이 사용자가 수동으로 "지금 전체

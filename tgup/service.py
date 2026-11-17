@@ -13,7 +13,8 @@
   POST /api/tgup/settings     설정 저장 (규칙들)
   POST /api/tgup/check        지금 확인
   POST /api/tgup/test         {rule} 가장 최근 것 하나 올려 보기
-  POST /api/tgup/item         {rule, key, action: upload|drop|cancel|cancel_all}
+  POST /api/tgup/item         {rule, key, action: upload|drop|cancel|cancel_all|move|assign, where: up|down|top|bottom, account}
+                              move: 진행 목록 순서 바꾸기, assign: 올릴 계정 직접 고르기 (account ""이면 규칙대로 - 놀고 있는 계정)
   POST /api/tgup/notify       {action: save|test, webhook, bot_token, channel_id, ok, fail, skip} 디스코드 알림
   POST /api/tgup/account      {action: save_api|send_code|sign_in|logout|add|remove|rename, account, api_id, api_hash, phone, code,
                               password, name} - 텔레그램 계정은 여러 개 (API ID/Hash는 같이 씀)
@@ -302,8 +303,15 @@ def api_post(path, body):
         try:
             if action == "cancel_all":
                 return {"success": True, "count": RUNNER.run(m.cancel_all, rule or None)}
+            if action == "move":
+                return {"success": True, "title": RUNNER.run(m.move_item, rule, key, str(body.get("where") or ""))}
+            if action == "assign":
+                acc = str(body.get("account") or "")
+                if acc and acc not in {a["id"] for a in tgaccount.accounts()}:
+                    raise ApiError(400, "없는 텔레그램 계정입니다.")
+                return {"success": True, "title": RUNNER.run(m.assign_item, rule, key, acc)}
             if action not in fns:
-                raise ApiError(400, "action은 upload, drop, cancel, cancel_all 중 하나입니다.")
+                raise ApiError(400, "action은 upload, drop, cancel, cancel_all, move, assign 중 하나입니다.")
             return {"success": True, "title": RUNNER.run(fns[action], rule, key)}
         except ValueError as e:
             raise ApiError(400, str(e))
@@ -335,6 +343,12 @@ def _account(body):
         if acc_id == tgaccount.ACCOUNT_ID:
             raise ApiError(400, "첫 계정은 뺄 수 없습니다 (로그아웃은 됩니다).")
         used = [r.get("section_title") or r.get("channel_title") or r["id"] for r in plex_to_tg.load_settings()["rules"] if r.get("tg") == acc_id]
+        if not used:   # 다른 계정으로만 쓰던 규칙에서는 빼 준다
+            data = compat.load()
+            for r in (data.get("plex_to_tg") or {}).get("rules") or []:
+                if acc_id in (r.get("tg_alt") or []):
+                    r["tg_alt"] = [a for a in r["tg_alt"] if a != acc_id]
+            compat.save(data)
         if used:
             raise ApiError(400, f"이 계정으로 올리는 규칙이 있습니다 ({', '.join(used[:3])}) - 규칙의 계정을 먼저 바꿔 주세요.")
         try:

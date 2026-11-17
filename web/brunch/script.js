@@ -1,6 +1,8 @@
 // 브런치 EPUB 받기 화면 (서버: brunch/service.py)
 (function () {
     'use strict';
+    // 분 -> '10분' / '1시간 30분' / '6시간'
+    const fmtMin = (m) => (m % 60 ? (m > 60 ? `${Math.floor(m / 60)}시간 ${m % 60}분` : `${m}분`) : `${m / 60}시간`);
     const root = document.getElementById('brunch-app');
 
     // ── 작은 도구 (텔레그램 자동 올리기 화면과 같음) ──
@@ -289,7 +291,7 @@
             setTimeout(() => { refresh(); again(); }, 4000);
         }));
         const text = !s.auto_check ? '새 글 자동 받기가 꺼져 있습니다 (설정 탭).'
-            : `새 글 자동 받기: ${s.check_hours}시간마다` + (c.last ? ` · 마지막 확인 ${fmtTime(c.last)}` + (c.found ? ` (새 글 ${c.found}권)` : '') : '')
+            : `새 글 자동 받기: ${fmtMin(s.check_minutes || s.check_hours * 60)}마다` + (c.last ? ` · 마지막 확인 ${fmtTime(c.last)}` + (c.found ? ` (새 글 ${c.found}권)` : '') : '')
               + (c.next ? ` · 다음 확인 ${fmtTime(c.next)}` : '') + (c.error ? ` · 실패: ${c.error}` : '');
         return h('div', { class: 'toolbar' }, h('span', { class: 'field-hint', text }), btn);
     }
@@ -305,11 +307,12 @@
         const autoIn = h('input', { type: 'checkbox', checked: s.auto_check });
         const yamlIn = h('input', { type: 'checkbox', checked: s.kavita_yaml !== false });
         const hoursSel = h('select', { class: 'select', style: 'width:auto' },
-            (state.check_hours || [1, 2, 3, 6, 12, 24]).map((n) => h('option', { value: String(n), text: `${n}시간마다`, selected: n === s.check_hours })));
+            (state.check_minutes || [10, 20, 30, 60, 120, 180, 360, 720, 1440]).map((n) => h('option', { value: String(n), text: `${fmtMin(n)}마다`,
+                selected: n === (s.check_minutes || s.check_hours * 60) })));
         const save = h('button', { class: 'btn btn-accent', type: 'button' }, icon('floppy-disk'), ' 저장');
         save.addEventListener('click', () => busy(save, async () => {
             state = await post('api/brunch/settings', { save_dir: dirIn.value.trim(), by_author: byAuthor.checked,
-                auto_check: autoIn.checked, check_hours: Number(hoursSel.value), kavita_yaml: yamlIn.checked });
+                auto_check: autoIn.checked, check_minutes: Number(hoursSel.value), kavita_yaml: yamlIn.checked });
             toast('저장했습니다.', 'success');
             renderSettings(pane);
         }));

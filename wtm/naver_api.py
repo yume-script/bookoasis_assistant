@@ -48,6 +48,14 @@ _TITLE_RE = re.compile(r'"titleName"\s*:\s*"([^"]*)"')
 _PAID_MARKERS = ("코인 사용", "코인으로 보기", "구매하기", "소장하기", "결제하기", "이용권 사용")
 
 
+# 동영상만 있는 회차(영상툰·트레일러 등) - 이미지가 없고 동영상 플레이어만 있다
+_VIDEO_RE = re.compile(r"<video\b|video[_-]?player|vod[_-]?player|serviceapi\.nmv|tv\.naver\.com/(?:v|embed)/|\"vid\"\s*:|playerContainer", re.I)
+
+
+class NaverVideoOnly(Exception):
+    """동영상만 있는 회차 - 받을 그림이 없어 받은 것으로 보고 건너뛴다"""
+
+
 class NaverAuthExpired(Exception):
     """쿠키(성인/로그인)가 만료되어 인증이 필요한 콘텐츠 접근이 막힌 경우"""
 
@@ -517,6 +525,8 @@ def fetch_episode_images(session, title_id, episode_no, log=None):
 
     imgs = _extract_comic_images(html, title_id, episode_no, log=log)
     if not imgs:
+        if _VIDEO_RE.search(html):
+            raise NaverVideoOnly("titleId=%s no=%s: 동영상만 있는 회차" % (title_id, episode_no))
         if any(marker in html for marker in _PAID_MARKERS):
             raise NaverPaidEpisode(
                 "titleId=%s no=%s: 유료(코인 결제) 회차로 보여 이미지를 못 가져옴" %
