@@ -75,26 +75,36 @@
     async function refresh() {
         try { state = await api('api/brunch'); } catch (e) { return; }
         paintJobs();
-        const active = state.jobs.some((j) => j.state === 'queued' || j.state === 'running');
+        const active = state.jobs.some((j) => j.state === 'queued' || j.state === 'running') || !!(state.bulk && state.bulk.running);
         clearTimeout(pollTimer);
         if (active) pollTimer = setTimeout(refresh, 2000);
     }
     function paintJobs() {
         const jobs = (state && state.jobs) || [];
         let finishedNow = false;
+        const ended = [];
         jobs.forEach((j) => {
             const before = seen[j.id];
             if (before && before !== j.state && (j.state === 'done' || j.state === 'error')) {
                 finishedNow = true;
-                if (j.state === 'done') toast(`EPUB을 만들었습니다: ${j.title} (${j.note})`, 'success', 6000);
-                else toast(`받지 못했습니다: ${j.title || ''} - ${j.error}`, 'error', 8000);
+                ended.push(j);
             }
             seen[j.id] = j.state;
         });
+        // 한꺼번에 많이 끝나면(완결작 모두 받기) 한 번에 묶어서 알린다
+        const made = ended.filter((j) => j.state === 'done' && !/^이미/.test(j.note || ''));
+        const failed = ended.filter((j) => j.state === 'error');
+        if (ended.length > 2) {
+            if (made.length || failed.length) toast(`EPUB ${made.length}권을 만들었습니다${failed.length ? ` · 실패 ${failed.length}권` : ''}.`, failed.length ? 'error' : 'success', 6000);
+        } else {
+            made.forEach((j) => toast(`EPUB을 만들었습니다: ${j.title} (${j.note})`, 'success', 6000));
+            failed.forEach((j) => toast(`받지 못했습니다: ${j.title || ''} - ${j.error}`, 'error', 8000));
+        }
         if (finishedNow && current === 'history') renderHistory(panes.history);
         clear(jobsBox);
         jobsBox.hidden = !jobs.length;
-        if (!jobs.length) return;
+        if (!jobs.length && !((state && state.bulk) || {}).running) return;
+        jobsBox.hidden = false;
         const list = h('div', { class: 'br-list' });
         jobs.slice(0, 8).forEach((j) => {
             const pct = j.total ? Math.round((j.done / j.total) * 100) : 0;
@@ -102,11 +112,15 @@
                 h('span', { class: `br-state ${j.state}`, text: STATE_TEXT[j.state] || j.state }),
                 h('div', { class: 'br-row-main' },
                     h('span', { class: 'br-row-title', text: (j.auto ? '[새 글] ' : '') + (j.title || j.key) }),
-                    h('span', { class: 'br-row-sub' + (j.state === 'error' ? ' error-text' : ''), text: j.error || j.note || (j.kind === 'book' ? '브런치북' : '글 하나') })),
+                    h('span', { class: 'br-row-sub' + (j.state === 'error' ? ' error-text' : ''), text: j.error || j.note || (j.kind === 'book' ? '브런치북' : j.kind === 'bookof' ? '브런치북 (완결작 모두 받기)' : '글 하나') })),
                 j.state === 'running' ? h('div', { class: 'br-bar' }, h('div', { style: `width:${pct}%` })) : null));
         });
         const doneCount = jobs.filter((j) => j.state === 'done' || j.state === 'error').length;
+        const waiting = jobs.filter((j) => j.state === 'queued').length;
+        const bulk = (state && state.bulk) || {};
         jobsBox.append(h('div', { class: 'toolbar' }, h('b', { text: '받기 진행' }),
+            waiting ? h('span', { class: 'muted', text: `대기 ${waiting}개` }) : null,
+            bulk.running ? h('span', { class: 'muted', text: `완결작 목록 모으는 중: ${bulk.pages}쪽 · 책 ${bulk.seen}권 중 ${bulk.queued}권 대기열에` }) : null,
             doneCount ? h('button', { class: 'btn btn-sm', type: 'button', on: { click: async () => { state = await post('api/brunch/clear-jobs'); paintJobs(); } } },
                 icon('broom'), ' 끝난 줄 지우기') : null), list);
     }
@@ -127,9 +141,28 @@
         const sortSel = h('select', { class: 'select', title: '정렬' }, SORTS.map(([v, t]) => h('option', { value: v, text: t })));
         const grid = h('div', { class: 'br-grid' });
         const moreBtn = h('button', { class: 'btn', type: 'button', hidden: true }, icon('chevron-down'), ' 더 보기');
+        // 완결 탭: 완결된 책 전부를 EPUB으로 (이미 다 받은 책은 빼고)
+        const bulkBtn = h('button', { class: 'btn btn-accent', type: 'button', hidden: true,
+            title: '완결 목록을 끝까지 넘겨 보며 아직 받지 않은 완결 브런치북을 모두 받기 대기열에 넣습니다' }, icon('layer-group'), ' 완결작 모두 EPUB으로');
+        bulkBtn.addEventListener('click', () => busy(bulkBtn, async () => {
+            if (!confirm('완결된 브런치북을 모두 EPUB으로 만들까요?\n이미 받은 책은 건너뛰고, 한 권씩 차례로 받습니다 (책이 많으면 오래 걸립니다).')) return;
+            await post('api/brunch/bulk-complete');
+            toast('완결작 목록을 모아 받기 대기열에 넣는 중입니다. 맨 위 [받기 진행]에서 보세요.', 'success', 6000);
+            refresh();
+        }));
         let next = '';
+        // 이 글(최근 회차)이 받아 둔 EPUB에 들어 있는지
+        const EPUB_BADGE = {
+            done: ['br-epub done', 'circle-check', 'EPUB 반영됨', '이 회차까지 EPUB에 들어 있습니다'],
+            old: ['br-epub old', 'triangle-exclamation', '새 회차 미반영', '받아 둔 EPUB에 이 회차가 아직 없습니다 - [다시 받기]로 합쳐 다시 만듭니다'],
+            queued: ['br-epub queued', 'hourglass-half', '받는 중', 'EPUB으로 만드는 중이거나 대기 중입니다'],
+        };
         const card = (it) => {
-            const dl = h('button', { class: 'btn btn-sm btn-accent', type: 'button', title: '이 글이 든 브런치북 전체를 EPUB 한 권으로' }, icon('download'), ' EPUB 받기');
+            const old = it.epub === 'old';
+            const dl = h('button', { class: `btn btn-sm${it.epub === 'done' ? '' : ' btn-accent'}`, type: 'button', title: '이 글이 든 브런치북 전체를 EPUB 한 권으로' },
+                icon(old ? 'rotate' : 'download'), old ? ' 다시 받기' : it.epub === 'done' ? ' 다시 받기' : ' EPUB 받기');
+            const b = EPUB_BADGE[it.epub];
+            const badge = b ? h('div', { class: b[0], title: b[3] + (it.epub_at ? ` (마지막으로 받은 때 ${it.epub_at})` : '') }, icon(b[1]), ` ${b[2]}`) : null;
             dl.addEventListener('click', () => busy(dl, () => download({ url: it.url, scope: 'book', title: it.book_title }, it.book_title)));
             const thumb = it.image ? h('img', { class: 'br-thumb', src: it.image, alt: '', loading: 'lazy', referrerpolicy: 'no-referrer' })
                 : h('div', { class: 'br-thumb br-thumb-empty' }, icon('book-open'));
@@ -139,6 +172,7 @@
                     h('div', { class: 'br-book' }, it.book_title, it.is_new ? h('span', { class: 'br-new', text: 'NEW' }) : null),
                     h('div', { class: 'br-meta', text: [it.author, fmtDate(it.publish_time)].filter(Boolean).join(' · ') }),
                     h('div', { class: 'br-ep', title: it.title, text: `최근: ${it.title}` }),
+                    badge,
                     h('div', { class: 'toolbar' }, dl,
                         h('a', { class: 'btn btn-sm', href: it.url, target: '_blank', rel: 'noopener noreferrer' }, icon('arrow-up-right-from-square'), ' 브런치'))));
         };
@@ -163,13 +197,15 @@
             DAYS.forEach(([v, t]) => chips.appendChild(h('button', { type: 'button', class: 'chip' + (browse.day === v ? ' is-on' : ''), text: t,
                 on: { click: () => { browse.day = v; paintChips(); load(false); } } })));
             sortSel.disabled = browse.day === 'COMPLETE';
+            bulkBtn.hidden = browse.day !== 'COMPLETE';
         };
         sortSel.value = browse.sort;
         sortSel.addEventListener('change', () => { browse.sort = sortSel.value; load(false); });
         moreBtn.addEventListener('click', () => busy(moreBtn, () => load(true)));
         paintChips();
-        pane.append(h('div', { class: 'toolbar' }, chips, sortSel),
-            h('p', { class: 'field-hint', text: '브런치북 오리지널 연재 목록입니다. [EPUB 받기]는 그 글이 든 브런치북의 발행된 회차 전부를 한 권으로 받습니다 (멤버십 글은 공개된 앞부분만).' }),
+        pane.append(h('div', { class: 'toolbar' }, chips, sortSel, bulkBtn),
+            h('p', { class: 'field-hint', text: '브런치북 오리지널 연재 목록입니다. [EPUB 받기]는 그 글이 든 브런치북의 발행된 회차 전부를 한 권으로 받습니다 (멤버십 글은 공개된 앞부분만). '
+                + '카드 아래 표시: "EPUB 반영됨"은 이 회차까지 EPUB에 들어 있음, "새 회차 미반영"은 받아 둔 EPUB에 이 회차가 아직 없음([다시 받기]). 완결 탭의 [완결작 모두 EPUB으로]는 아직 받지 않은 완결작을 모두 받습니다.' }),
             grid, moreBtn);
         load(false);
     }
