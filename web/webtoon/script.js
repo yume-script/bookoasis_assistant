@@ -744,30 +744,111 @@
     settingsMeta = data;
     settingsLoaded = true;
     var sections = data.sections || [{ id: 'common', label: '설정' }];
-    // [공통][네이버][카카오페이지] 섹션 탭 - 입력값은 탭을 바꿔도 DOM에 남아 있어서
-    // "설정 저장" 한 번으로 세 섹션이 함께 저장된다.
-    var tabs = '<div class="wtm-daytabs" style="margin-bottom:6px">' + sections.map(function (sec) {
-      return '<button class="wtm-daytab' + (sec.id === settingsSection ? ' active' : '') +
-        '" data-settings-section="' + escapeHtml(sec.id) + '">' + escapeHtml(sec.label) + '</button>';
-    }).join('') + '</div>';
-    box.innerHTML = tabs + sections.map(function (sec) {
+    var SEC_ICON = { common: '⚙️', naver: '🟢', kakao: '🟡', novel: '📖' };
+    // 왼쪽: 플랫폼별 묶음 목록 (하나를 고르면 오른쪽에 그 묶음만) · 오른쪽: 묶음 카드.
+    // 모든 칸은 DOM에 남아 있어서 [설정 저장] 한 번으로 전부 저장된다
+    var idx = 0;
+    var nav = '', panes = '';
+    sections.forEach(function (sec) {
       var groups = data.groups.filter(function (g) { return (g.section || 'common') === sec.id; });
-      return '<div data-settings-pane="' + escapeHtml(sec.id) + '"' + (sec.id === settingsSection ? '' : ' style="display:none"') + '>' +
-        groups.map(function (g) {
-          var fields = g.fields.filter(function (f) { return f.type !== 'hidden'; });
-          return '<div class="wtm-set-group">' +
-            '<div class="wtm-set-group-title">' + escapeHtml(g.label) + '</div>' +
-            (g.desc ? '<div class="wtm-hint" style="margin:0 0 8px">' + escapeHtml(g.desc) + '</div>' : '') +
-            '<div class="wtm-set-grid">' +
-            fields.map(function (f) { return settingFieldHtml(f, data.values[f.key], (data.secret_set || {})[f.key]); }).join('') +
-            '</div></div>';
-        }).join('') + '</div>';
-    }).join('');
+      if (!groups.length) return;
+      nav += '<div class="wtm-sx-sec">' + (SEC_ICON[sec.id] || '') + ' ' + escapeHtml(sec.label) + '</div>';
+      groups.forEach(function (g) {
+        var gi = idx++;
+        var gid = sec.id + ':' + g.label;
+        nav += '<button type="button" class="wtm-sx-item' + (gid === settingsGroup ? ' active' : '') + '" data-sx-group="' + escapeHtml(gid) + '">' +
+          '<span>' + escapeHtml(g.label) + '</span><span class="wtm-sx-dot" data-sx-dot="' + escapeHtml(gid) + '"></span></button>';
+        var fields = g.fields.filter(function (f) { return f.type !== 'hidden'; });
+        panes += '<section class="wtm-sx-card" data-sx-pane="' + escapeHtml(gid) + '"' + (gid === settingsGroup ? '' : ' hidden') + '>' +
+          '<header class="wtm-sx-head"><div class="wtm-sx-crumb">' + escapeHtml(sec.label) + '</div>' +
+          '<h3>' + escapeHtml(g.label) + '</h3>' + (g.desc ? '<p class="wtm-sx-desc">' + escapeHtml(g.desc) + '</p>' : '') + '</header>' +
+          '<div class="wtm-sx-fields">' +
+          fields.map(function (f) { return settingFieldHtml(f, data.values[f.key], (data.secret_set || {})[f.key]); }).join('') +
+          '</div></section>';
+      });
+    });
+    box.innerHTML = '<div class="wtm-sx">' +
+      '<aside class="wtm-sx-nav"><input type="search" class="wtm-input wtm-sx-search" data-el="settings-search" placeholder="설정 찾기 (예: 쿠키, 경로, 기다무)">' +
+      nav + '</aside>' +
+      '<div class="wtm-sx-main"><div class="wtm-sx-empty wtm-hint" data-el="settings-noresult" hidden>찾는 설정이 없습니다.</div>' + panes + '</div></div>';
+    var gids = els('[data-sx-pane]').map(function (p) { return p.getAttribute('data-sx-pane'); });
+    showSettingsGroup(gids.indexOf(settingsGroup) >= 0 ? settingsGroup : gids[0]);
+    settingsInitial = settingsSnapshot();
+    els('[data-requires]').forEach(function (f) { syncRequires(f.getAttribute('data-requires')); });
+    updateSettingsChanged();
     // 라이브러리 드롭다운은 폼을 새로 그릴 때마다 목록을 다시 채운다
     librariesLoaded = false;
     loadLibraryOptionsIfNeeded();
   }
   var settingsSection = 'common';
+  var settingsGroup = '';
+  var settingsInitial = {};
+
+  function showSettingsGroup(gid) {
+    settingsGroup = gid;
+    var q = el('[data-el="settings-search"]');
+    if (q && q.value.trim()) { q.value = ''; filterSettings(''); }
+    els('[data-sx-group]').forEach(function (b) { b.classList.toggle('active', b.getAttribute('data-sx-group') === gid); });
+    els('[data-sx-pane]').forEach(function (p) { p.hidden = p.getAttribute('data-sx-pane') !== gid; });
+  }
+
+  // 찾기: 모든 묶음에서 이름·설명이 맞는 칸만 (묶음 카드째 보여 줌)
+  function filterSettings(q) {
+    q = (q || '').trim().toLowerCase();
+    var any = false;
+    els('[data-sx-pane]').forEach(function (p) {
+      if (!q) { p.hidden = p.getAttribute('data-sx-pane') !== settingsGroup; p.querySelectorAll('.wtm-set-field, .wtm-set-subhead').forEach(function (f) { f.hidden = false; }); return; }
+      var hit = 0;
+      p.querySelectorAll('.wtm-set-field').forEach(function (f) {
+        var ok = (f.textContent || '').toLowerCase().indexOf(q) >= 0 || (f.getAttribute('data-key') || '').toLowerCase().indexOf(q) >= 0;
+        f.hidden = !ok;
+        hit += ok ? 1 : 0;
+      });
+      p.querySelectorAll('.wtm-set-subhead').forEach(function (f) { f.hidden = true; });
+      p.hidden = !hit;
+      any = any || hit > 0;
+    });
+    els('[data-sx-group]').forEach(function (b) { b.classList.toggle('active', !q && b.getAttribute('data-sx-group') === settingsGroup); });
+    var none = el('[data-el="settings-noresult"]');
+    if (none) none.hidden = !q || any;
+  }
+
+  function settingsSnapshot() {
+    var out = {};
+    els('[data-setting]').forEach(function (inp) { out[inp.getAttribute('data-setting')] = inp.type === 'checkbox' ? !!inp.checked : String(inp.value); });
+    els('[data-setting-clear]').forEach(function (c) { out['clear:' + c.getAttribute('data-setting-clear')] = !!c.checked; });
+    return out;
+  }
+
+  // 바꾼 칸 표시 + 왼쪽 목록의 점 + 아래 막대의 "바꾼 설정 N개"
+  function updateSettingsChanged() {
+    var now = settingsSnapshot(), n = 0, groups = {};
+    Object.keys(now).forEach(function (k) {
+      var changed = now[k] !== settingsInitial[k];
+      var key = k.indexOf('clear:') === 0 ? k.slice(6) : k;
+      var field = el('.wtm-set-field[data-key="' + key + '"]');
+      if (changed) {
+        n++;
+        var pane = field && field.closest('[data-sx-pane]');
+        if (pane) groups[pane.getAttribute('data-sx-pane')] = true;
+      }
+      if (field && k.indexOf('clear:') !== 0) field.classList.toggle('is-changed', changed);
+    });
+    els('[data-sx-dot]').forEach(function (d) { d.classList.toggle('on', !!groups[d.getAttribute('data-sx-dot')]); });
+    var bar = el('.wtm-sx-bar');
+    if (bar) bar.classList.toggle('is-dirty', n > 0);
+    var cnt = el('[data-el="settings-dirty-count"]');
+    if (cnt) cnt.textContent = n ? '바꾼 설정 ' + n + '개 - 저장해야 적용됩니다' : '바꾼 설정 없음';
+    settingsDirty = n > 0;
+  }
+
+  // "이 칸은 ○○를 켜야 쓰입니다" - 켜져 있지 않으면 흐리게 (값은 그대로 저장)
+  function syncRequires(parentKey) {
+    var parent = el('[data-setting="' + parentKey + '"]');
+    if (!parent) return;
+    var on = parent.type === 'checkbox' ? parent.checked : !!parent.value;
+    els('[data-requires="' + parentKey + '"]').forEach(function (f) { f.classList.toggle('is-off', !on); });
+  }
 
   function settingFieldHtml(f, value, secretSet) {
     var key = escapeHtml(f.key);
@@ -776,10 +857,12 @@
       return '<div class="wtm-set-subhead">' + label + '</div>';
     }
     var hint = f.hint ? '<span class="wtm-set-hint">' + escapeHtml(f.hint) + '</span>' : '';
-    if (f.type === 'checkbox') {
-      return '<label class="wtm-set-field wtm-set-check">' +
-        '<input type="checkbox" data-setting="' + key + '"' + (value ? ' checked' : '') + '>' +
-        '<span><span class="wtm-set-label">' + label + '</span>' + hint + '</span></label>';
+    var meta = ' data-key="' + key + '"' + (f.requires ? ' data-requires="' + escapeHtml(f.requires) + '"' : '');
+    var reqNote = f.requires ? '<span class="wtm-set-req">' + escapeHtml(requiresLabel(f.requires)) + '을(를) 켜야 쓰입니다</span>' : '';
+    if (f.type === 'checkbox') {   // 켜고 끄는 칸은 스위치로
+      return '<label class="wtm-set-field wtm-set-check"' + meta + '>' +
+        '<span class="wtm-set-text"><span class="wtm-set-label">' + label + '</span>' + hint + reqNote + '</span>' +
+        '<span class="wtm-switch"><input type="checkbox" data-setting="' + key + '"' + (value ? ' checked' : '') + '><span></span></span></label>';
     }
     var input;
     if (f.type === 'library') {
@@ -829,23 +912,38 @@
         '<span class="wtm-hint" style="margin:0">성인 작품은 <b>성인 인증된 카카오 계정</b>으로 page.kakao.com에 로그인한 뒤 ' +
         'Cookie-Editor로 내보낸 JSON 전체를 붙여넣어야 받을 수 있습니다(필수: _kau, _kpwtkn, _T_ANO, _karmt, _kahai, _kawlt, _kpdid).</span>';
     }
+    if (f.key === 'SCHEDULE_CRON' && settingsMeta && (settingsMeta.next_runs || []).length) {
+      input += '<span class="wtm-hint" style="margin:0">다음 실행: ' + settingsMeta.next_runs.map(escapeHtml).join(' · ') + ' (저장한 값 기준)</span>';
+    }
     var wide = (f.type === 'textarea' || f.key === 'NAVER_COOKIE_JSON' || /^KAKAO_COOKIE(_\d)?$/.test(f.key)) ? ' wtm-set-wide' : '';
-    return '<div class="wtm-set-field' + wide + '">' +
-      '<span class="wtm-set-label">' + label + '</span>' + input + hint + '</div>';
+    return '<div class="wtm-set-field' + wide + '"' + meta + '>' +
+      '<span class="wtm-set-text"><span class="wtm-set-label">' + label + '</span>' + hint + reqNote + '</span>' +
+      '<span class="wtm-set-control">' + input + '</span></div>';
+  }
+
+  function requiresLabel(key) {
+    var found = '';
+    ((settingsMeta && settingsMeta.groups) || []).forEach(function (g) {
+      g.fields.forEach(function (f) { if (f.key === key) found = f.label || key; });
+    });
+    return '"' + (found || key) + '"';
   }
 
   // 저장하지 않은 설정 (쿠키를 붙여 넣고 검증만 한 채 떠나면 사라지므로 알려 준다)
   var settingsDirty = false;
-  function markSettingsDirty(on) {
-    settingsDirty = on;
-    var msg = el('[data-el="settings-save-msg"]');
-    if (msg && on) msg.textContent = '⚠️ 저장하지 않은 변경이 있습니다 - [설정 저장]을 눌러야 유지됩니다';
+  function markSettingsDirty(on) {   // (파일에서 불러온 쿠키 등 스크립트로 넣은 값)
+    if (on) updateSettingsChanged();
+    else settingsDirty = false;
   }
   document.addEventListener('input', function (ev) {
-    if (ev.target.closest && ev.target.closest('[data-setting], [data-setting-clear]')) markSettingsDirty(true);
+    if (ev.target.matches && ev.target.matches('[data-el="settings-search"]')) { filterSettings(ev.target.value); return; }
+    if (ev.target.closest && ev.target.closest('[data-setting], [data-setting-clear]')) updateSettingsChanged();
   });
   document.addEventListener('change', function (ev) {
-    if (ev.target.closest && ev.target.closest('[data-setting], [data-setting-clear]')) markSettingsDirty(true);
+    var t = ev.target.closest && ev.target.closest('[data-setting], [data-setting-clear]');
+    if (!t) return;
+    if (t.getAttribute('data-setting')) syncRequires(t.getAttribute('data-setting'));
+    updateSettingsChanged();
   });
   window.addEventListener('beforeunload', function (ev) {
     if (settingsDirty) { ev.preventDefault(); ev.returnValue = ''; }
@@ -977,13 +1075,11 @@
     var tabBtn = ev.target.closest('.wtm-tab');
     if (tabBtn) { setTab(tabBtn.getAttribute('data-tab')); return; }
 
-    var secBtn = ev.target.closest('[data-settings-section]');
-    if (secBtn) {
-      settingsSection = secBtn.getAttribute('data-settings-section');
-      els('[data-settings-section]').forEach(function (b) { b.classList.toggle('active', b === secBtn); });
-      els('[data-settings-pane]').forEach(function (p) {
-        p.style.display = p.getAttribute('data-settings-pane') === settingsSection ? '' : 'none';
-      });
+    var grpBtn = ev.target.closest('[data-sx-group]');
+    if (grpBtn) {
+      showSettingsGroup(grpBtn.getAttribute('data-sx-group'));
+      var main = el('.wtm-sx-main');
+      if (main && main.getBoundingClientRect().top < 0) main.scrollIntoView({ behavior: 'smooth', block: 'start' });
       return;
     }
 
@@ -1026,7 +1122,10 @@
     var saveBtn = ev.target.closest('[data-el="settings-save"]');
     if (saveBtn) { saveSettingsForm(); return; }
     var reloadBtn = ev.target.closest('[data-el="settings-reload"]');
-    if (reloadBtn) { settingsDirty = false; loadSettingsForm(true); return; }
+    if (reloadBtn) {
+      if (settingsDirty && !window.confirm('바꾼 설정을 버리고 저장된 값으로 다시 불러올까요?')) return;
+      settingsDirty = false; loadSettingsForm(true); return;
+    }
     if (ev.target.closest('[data-el="hourly-reload"]')) { loadHourly(true); return; }
 
     var moreBtn = ev.target.closest('[data-el="grid-more"]');
