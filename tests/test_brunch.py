@@ -4,6 +4,7 @@
 브런치에는 붙지 않는다 (예시 HTML로 목차·본문 읽기, EPUB 만들기, 받기 흐름을 확인).
 """
 import os
+import time
 import shutil
 import sys
 import tempfile
@@ -253,6 +254,39 @@ class AutoCheckTest(unittest.TestCase):
                "done": 0, "total": 0, "error": "", "note": "", "auto": False}
         self.s._run(job)
         return self.s.load_history()[0]
+
+    def test_epub_state_and_bulk_complete(self):
+        """연재 목록의 회차가 받아 둔 EPUB에 들어 있는지 표시하고, [완결작 모두 EPUB으로]는 아직 안 받은 책만 대기열에"""
+        s = self.s
+        h = self._download()
+        self.assertEqual(h["episode_keys"], ["abc/10", "abc/12"])
+        items = [{"book_title": "예시 & 책", "user_id": "abc", "article_no": 12},
+                 {"book_title": "예시 & 책", "user_id": "abc", "article_no": 15},
+                 {"book_title": "다른 책", "user_id": "xyz", "article_no": 3}]
+        self.assertEqual([x["epub"] for x in s.epub_state(items)], ["done", "old", ""])
+        # 예전 기록(episode_keys 없음)도 책 제목 + 글 번호로
+        hist = s.load_history()
+        hist[0].pop("episode_keys")
+        s._write_json(s._history_path(), hist)
+        self.assertEqual(s.epub_state([{"book_title": "예시 & 책", "user_id": "abc", "article_no": 10}])[0]["epub"], "done")
+        # 완결작 모두 받기: 받은 책(done)은 건너뛰고 나머지를 bookof로 (받을 때 브런치북을 찾는다)
+        pages = [{"items": [dict(items[0], url="u1"), dict(items[2], url="u3")], "more": True, "next_url": "n2"},
+                 {"items": [dict(items[2], url="u3"), {"book_title": "셋째 책", "user_id": "qq", "article_no": 7, "url": "u4"}],
+                  "more": False, "next_url": ""}]
+        s._STATE["client"].list = lambda day, sort="", nxt=None: pages[0 if nxt is None else 1]
+        s._JOBS.clear()
+        s.bulk_complete()
+        for _ in range(100):
+            if not s._BULK.get("running"):
+                break
+            time.sleep(0.02)
+        self.assertEqual((s._BULK["pages"], s._BULK["seen"], s._BULK["queued"], s._BULK["skipped"]), (2, 3, 2, 1))
+        self.assertEqual(sorted(j["key"] for j in s._JOBS), ["bookof:qq/7", "bookof:xyz/3"])
+        # bookof 작업: 글이 든 브런치북을 찾아 책으로 받는다
+        job = next(j for j in s._JOBS if j["key"] == "bookof:xyz/3")
+        s._run(job)
+        self.assertEqual((job["kind"], job["key"]), ("book", "book:example1"))
+        s._JOBS.clear()
 
     def test_settings(self):
         s = self.s

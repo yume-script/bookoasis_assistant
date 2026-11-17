@@ -69,3 +69,10 @@
 .br-state.error { background: color-mix(in srgb, var(--danger) 18%, transparent); color: var(--danger); }
 .br-bar { height: 4px; background: var(--bg-elev2); border-radius: 999px; overflow: hidden; flex-basis: 100%; }
 .br-bar div { height: 100%; background: var(--accent); transition: width 0.4s; }
+
+/* 카드의 EPUB 반영 표시 */
+.br-epub { display: inline-flex; align-items: center; gap: 0.3rem; align-self: flex-start; font-size: 0.75rem; font-weight: 600;
+    padding: 0.1rem 0.5rem; border-radius: 999px; }
+.br-epub.done { color: var(--ok); background: color-mix(in srgb, var(--ok) 14%, transparent); }
+.br-epub.old { color: #e0a33a; background: color-mix(in srgb, #e0a33a 16%, transparent); }
+.br-epub.queued { color: var(--accent); background: rgba(var(--accent-rgb), 0.14); }

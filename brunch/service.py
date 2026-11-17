@@ -28,10 +28,12 @@ from gdw import config
 from . import epub, fetch, kavita
 
 log = logging.getLogger("brunch")
-MAX_HISTORY = 300
+MAX_HISTORY = 3000        # (완결작 모두 받기로 수백 권이 될 수 있다)
+BULK_MAX_PAGES = 60       # 완결작 모두 받기: 완결 목록을 몇 쪽까지 넘겨 보나
 MAX_IMAGES = 600          # 책 하나에 넣는 그림 수 (넘으면 그 뒤 그림은 뺀다)
 _LOCK = threading.RLock()
-_JOBS = deque(maxlen=50)  # 최근 작업 (대기·진행·끝)
+_JOBS = deque()           # 최근 작업 (대기·진행·끝) - 끝난 것은 MAX_DONE_JOBS개만 남긴다 (대기 중인 것은 버리지 않음)
+MAX_DONE_JOBS = 50
 _WAKE = threading.Event()
 _STATE = {"thread": None, "client": None, "checking": False}
 CHECK_MINUTES = (10, 20, 30, 40, 50, 60, 90, 120, 180, 360, 720, 1440)
@@ -323,8 +325,9 @@ def _loop(stop_event):
 
 
 def enqueue(kind, target, title="", auto=False):
-    """kind: book(target=브런치북 주소) / article(target=(user_id, 번호)). 같은 것이 이미 대기·진행 중이면 그 작업을 돌려준다"""
-    key = "book:%s" % target if kind == "book" else "article:%s/%s" % tuple(target)
+    """kind: book(target=브런치북 주소) / article(target=(user_id, 번호)) / bookof(target=(user_id, 번호) - 그 글이 든 브런치북,
+    받을 때 찾는다). 같은 것이 이미 대기·진행 중이면 그 작업을 돌려준다"""
+    key = "book:%s" % target if kind == "book" else ("bookof:%s/%s" if kind == "bookof" else "article:%s/%s") % tuple(target)
     with _LOCK:
         for j in _JOBS:
             if j["key"] == key and j["state"] in ("queued", "running"):
@@ -332,10 +335,88 @@ def enqueue(kind, target, title="", auto=False):
         job = {"id": uuid.uuid4().hex[:12], "key": key, "kind": kind, "target": target, "title": title,
                "state": "queued", "done": 0, "total": 0, "error": "", "note": "", "added": time.time(), "auto": auto}
         _JOBS.appendleft(job)
+        done = [j for j in _JOBS if j["state"] in ("done", "error")]
+        for j in done[MAX_DONE_JOBS:]:   # (예전 deque(maxlen=50)은 완결작 모두 받기처럼 많이 넣으면 대기 중인 것까지 버렸다)
+            _JOBS.remove(j)
     if not (_STATE["thread"] and _STATE["thread"].is_alive()):
         start()
     _WAKE.set()
     return job
+
+
+def _have_all(key):
+    """그 브런치북을 받아 두었고 파일도 있으며 완결이라 더 받을 회차가 없는지"""
+    h = _entry_by_key(key)
+    return bool(h and h.get("status") == "COMPLETE" and h.get("file") and os.path.isfile(h["file"]))
+
+
+def epub_state(items):
+    """연재 목록의 글마다 EPUB에 담겼는지: done(이 회차까지 EPUB에 있음) / old(책은 받았지만 이 회차는 아직) /
+    queued(받는 중·대기) / ""(받지 않은 책). 회차 번호(작가/번호)로, 예전 기록은 책 제목+번호로 맞춘다"""
+    hist = [h for h in load_history() if h.get("kind") == "book"]
+    by_key, by_title = set(), {}
+    for h in hist:
+        by_key.update(h.get("episode_keys") or [])
+        by_title.setdefault(str(h.get("title") or "").strip(), []).append(h)
+    with _LOCK:
+        busy = {j["title"] for j in _JOBS if j["state"] in ("queued", "running") and j.get("title")}
+    for it in items:
+        k = "%s/%s" % (it.get("user_id") or "", it.get("article_no") or 0)
+        title = str(it.get("book_title") or "").strip()
+        books = by_title.get(title) or []
+        if k in by_key or any(int(it.get("article_no") or 0) in set(int(x) for x in h.get("episode_ids") or []) for h in books):
+            it["epub"] = "done"
+        elif title and title in busy:
+            it["epub"] = "queued"
+        elif books:
+            it["epub"] = "old"
+        else:
+            it["epub"] = ""
+        if books:
+            it["epub_at"] = books[0].get("at") or ""
+    return items
+
+
+def bulk_complete():
+    """[완결작 모두 EPUB으로]: 완결 목록을 끝까지 넘겨 보며 아직 받지 않은(또는 덜 받은) 책을 대기열에 넣는다 (뒤에서).
+    _BULK에 진행 {running, pages, seen, queued, skipped, error}"""
+    st = _BULK
+    if st.get("running"):
+        return st
+    st.clear()
+    st.update(running=True, pages=0, seen=0, queued=0, skipped=0, error="", started=time.time())
+
+    def work():
+        try:
+            c, nxt, books = _client(), None, set()
+            while st["pages"] < BULK_MAX_PAGES:
+                res = c.list("COMPLETE", "", nxt)
+                st["pages"] += 1
+                for it in epub_state([x for x in res["items"] if x.get("url")]):
+                    title = it.get("book_title") or ""
+                    if title in books:
+                        continue
+                    books.add(title)
+                    st["seen"] += 1
+                    if it["epub"] in ("done", "queued"):
+                        st["skipped"] += 1
+                        continue
+                    enqueue("bookof", (it["user_id"], int(it["article_no"])), title)
+                    st["queued"] += 1
+                nxt = res.get("next_url") or None
+                if not (res.get("more") and nxt):
+                    break
+        except Exception as e:  # noqa: BLE001
+            st["error"] = str(e)[:300]
+            log.warning("브런치 완결작 모두 받기 실패: %s", e)
+        finally:
+            st["running"] = False
+            log.info("브런치 완결작 모두 받기: 책 %d권 중 %d권을 대기열에 (이미 받음 %d)", st["seen"], st["queued"], st["skipped"])
+    threading.Thread(target=work, name="brunch-bulk", daemon=True).start()
+    return st
+
+
+_BULK = {}
 
 
 def _public_jobs():
@@ -364,6 +445,16 @@ def _run(job):
         by_url[src] = "images/" + name
         return by_url[src]
 
+    if job["kind"] == "bookof":   # 완결작 모두 받기: 목록의 글 -> 그 글이 든 브런치북
+        art = c.article(*job["target"])
+        if not art["book_address"]:
+            raise fetch.BrunchError("이 글은 브런치북에 묶여 있지 않습니다.")
+        job.update(kind="book", target=art["book_address"], key="book:%s" % art["book_address"])
+        with _LOCK:
+            dup = any(j is not job and j["key"] == job["key"] and j["state"] in ("queued", "running") for j in _JOBS)
+        if dup or _have_all(job["key"]):
+            job["note"] = "이미 받았거나 받는 중이라 건너뜀"
+            return
     if job["kind"] == "book":
         book = c.book(job["target"])
         job["title"] = book["title"]
@@ -431,6 +522,7 @@ def _run(job):
              "skipped": skipped, "status": meta.get("status") or "", "file": final, "file_name": os.path.basename(final),
              "size": size, "scan": scan, "at": _now(), "checked_at": _now(),
              "episode_ids": [int(e["article_no"]) for e in eps], "auto": job["kind"] == "book",
+             "episode_keys": ["%s/%s" % (e.get("user_id") or "", int(e["article_no"])) for e in eps],
              "yaml": yaml_ok, "layout": LAYOUT}
     _remember(entry)
     job["history_id"] = entry["id"]
@@ -467,7 +559,7 @@ def _state():
     chk = check_state()
     last = float(chk.get("last") or 0)
     return {"success": True, "settings": s, "root": save_root(s), "env_root": config.env("BRUNCH_DOWNLOAD_ROOT", "").strip(),
-            "jobs": _public_jobs(), "history": _public_history(), "check_minutes": list(CHECK_MINUTES),
+            "jobs": _public_jobs(), "history": _public_history(), "check_minutes": list(CHECK_MINUTES), "bulk": dict(_BULK),
             "check": {"last": last, "next": (last + s["check_minutes"] * 60) if (s["auto_check"] and last) else 0,
                       "found": chk.get("found", 0), "error": chk.get("error", ""), "running": _STATE["checking"]}}
 
@@ -508,7 +600,9 @@ def api_get(path, query):
         if path == "/api/brunch":
             return _state()
         if path == "/api/brunch/list":
-            return dict(c.list(query.get("day", "MONDAY"), query.get("sort", ""), query.get("next") or None), success=True)
+            res = c.list(query.get("day", "MONDAY"), query.get("sort", ""), query.get("next") or None)
+            # (캐시한 목록을 고치지 않게 글마다 복사해서 EPUB 상태를 붙인다)
+            return dict(res, items=epub_state([dict(x) for x in res["items"]]), success=True)
         if path == "/api/brunch/resolve":   # 붙여 넣은 주소 미리 보기
             kind, target = fetch.parse_input(query.get("url", ""))
             if kind == "book":
@@ -599,6 +693,8 @@ def api_post(path, body):
                 threading.Thread(target=check_now, kwargs={"reason": "수동"}, name="brunch-check", daemon=True).start()
                 time.sleep(0.2)
             return _state()
+        if path == "/api/brunch/bulk-complete":   # [완결작 모두 EPUB으로] - 뒤에서 완결 목록을 넘기며 대기열에
+            return {"success": True, "bulk": dict(bulk_complete())}
         if path == "/api/brunch/clear-jobs":   # 끝난 작업 줄 지우기
             with _LOCK:
                 keep = [j for j in _JOBS if j["state"] in ("queued", "running")]
