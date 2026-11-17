@@ -288,7 +288,8 @@
             }
             const checked = x.kind === 'book' && x.status !== 'COMPLETE' && x.auto
                 ? (x.check_error ? `새 글 확인 실패: ${x.check_error}` : (x.checked_at ? `새 글 확인: ${x.checked_at}` : '')) : '';
-            const again = h('button', { class: 'btn btn-sm', type: 'button', title: '새 회차까지 담아 다시 만들어 덮어씁니다' }, icon('rotate'), ' 다시 받기');
+            const again = h('button', { class: `btn btn-sm${x.epub_state === 'behind' || x.epub_state === 'missing' ? ' btn-accent' : ''}`, type: 'button',
+                title: '새 회차까지 담아 다시 만들어 덮어씁니다' }, icon('rotate'), ' 다시 받기');
             again.addEventListener('click', () => busy(again, async () => { await post('api/brunch/redownload', { id: x.id }); toast(`다시 받습니다: ${x.title}`, 'success'); refresh(); }));
             const forget = h('button', { class: 'btn btn-sm danger', type: 'button', title: '받은 목록에서 빼기' }, icon('trash'));
             forget.addEventListener('click', () => busy(forget, async () => {
@@ -300,9 +301,18 @@
             const sub = [x.author, `${x.chapters}화`, x.images ? `그림 ${x.images}장` : '', fmtSize(x.size), x.at,
                 x.restricted ? `멤버십 글 ${x.restricted}개는 앞부분만` : '', (x.skipped || []).length ? `빠진 글 ${x.skipped.length}개` : '',
                 x.yaml ? 'kavita.yaml' : '', x.scan ? 'BookOasis 스캔 요청함' : ''].filter(Boolean).join(' · ');
+            // EPUB 상태: 최신 회차까지 담겼는지
+            const ST = {
+                latest: ['br-epub done', 'circle-check', `EPUB 최신 (${x.chapters}화${x.latest_title ? ` · ${x.latest_title}` : ''})`],
+                behind: ['br-epub old', 'triangle-exclamation', `새 회차 ${x.new_count}개 미반영 (EPUB ${x.chapters}화 / 발행 ${x.published}화) - [다시 받기]`],
+                queued: ['br-epub queued', 'hourglass-half', 'EPUB 만드는 중'],
+                missing: ['br-epub old', 'file-circle-xmark', 'EPUB 파일 없음 (옮겼거나 지움) - [다시 받기]로 다시 만들기'],
+            }[x.epub_state];
+            const stBadge = ST ? h('span', { class: ST[0], title: x.checked_at ? `마지막 새 글 확인: ${x.checked_at}` : '' }, icon(ST[1]), ` ${ST[2]}`) : null;
             list.appendChild(h('div', { class: 'br-row' },
                 h('div', { class: 'br-row-main' },
                     h('span', { class: 'br-row-title', text: x.title }),
+                    stBadge,
                     h('span', { class: 'br-row-sub', text: sub }),
                     h('span', { class: 'br-row-sub', text: x.exists ? x.path : `파일 없음 (옮겼거나 지움): ${x.path}` }),
                     (x.skipped || []).length ? h('span', { class: 'br-row-sub error-text', text: `빠진 글: ${x.skipped.join(', ')}` }) : null,
