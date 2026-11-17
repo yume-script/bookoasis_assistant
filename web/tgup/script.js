@@ -216,6 +216,9 @@
             h('option', { value: v, text: t, selected: (st.hours || '') === v })));
         const presetSel = h('select', { class: 'select' }, [['veryfast', '보통 (veryfast)'], ['superfast', '빠르게 (superfast)'], ['ultrafast', '가장 빠르게 (ultrafast, 파일이 큼)']].map(([v, t]) =>
             h('option', { value: v, text: t, selected: (st.cpu_preset || 'superfast') === v })));
+        const slotsSel = h('select', { class: 'select' }, [1, 2, 3, 4].map((v) => h('option', { value: String(v), text: `${v}개${v === 1 ? ' (기본)' : ''}`, selected: (st.encode_slots || 1) === v })));
+        const excludeIn = h('textarea', { class: 'input', rows: '3', placeholder: 'S101\nS201', spellcheck: false });
+        excludeIn.value = (st.exclude || []).join('\n');
         const maxSel = h('select', { class: 'select' }, [[0, '자동 (프리미엄 계정이면 4GB, 아니면 2GB)'], [2, '2GB로 고정 (일반 계정)'], [4, '4GB로 고정 (텔레그램 프리미엄)']].map(([v, t]) =>
             h('option', { value: String(v), text: t, selected: st.max_gb === v })));
         const rulesBox = h('div', { class: 'mirror-rules' });
@@ -240,7 +243,26 @@
                 ...(r.tg && !accIds.includes(r.tg) ? [opt(r.tg, `${r.tg} (로그인 안 됨)`, true)] : []));
             const waitIn = h('input', { type: 'checkbox', checked: r.wait_subs !== false });
             const burnIn = h('input', { type: 'checkbox', checked: r.burn_subs !== false });
-            const hoursIn = h('input', { class: 'input mirror-days', type: 'number', min: '0', max: '8760', value: String(r.wait_hours ?? 12) });
+            const minIn = h('input', { class: 'input mirror-days', type: 'number', min: '0', max: '525600', step: '10',
+                value: String(r.wait_min ?? (r.wait_hours !== undefined ? r.wait_hours * 60 : 720)) });
+            // 같이 올릴 다른 계정 (놀고 있는 계정이 가져가고, 한 계정에 문제가 생기면 다른 계정이 이어 올림)
+            const altBox = h('div', { class: 'toolbar mirror-alt' });
+            const altChecks = {};
+            const fillAlt = () => {
+                const main = accSel.value || r.tg || 'tg';
+                const keep = new Set(Object.entries(altChecks).filter(([, c]) => c.checked).map(([k]) => k));
+                if (!Object.keys(altChecks).length) (r.tg_alt || []).forEach((a) => keep.add(a));
+                clear(altBox);
+                Object.keys(altChecks).forEach((k) => delete altChecks[k]);
+                const ids = [...new Set([...opts.telegram.map((t) => t.id), ...(r.tg_alt || [])])].filter((id) => id !== main);
+                if (!ids.length) { altBox.append(h('span', { class: 'muted', text: '다른 텔레그램 계정이 없습니다 (텔레그램 계정 탭에서 더할 수 있음).' })); return; }
+                for (const id of ids) {
+                    const t = opts.telegram.find((x) => x.id === id);
+                    const c = h('input', { type: 'checkbox', checked: keep.has(id) });
+                    altChecks[id] = c;
+                    altBox.append(h('label', { class: 'check' }, c, ` ${t ? t.name : `${id} (로그인 안 됨)`}`));
+                }
+            };
             const capIn = h('textarea', { class: 'input', rows: '3', placeholder: '{name}\n\n{summary}' });
             capIn.value = r.caption || '{name}\n\n{summary}';
             const fillChannels = async () => {
@@ -252,7 +274,8 @@
                 } catch (e) { toast(`텔레그램 채널 목록을 못 받았습니다: ${e.message}`, 'error'); }
             };
             chSel.addEventListener('focus', fillChannels, { once: true });
-            accSel.addEventListener('change', () => { clear(chSel).append(opt('', '채널 고르기', true)); fillChannels(); });
+            accSel.addEventListener('change', () => { clear(chSel).append(opt('', '채널 고르기', true)); fillChannels(); fillAlt(); });
+            fillAlt();
             const test = h('button', { class: 'btn btn-sm', title: '저장한 뒤에 쓰세요', on: { click: async () => {
                 try { const t = await post('api/tgup/test', { rule: row.id }); toast(`"${t.title}"을(를) 올리기 시작합니다. 진행 상태에서 보세요.`); }
                 catch (e) { toast(e.message, 'error', 6000); }
@@ -278,8 +301,10 @@
                 h('div', { class: 'toolbar' }, h('label', { class: 'check' }, enabledIn, ' 켜기'), kindSel),
                 h('div', { class: 'row-2 mirror-pick' }, plexField, folderField, field('올릴 텔레그램 계정 · 채널', h('div', { class: 'toolbar' }, opts.telegram.length > 1 || (r.tg && r.tg !== 'tg') ? accSel : null, chSel))),
                 h('div', { class: 'mirror-wait' }, h('span', { class: 'muted', text: '화질:' }), heightSel, encText),
+                field('같이 올릴 다른 계정', altBox, '고른 계정도 이 채널에 글을 쓸 수 있어야 합니다. 놀고 있는 계정이 진행 목록 앞에서부터 가져가고, '
+                    + '한 계정에 문제(로그아웃·세션 만료·채널 권한·요청 제한·연결 끊김)가 생기면 다른 계정이 이어 올립니다.'),
                 h('div', { class: 'mirror-wait' }, h('label', { class: 'check' }, waitIn, ' 자막이 생길 때까지 기다렸다가 올리기'),
-                    h('span', { class: 'muted', text: ' 최대' }), hoursIn, h('span', { class: 'muted', text: '시간 (0이면 계속 기다림, 하드섭은 진행 상태에서 [지금 올리기])' })),
+                    h('span', { class: 'muted', text: ' 최대' }), minIn, h('span', { class: 'muted', text: '분 (0이면 계속 기다림. 파일 안에 자막(소프트 자막)이 있으면 기다리지 않고 바로. 하드섭은 진행 상태에서 [지금 올리기])' })),
                 h('label', { class: 'check', title: '다시 인코딩하느라 시간이 걸립니다.' }, burnIn, burnText),
                 field('캡션', capIn, '{name} 제목(영화 "제목 (연도)", 에피소드 "작품 S01E02 - 제목") · {summary} 줄거리 · {title} {year} {show} {season} {episode} {code} {genres} {tags}(#장르) {library} {filename}'),
                 h('div', { class: 'toolbar' }, test, del));
@@ -289,7 +314,8 @@
                 return { id: row.id, enabled: enabledIn.checked, kind: kindSel.value, folder: folderIn.value.trim(),
                     height: Number(heightSel.value), plex, section, section_title: ((plexSel.selectedOptions[0] || {}).dataset || {}).name || '',
                     tg: accSel.value || r.tg || 'tg', channel: chSel.value, channel_title: ((chSel.selectedOptions[0] || {}).dataset || {}).name || '', caption: capIn.value,
-                    wait_subs: waitIn.checked, wait_hours: Number(hoursIn.value) || 0, burn_subs: burnIn.checked };
+                    wait_subs: waitIn.checked, wait_min: Math.max(0, Math.round(Number(minIn.value) || 0)), burn_subs: burnIn.checked,
+                    tg_alt: Object.entries(altChecks).filter(([, c]) => c.checked).map(([k]) => k) };
             } };
             rows.push(row);
             rulesBox.appendChild(card);
@@ -302,7 +328,8 @@
             save.disabled = true;
             try {
                 const r = await post('api/tgup/settings', { interval: Number(intervalIn.value), max_gb: Number(maxSel.value), max_gb_v: 1, encoder: encSel.value,
-                    cpu_preset: presetSel.value, hours: hoursSel.value, rules: rows.map((x) => x.get()) });
+                    cpu_preset: presetSel.value, hours: hoursSel.value, encode_slots: Number(slotsSel.value),
+                    exclude: excludeIn.value.split('\n').map((x) => x.trim()).filter(Boolean), rules: rows.map((x) => x.get()) });
                 r.settings.rules.forEach((x, i) => { if (rows[i]) rows[i].id = x.id; });
                 toast('저장했습니다. 새 규칙은 지금 있는 것 다음부터 올립니다.', 'success', 5000);
             } catch (e) { toast(e.message, 'error', 6000); } finally { save.disabled = false; }
@@ -345,7 +372,9 @@
             h('div', { class: 'row-2' }, field('확인 간격 (분)', intervalIn, '2~1440'), field('파일 크기 한도', maxSel, '넘는 파일은 같은 길이로 나눠 올립니다 (ffmpeg 필요).')),
             h('div', { class: 'row-2' }, field('인코더', encSel, '그래픽 카드로 인코딩하면 CPU보다 몇 배 빠릅니다. 자동은 이 서버에서 실제로 되는 것을 골라 쓰고, 실패하면 CPU로 다시 합니다.'),
                 field('CPU 인코딩 빠르기', presetSel, 'CPU로 할 때만. 빠를수록 같은 화질에 파일이 조금 커집니다.')),
-            field('올리기 시간대', hoursSel, '받기·인코딩·올리기를 이 시간에만 합니다. 새 항목 찾기는 늘 하고, 쌓아 두었다가 이 시간에 올립니다.'),
+            h('div', { class: 'row-2' }, field('올리기 시간대', hoursSel, '받기·인코딩·올리기를 이 시간에만 합니다. 새 항목 찾기는 늘 하고, 쌓아 두었다가 이 시간에 올립니다.'),
+                field('동시 인코딩 개수', slotsSel, '계정이 여럿이면 올리기는 계정마다 동시에 하지만, 인코딩은 CPU·그래픽 카드를 많이 써서 이만큼만 동시에 합니다. 나머지는 "인코딩 차례 기다리는 중".')),
+            field('제외할 파일 (정규식, 한 줄에 하나)', excludeIn, '파일 이름이나 제목에 맞으면 올리지 않고 최근 기록에 "제외"로 남깁니다. 예: S101, S201, (?i)\\bpreview\\b (대소문자 무시는 (?i)를 앞에).'),
             rulesBox,
             h('div', { class: 'toolbar' }, h('button', { class: 'btn', on: { click: () => addRule() } }, icon('plus'), ' 규칙 추가'), save),
             h('p', { class: 'field-hint', text: '올리려면 그 채널에 글을 쓸 수 있어야 합니다(채널 관리자). Plex 서버의 파일 경로가 이 컴퓨터에서 보이면(PLEX_PATH_MAP으로 바꿈) 그대로 쓰고, '
@@ -355,6 +384,16 @@
     // ── 진행 상태 ──
     const fmtB = (n) => (n >= 1024 ** 3 ? `${(n / 1024 ** 3).toFixed(2)}GB` : `${Math.round(n / 1024 ** 2)}MB`);
     let statusTimer = 0;
+    let statusFilter = 'all';   // 진행 상태: 전체 / 계정 id
+    try { statusFilter = localStorage.getItem('tgup_status_filter') || 'all'; } catch (e) { /* 저장소를 못 쓰는 브라우저 */ }
+    // 걸린 시간 "1시간 2분" / "3분 5초" / "40초"
+    const fmtDur = (sec) => {
+        sec = Math.max(0, Math.round(sec || 0));
+        const hh = Math.floor(sec / 3600), mm = Math.floor((sec % 3600) / 60), ss = sec % 60;
+        return hh ? `${hh}시간 ${mm}분` : mm ? `${mm}분 ${ss}초` : `${ss}초`;
+    };
+    // 단계별 시간 {받기, 인코딩, 나누기, 올리기, 대기} -> "받기 2분 · 인코딩 10분 · 올리기 3분"
+    const fmtTimes = (t) => ['준비', '받기', '인코딩', '나누기', '올리기', '대기'].filter((k) => t && t[k] >= 1).map((k) => `${k} ${fmtDur(t[k])}`).join(' · ');
     // 취소·건너뛴 항목 다시 올리기 (최근 7일 / 30일 / 전체) - 이미 올린 같은 파일·같은 회차는 빼고 까닭을 보여 줌
     function againBox(s, pane) {
         if (!s.skipped) return null;
@@ -381,6 +420,7 @@
         let s, d;
         try { d = await api('api/tgup'); s = d.status; } catch (e) { clear(pane).appendChild(h('p', { class: 'muted error', text: e.message })); return; }
         const cur = s.current;
+        const now = Date.now() / 1000;
         const when = (t) => (t ? new Date(t * 1000).toLocaleString([], { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '');
         const chip = (cls, text) => h('span', { class: `mirror-chip ${cls}`, text });
         const row = (title, status, subs, note, extra = null) => h('div', { class: 'mirror-row', role: 'row' },
@@ -389,45 +429,76 @@
         const head = () => h('div', { class: 'mirror-row mirror-head', role: 'row' },
             h('span', { text: '제목' }), h('span', { text: '상태' }), h('span', { text: '자막' }), h('span', { text: '비고' }));
         const waitKeys = new Map((s.waiting || []).map((w) => [`${w.rule}/${w.key}`, w]));
-        const live = [];
-        const act = (w, action, label, ask) => h('button', { class: `btn btn-sm${action === 'cancel' ? ' danger' : ''}`, on: { click: async (e) => {
+        const act = (w, action, label, ask, extra = {}) => h('button', { class: `btn btn-sm${action === 'cancel' ? ' danger' : ''}`, title: extra.title, on: { click: async (e) => {
             if (ask && !confirm(ask)) return;
             e.currentTarget.disabled = true;
             try {
-                await post('api/tgup/item', { rule: w.rule, key: w.key, action });
-                toast(action === 'upload' ? `"${w.title}"을(를) 지금 올립니다.` : action === 'cancel' ? `"${w.title}"을(를) 취소했습니다.` : `"${w.title}"을(를) 뺐습니다.`);
+                await post('api/tgup/item', { rule: w.rule, key: w.key, action, ...extra.body });
+                if (action !== 'move') toast(action === 'upload' ? `"${w.title}"을(를) 지금 올립니다.` : action === 'cancel' ? `"${w.title}"을(를) 취소했습니다.` : `"${w.title}"을(를) 뺐습니다.`);
             } catch (err) { toast(err.message, 'error'); }
             renderStatus(pane);
         } } }, label);
         const cancelBtn = (w, running) => act(w, 'cancel', '취소', running ? `지금 올리는 "${w.title}"을(를) 멈추고 취소할까요? (다시 올리지 않음)` : null);
-        // 계정마다 지금 올리는 것 (같은 계정은 차례로, 다른 계정은 동시에 - 요청 제한은 그 계정만 기다림)
-        const accName = (id) => ((d.accounts || []).find((x) => x.id === id) || {}).title || id;
-        const many = (d.accounts || []).length > 1;
-        const lanes = s.lanes || (cur ? [{ tg: 'tg', current: cur }] : []);
+        const accList = d.accounts || [];
+        const accName = (id) => (accList.find((x) => x.id === id) || {}).title || id;
+        const many = accList.length > 1 || Object.keys(s.accounts || {}).length > 1;
+        // 계정 탭 (전체 / 계정마다) - 실제 처리는 계정마다 따로 도는 줄이라 계정별로 볼 수 있게
+        const accIds = [...new Set([...accList.map((a) => a.id), ...Object.keys(s.accounts || {}).filter(Boolean)])];
+        if (statusFilter !== 'all' && !accIds.includes(statusFilter)) statusFilter = 'all';
+        const show = (tgs) => statusFilter === 'all' || (tgs || []).includes(statusFilter);
+        // 계정 고르기 (그 항목을 올릴 계정을 직접) - 규칙대로면 놀고 있는 계정이 가져간다
+        const assignSel = (q) => {
+            if (accIds.length < 2) return null;
+            const sel = h('select', { class: 'select select-sm', title: '올릴 계정 고르기 (계정에 문제가 있을 때 다른 계정으로)' },
+                h('option', { value: '', text: '계정: 자동', selected: !q.pin }),
+                ...accIds.map((id) => h('option', { value: id, text: `계정: ${accName(id)}`, selected: q.pin === id })));
+            sel.addEventListener('change', async () => {
+                try { await post('api/tgup/item', { rule: q.rule, key: q.key, action: 'assign', account: sel.value }); toast(sel.value ? `"${q.title}"을(를) ${accName(sel.value)} 계정으로 올립니다.` : '규칙대로(놀고 있는 계정) 올립니다.'); }
+                catch (err) { toast(err.message, 'error'); }
+                renderStatus(pane);
+            });
+            return sel;
+        };
+        const live = [];
         const shown = new Set();
+        const lanes = s.lanes || (cur ? [{ tg: 'tg', current: cur }] : []);
         for (const l of lanes) {
             const c = l.current;
             if (!c) continue;
+            shown.add(`${c.rule}/${c.key}`);
+            if (!show([l.tg])) continue;
             const pct = c.total ? Math.min(100, (c.done / c.total) * 100) : 0;
             const flood = l.flood_until && /요청 제한/.test(c.phase || '');
             const r = row(c.title, chip(flood ? 'wait' : 'run', flood ? '계정 대기' : '올리는 중'), '',
-                `${many ? `[${accName(l.tg)}] ` : ''}${c.phase}${c.speed && /인코딩/.test(c.phase) ? ` · ${c.speed}` : ''}${c.total && /올리는|받는/.test(c.phase) ? ` · ${fmtB(c.done)} / ${fmtB(c.total)}` : ''}`,
+                [many ? `[${accName(l.tg)}]` : '', `${c.phase}${c.speed && /인코딩/.test(c.phase) ? ` · ${c.speed}` : ''}${c.total && /올리는|받는|복사/.test(c.phase) ? ` · ${fmtB(c.done)} / ${fmtB(c.total)}` : ''}`,
+                    c.elapsed ? `시작 ${when(c.started)} · ${fmtDur(c.elapsed)} 지남` : '', fmtTimes(c.times)].filter(Boolean).join(' · '),
                 h('div', { class: 'cache-bar mirror-bar' }, h('div', { style: { width: `${pct}%` } })));
             if (c.rule) r.lastChild.append(h('span', { class: 'mirror-actions' }, cancelBtn({ rule: c.rule, key: c.key, title: c.title }, true)));
             live.push(r);
-            shown.add(`${c.rule}/${c.key}`);
         }
+        let n = 0;
         for (const q of s.queue) {
             const k = `${q.rule}/${q.key}`;
             if (shown.has(k) || waitKeys.has(k)) continue;
             shown.add(k);
-            const r = row(q.title, chip('queue', '올릴 차례'), '확인 전', many ? accName(q.tg) : '');
-            r.lastChild.append(h('span', { class: 'mirror-actions' }, cancelBtn(q)));
+            n += 1;
+            if (!show(q.tgs || [q.tg])) continue;
+            const who = q.pin ? `${accName(q.pin)} (직접 고름)` : (q.tgs || [q.tg]).map(accName).join(' / ');
+            const r = row(`${n}. ${q.title}`, chip('queue', '올릴 차례'), '확인 전',
+                [many ? who : '', q.avoid && q.avoid.length ? `${q.avoid.map(accName).join(', ')}에서 문제 - 다른 계정이 이어 올림` : '',
+                    q.added ? `${fmtDur(now - q.added)} 기다림` : ''].filter(Boolean).join(' · '));
+            r.lastChild.append(h('span', { class: 'mirror-actions' },
+                act(q, 'move', '⤒', null, { title: '맨 앞으로', body: { where: 'top' } }),
+                act(q, 'move', '↑', null, { title: '위로', body: { where: 'up' } }),
+                act(q, 'move', '↓', null, { title: '아래로', body: { where: 'down' } }),
+                assignSel(q), cancelBtn(q)));
             live.push(r);
         }
         for (const [k, w] of waitKeys) {
             if (shown.has(k)) continue;
-            const r = row(w.title, chip('wait', '자막 기다림'), '없음', `${when(w.since)}부터`);
+            const ruleTg = ((d.settings.rules || []).find((x) => x.id === w.rule) || {});
+            if (!show([ruleTg.tg, ...(ruleTg.tg_alt || [])])) continue;
+            const r = row(w.title, chip('wait', '자막 기다림'), '없음', `${when(w.since)}부터 · ${fmtDur(now - w.since)} 기다림${ruleTg.wait_min ? ` (최대 ${fmtDur(ruleTg.wait_min * 60)})` : ''}`);
             const shotUrl = `api/tgup/shot?${new URLSearchParams({ rule: w.rule, key: w.key, v: w.shot || 0 })}`;
             const shot = w.shot ? h('img', { class: 'mirror-shot', src: shotUrl, alt: '', loading: 'lazy', title: '10분 지점 장면 (누르면 크게)',
                 on: { error: (e) => e.target.classList.add('failed'),
@@ -441,32 +512,63 @@
         }
         for (const x of s.retry || []) {
             if (shown.has(`${x.rule}/${x.key}`)) continue;
-            const r = row(x.title, chip('queue', '다시 시도 대기'), '', `${x.at > Date.now() / 1000 ? `${when(x.at)}에` : '곧'} 다시 (${Math.max(1, x.tries)}/3)`);
-            r.lastChild.append(h('span', { class: 'mirror-actions' }, cancelBtn(x)));
+            const ruleTg = ((d.settings.rules || []).find((y) => y.id === x.rule) || {});
+            if (!show([ruleTg.tg, ...(ruleTg.tg_alt || [])])) continue;
+            const r = row(x.title, chip('queue', '다시 시도 대기'), '', `${x.at > now ? `${when(x.at)}에` : '곧'} 다시 (${Math.max(1, x.tries)}/3)`);
+            r.lastChild.append(h('span', { class: 'mirror-actions' }, assignSel(x), cancelBtn(x)));
             live.push(r);
         }
-        const hist = s.history.map((x) => row(x.title,
-            x.ok ? chip('ok', '완료') : String(x.note || '').startsWith('건너뜀') ? chip('skip', '건너뜀') : chip('fail', '실패'),
-            x.subs || (x.ok ? '' : '-'),
-            [when(x.at), many && x.tg ? accName(x.tg) : '', x.channel ? `→ ${x.channel}` : '', x.again ? '다시 올림' : '',
-                ...String(x.note || '').split(', ').filter((n) => n && !(x.subs && /^(자막 파일 \d+개 첨부|내장 자막|자막 없음|자막 입혀 인코딩)$/.test(n)))]
-                .filter(Boolean).join(' · ')));
+        const skipKind = (note) => (/^건너뜀: 중복/.test(note) ? ['skip', '중복 건너뜀'] : /^건너뜀: 제외/.test(note) ? ['skip', '제외'] : /^건너뜀/.test(note) ? ['skip', '건너뜀'] : null);
+        const hist = s.history.filter((x) => show([x.tg])).map((x) => {
+            const sk = skipKind(String(x.note || ''));
+            const st = x.ok ? chip('ok', '완료') : x.handed ? chip('wait', '계정 넘김') : sk ? chip(sk[0], sk[1]) : chip('fail', '실패');
+            return row(x.title, st, x.subs || (x.ok ? '' : '-'),
+                [when(x.at), x.elapsed ? `걸린 시간 ${fmtDur(x.elapsed)}` : '', many && x.tg ? accName(x.tg) : '', x.channel ? `→ ${x.channel}` : '',
+                    x.again ? '다시 올림' : '', x.handover && x.handover.length ? `${x.handover.map(accName).join(', ')}에서 넘겨받음` : '', fmtTimes(x.times),
+                    x.queued_at && x.started && x.started - x.queued_at >= 60 ? `줄에서 ${fmtDur(x.started - x.queued_at)} 기다림` : '',
+                    ...String(x.note || '').split(', ').filter((m) => m && !(x.subs && /^(자막 파일 \d+개 첨부|내장 자막|자막 없음|자막 입혀 인코딩)$/.test(m)))]
+                    .filter(Boolean).join(' · '));
+        });
+        // 계정마다 지금 하는 것 · 기다리는 수 · 성공/실패 · 쉬는 중
+        const accCards = many ? h('div', { class: 'tgup-accs' }, accIds.filter((id) => statusFilter === 'all' || id === statusFilter).map((id) => {
+            const a = (s.accounts || {})[id] || {};
+            const info = accList.find((x) => x.id === id) || {};
+            return h('div', { class: `tgup-acc${a.down ? ' is-down' : ''}` },
+                h('div', { class: 'tgup-acc-head' }, h('i', { class: 'fa-brands fa-telegram' }), h('b', { text: ` ${accName(id)}` }),
+                    info.authorized === false ? h('span', { class: 'mirror-chip fail', text: '로그인 안 됨' }) : null,
+                    a.down ? h('span', { class: 'mirror-chip wait', text: '쉬는 중' }) : a.current ? h('span', { class: 'mirror-chip run', text: '올리는 중' }) : h('span', { class: 'mirror-chip ok', text: '놀고 있음' })),
+                h('div', { class: 'muted', text: a.current ? `지금: ${a.current.title} - ${a.current.phase} (${fmtDur(a.current.elapsed)})` : '지금 하는 것 없음' }),
+                a.down ? h('div', { class: 'muted error', text: `${a.down} - ${when(a.down_until)}까지 다른 계정이 올림` }) : null,
+                h('div', { class: 'muted', text: `기다리는 것 ${a.queued || 0}개 · 완료 ${a.ok || 0} · 실패 ${a.fail || 0}${a.last ? ` · 마지막: ${a.last.title} (${a.last.ok ? '완료' : '실패/건너뜀'}, ${fmtDur(a.last.elapsed)})` : ''}` }));
+        })) : null;
+        const tabBar = many ? h('div', { class: 'tgup-subtabs', role: 'tablist' }, [['all', '전체'], ...accIds.map((id) => [id, accName(id)])].map(([id, t]) => {
+            const a = (s.accounts || {})[id] || {};
+            const count = id === 'all' ? '' : ` (${(a.queued || 0) + (a.current ? 1 : 0)})`;
+            return h('button', { type: 'button', role: 'tab', class: statusFilter === id ? 'is-on' : '', on: { click: () => {
+                statusFilter = id;
+                try { localStorage.setItem('tgup_status_filter', id); } catch (e) { /* 무시 */ }
+                renderStatus(pane);
+            } } }, `${t}${count}`);
+        })) : null;
         const nRules = (d.settings.rules || []).filter((r) => r.enabled).length;
         clear(pane).append(h('div', { class: 'src-card' },
             h('div', { class: 'toolbar' },
-                h('span', { class: 'muted', text: `${(d.accounts || []).length > 1 ? `텔레그램 계정 ${(d.accounts || []).filter((x) => x.authorized).length}/${d.accounts.length}개 로그인` : d.account && d.account.authorized ? `텔레그램 ${d.account.name || '로그인됨'}` : '텔레그램 로그인 안 됨'} · 켜진 규칙 ${nRules}개 · `
+                h('span', { class: 'muted', text: `${accList.length > 1 ? `텔레그램 계정 ${accList.filter((x) => x.authorized).length}/${accList.length}개 로그인` : d.account && d.account.authorized ? `텔레그램 ${d.account.name || '로그인됨'}` : '텔레그램 로그인 안 됨'} · 켜진 규칙 ${nRules}개 · `
+                    + `인코딩 ${s.encoding || 0}/${s.encode_slots || 1} · `
                     + (s.last_check ? `마지막 확인 ${new Date(s.last_check * 1000).toLocaleString()}` : '아직 확인 전') }),
                 h('button', { class: 'btn btn-sm', on: { click: async () => { await post('api/tgup/check'); toast('지금 확인합니다.'); setTimeout(() => renderStatus(pane), 2000); } } }, icon('rotate-right'), ' 지금 확인')),
             s.error ? h('p', { class: 'muted error', text: s.error }) : null,
             s.off_hours ? h('p', { class: 'muted', text: `지금은 올리기 시간대(${s.off_hours.replace('-', '시~')}시)가 아니라 쉬는 중 - 쌓아 두었다가 그 시간에 올립니다.` }) : null,
-            h('div', { class: 'mirror-live-head' }, h('h4', { text: `진행 (${live.length})` }),
-                live.length > 1 ? h('button', { class: 'btn btn-sm danger', on: { click: async (e) => {
+            tabBar, accCards,
+            h('div', { class: 'mirror-live-head' }, h('h4', { text: `진행 (${live.length})${statusFilter !== 'all' ? ` - ${accName(statusFilter)}` : ''}` }),
+                live.length > 1 && statusFilter === 'all' ? h('button', { class: 'btn btn-sm danger', on: { click: async (e) => {
                     if (!confirm(`진행 목록 ${live.length}개를 모두 취소할까요? (지금 올리는 것도 멈추고, 취소한 것은 다시 올리지 않음)`)) return;
                     e.currentTarget.disabled = true;
                     try { const r = await post('api/tgup/item', { action: 'cancel_all' }); toast(`${r.count}개를 취소했습니다.`); } catch (err) { toast(err.message, 'error'); }
                     renderStatus(pane);
                 } } }, icon('ban'), ' 전체 취소') : null),
             live.length ? h('div', { class: 'mirror-table', role: 'table' }, head(), ...live) : h('p', { class: 'muted', text: '올릴 것이 없습니다.' }),
+            h('p', { class: 'field-hint', text: '처리 순서: 새 영상 → 채널 중복 확인(작품·파일 이름·시즌·회차) → 제외 정규식 → 소프트 자막이면 바로 / 자막 파일은 정한 분만큼 기다림 → 놀고 있는 계정이 진행 목록 앞에서부터 올림. ↑↓로 순서를 바꾸고, 계정에 문제가 있으면 다른 계정을 고를 수 있습니다.' }),
             againBox(s, pane),
             h('h4', { text: '최근 기록' }),
             hist.length ? h('div', { class: 'mirror-table', role: 'table' }, head(), ...hist) : h('p', { class: 'muted', text: '아직 올린 것이 없습니다.' })));

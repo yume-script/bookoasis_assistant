@@ -154,7 +154,7 @@ class ServiceTest(unittest.TestCase):
         s = self.s
         with self.assertRaises(ValueError):
             s.clean_settings({"save_dir": "relative/dir"})
-        self.assertEqual(s.clean_settings({"save_dir": "/a/b/../c", "by_author": False}), {"save_dir": "/a/c", "by_author": False, "auto_check": True, "check_hours": 6, "kavita_yaml": True})
+        self.assertEqual(s.clean_settings({"save_dir": "/a/b/../c", "by_author": False}), {"save_dir": "/a/c", "by_author": False, "auto_check": True, "check_minutes": 360, "kavita_yaml": True})
         self.assertEqual(s.safe_name('a/b:c*?"d.'), "a b c d")
         self.assertEqual(s.safe_name("..."), "브런치")
         p = s.target_path({"save_dir": "/books", "by_author": True}, "작가/이름", "책 제목")
@@ -256,9 +256,13 @@ class AutoCheckTest(unittest.TestCase):
 
     def test_settings(self):
         s = self.s
-        self.assertEqual(s.load_settings()["check_hours"], 6)
+        self.assertEqual(s.load_settings()["check_minutes"], 360)
         self.assertTrue(s.load_settings()["auto_check"])
-        self.assertEqual(s.clean_settings({"check_hours": "12", "auto_check": False})["check_hours"], 12)
+        self.assertEqual(s.clean_settings({"check_hours": "12", "auto_check": False})["check_minutes"], 720)   # 예전 설정(시간)
+        self.assertEqual(s.clean_settings({"check_minutes": "10"})["check_minutes"], 10)
+        self.assertEqual(s.clean_settings({"check_minutes": 30})["check_minutes"], 30)
+        with self.assertRaises(ValueError):
+            s.clean_settings({"check_minutes": 15})
         with self.assertRaises(ValueError):
             s.clean_settings({"check_hours": 5})
 
@@ -275,6 +279,21 @@ class AutoCheckTest(unittest.TestCase):
         self.assertEqual(s.check_now(), 1)
         self.assertEqual(len(s._JOBS), 1)               # 이미 대기 중이면 또 넣지 않음
         self.assertTrue(s.load_history()[0]["checked_at"])
+
+    def test_redownload_hands_off_as_edit(self):
+        """이미 받은(올린) 책을 새 회차까지 담아 다시 받으면 '수정'으로 넘긴다 - '추가'면 이미 등록된 파일로 건너뛰었다"""
+        s = self.s
+        calls = []
+        orig = s._handoff
+        s._handoff = lambda path, action="create": calls.append(action) or True
+        try:
+            os.remove(self._download()["file"])         # 처음 받는 것처럼 (앞 시험이 받아 둔 파일 치움)
+            del calls[:]
+            self._download()
+            self._download()
+        finally:
+            s._handoff = orig
+        self.assertEqual(calls, ["create", "edit"])
 
     def test_auto_off_and_complete(self):
         s = self.s

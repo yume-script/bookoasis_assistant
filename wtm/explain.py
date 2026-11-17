@@ -114,19 +114,29 @@ def explain(query, days=3, out=print):
     interval = max(10.0, float(cfg.get("INTERVAL_MINUTES") or 240)) * 60
     sched_on = str(cfg.get("ENABLE_SCHEDULER", "")).lower() in ("1", "true", "on", "y", "yes")
     last = job.get("last_scan_at")
-    nxt = (last + interval) if last else now
-    if nxt < now:
-        nxt = now
-    out("\n[전체 실행] 실행 주기 %d분 · 예약 실행 %s · 마지막 시작 %s · 다음 %s%s" % (
-        interval // 60, "켬" if sched_on else "꺼짐(자동 실행 안 됨)", _t(last), _t(nxt),
+    from wtm import cronspec
+    cron = str(cfg.get("SCHEDULE_CRON") or cronspec.from_interval(cfg.get("INTERVAL_MINUTES") or 240))
+    try:
+        nxt = cronspec.next_after(cron, now) or now
+    except cronspec.CronError:
+        nxt = max(now, (last + interval) if last else now)
+    out("\n[전체 실행] 실행 시각 crontab '%s' · 예약 실행 %s · 마지막 시작 %s · 다음 %s%s" % (
+        cron, "켬" if sched_on else "꺼짐(자동 실행 안 됨)", _t(last), _t(nxt),
         " (지금 실행 중)" if job.get("running") and job.get("stage") != "waitfree" else ""))
     if platform == "kakao" and not cfg.get("KAKAO_ENABLE"):
         out("  카카오페이지 사용이 꺼져 있습니다.")
     runs, n = [], 0
     probe = dict(t)
-    while n < days * 24 * 3600 / interval + 1 and len(runs) < 12:
-        at = nxt + n * interval
+    at, end = nxt, now + days * 24 * 3600
+    while at and at <= end and n < 2000 and len(runs) < 12:
         n += 1
+        if n > 1:   # 다음 실행 시각 (crontab, 식이 틀리면 주기로)
+            try:
+                at = cronspec.next_after(cron, at)
+            except cronspec.CronError:
+                at += interval
+            if not at or at > end:
+                break
         if pl.in_new_episode_scope(cfg, probe, platform, now=at):
             # 카카오: 연재 요일이어도 요일 목록 스캔에서 새 회차가 보여야(또는 보유 대여권 확인 차례여야) 회차 목록을 연다
             sure = platform == "naver" or kp._needs_check(cfg, probe, at)

@@ -191,3 +191,47 @@ class TgupTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipUnless(HAVE_AIOHTTP, "aiohttp 없음")
+class ChannelIndexTest(unittest.TestCase):
+    """채널 중복 확인: 채널의 영상 메시지를 읽어 두고 같은 파일 이름·같은 회차를 찾는다 (처음엔 전부, 그 뒤엔 새 것만)"""
+
+    def test_refresh_and_lookup(self):
+        import asyncio
+        from types import SimpleNamespace as NS
+        from tgup import compat, plex_to_tg, tgaccount
+        compat.DATA_DIR = tempfile.mkdtemp(prefix="tgup-idx-")
+        tgaccount._INDEX.clear()
+
+        def video(mid, name, cap=""):
+            return NS(id=mid, message=cap, document=NS(mime_type="video/mp4", attributes=[NS(file_name=name)]))
+        msgs = [video(3, "무빙.S01E02.1080p-ST_0000.mp4", "무빙 S01E02"), NS(id=2, message="글", document=None),
+                video(1, "Some.Movie.2024.mkv", "Some Movie (2024)")]
+        calls = []
+
+        class Client:
+            async def iter_messages(self, peer, min_id=0, limit=None):
+                calls.append(min_id)
+                for m in msgs:
+                    if m.id > min_id:
+                        yield m
+
+        class Acc:
+            async def authorized_client(self):
+                return Client()
+
+            async def peer(self, ch):
+                return ch
+
+        asyncio.run(tgaccount.refresh_channel(Acc(), -100))
+        self.assertEqual(tgaccount.channel_file("tg", -100, "Some.Movie.2024.mp4"), "Some Movie (2024)")
+        self.assertEqual(tgaccount.channel_file("tg", -100, "Other.mp4"), "")
+        key = plex_to_tg.episode_key({"show": "무빙", "season": 1, "episode": 2, "name": "무빙 S01E02", "filename": ""})
+        self.assertEqual(tgaccount.channel_episode("tg", -100, *key), "무빙 S01E02")
+        # 새 메시지만 읽는다 (5분 안이면 다시 읽지 않음)
+        msgs.insert(0, video(4, "무빙.S01E03.mp4"))
+        tgaccount._INDEX[100]["at"] = 0
+        asyncio.run(tgaccount.refresh_channel(Acc(), -100))
+        self.assertEqual(calls, [0, 3])
+        self.assertTrue(tgaccount.channel_file("tg2", -100, "무빙.S01E03.mkv"))

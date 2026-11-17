@@ -17,6 +17,7 @@ import json
 import logging
 import os
 import re
+import time
 
 from . import compat
 
@@ -29,6 +30,10 @@ _ID_RE = re.compile(r"^tg[0-9]{0,3}$")
 
 class TgError(Exception):
     pass
+
+
+class ChannelLost(TgError):
+    """그 계정이 채널을 못 찾음 (나갔거나 지워짐) - 계정 전체 문제가 아니라 그 채널만 (다른 계정에 넘긴다)"""
 
 
 def plex_meta_put(*_args, **_kwargs):   # plex_to_tg가 부른다 (KEEP_PLEX_META가 False라 실제로는 안 불림)
@@ -259,5 +264,133 @@ class TelegramAccount:
             await self.list_channels()
             h = self._peers().get(str(int(channel)))
         if not h:
-            raise TgError(f"채널 {channel}을(를) 대화 목록에서 찾지 못했습니다 (나갔거나 지워졌을 수 있음).")
+            raise ChannelLost(f"채널 {channel}을(를) 대화 목록에서 찾지 못했습니다 (나갔거나 지워졌을 수 있음).")
         return InputPeerChannel(int(channel), int(h))
+
+
+# ---------------------------------------------------------------------------
+# 채널 목록 (중복 막기) - 자동 올리기가 올리기 전에 "이 채널에 이미 있나"를 본다 (작품 이름·파일 이름·시즌·회차).
+# YMPlayer는 텔레그램 색인(DB)이 있지만 여기는 없어서, 채널의 영상 메시지(파일 이름·캡션 첫 줄)를 읽어 data/tgup/channel_index/에 둔다.
+# 처음에는 최근 INDEX_FIRST개까지, 그 뒤로는 마지막으로 읽은 메시지 다음 것만. 계정이 여럿이어도 채널마다 하나.
+# ---------------------------------------------------------------------------
+INDEX_TTL = 300          # 이만큼(초) 안에 다시 읽었으면 그대로 쓴다
+INDEX_FIRST = 20000      # 처음 읽을 때 최근 메시지 몇 개까지
+INDEX_KEEP = 50000
+_VIDEO_EXT = {".mp4", ".mkv", ".avi", ".mov", ".m4v", ".wmv", ".ts", ".webm", ".flv", ".mpg", ".mpeg"}
+_INDEX = {}              # 채널 -> {"last", "at", "items": {msg: [캡션 첫 줄, 파일 이름]}}
+_INDEX_LOCKS = {}
+_EP_CACHE = {}           # 채널 -> (항목 수, 마지막 메시지, {(작품 키, 시즌, 회차): 제목})
+_NAME_CACHE = {}         # 채널 -> (항목 수, 마지막 메시지, {파일 이름 키: 제목})
+
+
+def _index_path(channel):
+    return os.path.join(compat.DATA_DIR, "channel_index", f"{abs(int(channel))}.json")
+
+
+def _index(channel):
+    channel = abs(int(channel))
+    if channel not in _INDEX:
+        try:
+            with open(_index_path(channel), encoding="utf-8") as f:
+                data = json.load(f)
+        except (OSError, ValueError):
+            data = {}
+        data = data if isinstance(data, dict) else {}
+        _INDEX[channel] = {"last": int(data.get("last") or 0), "at": 0, "items": dict(data.get("items") or {})}
+    return _INDEX[channel]
+
+
+def _save_index(channel, idx):
+    path = _index_path(channel)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    items = idx["items"]
+    if len(items) > INDEX_KEEP:   # 오래된 메시지부터 버린다
+        for k in sorted(items, key=int)[:len(items) - INDEX_KEEP]:
+            items.pop(k, None)
+    with open(path + ".tmp", "w", encoding="utf-8") as f:
+        json.dump({"last": idx["last"], "items": items}, f, ensure_ascii=False)
+    os.replace(path + ".tmp", path)
+
+
+def _doc_name(msg):
+    """메시지의 영상 파일 이름 (영상이 아니면 "")"""
+    doc = getattr(msg, "document", None)
+    if not doc:
+        return ""
+    name = next((getattr(a, "file_name", "") for a in getattr(doc, "attributes", None) or [] if getattr(a, "file_name", "")), "")
+    mime = str(getattr(doc, "mime_type", "") or "")
+    if mime.startswith("video/") or os.path.splitext(name)[1].lower() in _VIDEO_EXT:
+        return name or f"{msg.id}.mp4"
+    return ""
+
+
+async def refresh_channel(acc, channel):
+    """채널의 새 영상 메시지를 읽어 목록에 더한다 (plex_to_tg가 중복을 보기 전에 부른다)"""
+    key = abs(int(channel))
+    lock = _INDEX_LOCKS.setdefault(key, asyncio.Lock())
+    async with lock:
+        idx = _index(key)
+        if time.time() - idx["at"] < INDEX_TTL:
+            return
+        client = await acc.authorized_client()
+        peer = await acc.peer(channel)
+        last, n = idx["last"], 0
+        async for msg in client.iter_messages(peer, min_id=last, limit=None if last else INDEX_FIRST):
+            idx["last"] = max(idx["last"], int(msg.id))
+            name = _doc_name(msg)
+            if name:
+                idx["items"][str(msg.id)] = [str(getattr(msg, "message", "") or "").split("\n", 1)[0][:200], name]
+                n += 1
+        idx["at"] = time.time()
+        if n or idx["last"] != last:
+            _save_index(key, idx)
+            log.info("텔레그램 채널 %s 목록: 영상 %d개 더 읽음 (모두 %d개)", key, n, len(idx["items"]))
+
+
+def file_stem_key(file_name):
+    """같은 파일 이름 비교용 (확장자·나눈 조각 꼬리 _0000 무시, 대소문자 무시) - YMPlayer telegram_src와 같게"""
+    stem = os.path.splitext(os.path.basename(str(file_name or "")))[0]
+    return re.sub(r"_\d{4}$", "", stem).casefold()
+
+
+def _cached(cache, channel, build):
+    idx = _index(channel)
+    sig = (len(idx["items"]), idx["last"])
+    hit = cache.get(abs(int(channel)))
+    if not hit or hit[0] != sig:
+        hit = cache[abs(int(channel))] = (sig, build(idx["items"]))
+    return hit[1]
+
+
+def channel_file(_sid, channel, file_name):
+    """이 채널에 같은 이름의 영상이 이미 있으면 그 제목 (없으면 "")"""
+    want = file_stem_key(file_name)
+    if not want:
+        return ""
+
+    def build(items):
+        out = {}
+        for msg in sorted(items, key=int):
+            title, name = items[msg]
+            out.setdefault(file_stem_key(name), title or name)
+        return out
+    return _cached(_NAME_CACHE, channel, build).get(want, "")
+
+
+def channel_episode(_sid, channel, name_key, season, ep):
+    """이 채널에 같은 작품·시즌·회차 영상이 이미 있으면 그 제목 (없으면 "") - 파일 이름, 안 되면 캡션 첫 줄에서 읽는다"""
+    if not name_key or ep is None:
+        return ""
+    from . import folder_watch, plex_to_tg   # (순환 import를 피해 여기서)
+
+    def build(items):
+        out = {}
+        for msg in sorted(items, key=int):
+            title, name = items[msg]
+            for text in (name, f"{title}.mp4" if title else ""):
+                info = plex_to_tg.episode_key(folder_watch.file_fields(text)) if text else None
+                if info:
+                    out.setdefault(info, title or name)
+                    break
+        return out
+    return _cached(_EP_CACHE, channel, build).get((name_key, int(season or 1), int(ep)), "")

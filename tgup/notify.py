@@ -59,6 +59,11 @@ def embed_for(h):
         fields.append({"name": "채널", "value": str(h["channel"])[:200], "inline": True})
     if h.get("subs"):
         fields.append({"name": "자막", "value": str(h["subs"])[:200], "inline": True})
+    if h.get("elapsed"):   # 걸린 시간과 단계별 시간
+        sec = int(h["elapsed"])
+        took = f"{sec // 3600}시간 {sec % 3600 // 60}분" if sec >= 3600 else f"{sec // 60}분 {sec % 60}초" if sec >= 60 else f"{sec}초"
+        parts = [f"{k} {int(v) // 60}분" if v >= 60 else f"{k} {int(v)}초" for k, v in (h.get("times") or {}).items()]
+        fields.append({"name": "걸린 시간", "value": (took + (f" ({', '.join(parts)})" if parts else ""))[:200], "inline": False})
     if h.get("note"):
         fields.append({"name": "비고", "value": str(h["note"])[:1000], "inline": False})
     return {"title": f"텔레그램 자동 올리기 · {LABEL[kind]}", "description": str(h.get("title") or "")[:1000],

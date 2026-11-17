@@ -67,9 +67,16 @@ UPDATE_CHECK_INTERVAL_SECONDS = 3600  # 1시간마다 한 번만 GitHub 조회
 _UPDATE_CHECK_THREAD_LOCK = threading.Lock()
 _update_check_thread_active = False
 
+def _cron_next(expr):
+    """화면 안내: 다음 실행 시각 몇 개"""
+    from . import cronspec
+    return cronspec.describe(expr or "")
+
+
 DEFAULTS = {
     "ENABLE_SCHEDULER": False,
     "INTERVAL_MINUTES": 240,
+    "SCHEDULE_CRON": "0 */4 * * *",
     "FINISHED_SCAN_HOUR": 4,
     "AUTO_SUBSCRIBE_NEW_TITLES": False,
     "MAX_NEW_EPISODES_PER_TITLE": 10,
@@ -150,10 +157,11 @@ class WebtoonManagerMetadataProvider(BaseMetadataProvider):
     settings_schema = [
         # ---------------- 공통 ----------------
         {"key": "ENABLE_SCHEDULER", "label": "자동 실행 사용", "type": "checkbox", "default": False,
-         "hint": "켜면 아래 주기마다 요일별 스캔 + 새 회차 다운로드를 자동으로 합니다."},
-        {"key": "INTERVAL_MINUTES", "label": "실행 주기(분)", "type": "number", "default": 240,
-         "hint": "요일별 스캔 + 새 회차 다운로드(네이버·카카오 전체) 주기. 최소 10분. 카카오 기다무 대여권은 이 주기와 "
-                 "상관없이 5분마다 작품별 충전 주기(3시간·1일·2일·3일 등)에 맞춰 충전된 작품만 따로 받습니다."},
+         "hint": "켜면 아래 실행 시각(crontab)마다 요일별 스캔 + 새 회차 다운로드를 자동으로 합니다."},
+        {"key": "SCHEDULE_CRON", "label": "실행 시각 (crontab)", "type": "text", "default": "0 */4 * * *",
+         "hint": "요일별 스캔 + 새 회차 다운로드(네이버·카카오 전체)를 돌릴 시각. '분 시 일 월 요일' (이 서버의 시간대). "
+                 "예: 0 */4 * * * (4시간마다 정각) · 30 5,11,17,23 * * * (하루 4번) · */30 9-23 * * * (9시~23시 30분마다) · "
+                 "0 6 * * 1-5 (평일 6시). 카카오 기다무 대여권은 이 시각과 상관없이 5분마다 충전된 작품만 따로 받습니다."},
         {"key": "FINISHED_SCAN_HOUR", "label": "완결 목록 수집 시각(0~23시)", "type": "number", "default": 4,
          "hint": "하루 1번 완결 작품 전체 목록을 수집합니다."},
         {"key": "NEW_EP_SCOPE", "label": "새 회차 확인 범위", "type": "select", "default": "today",
@@ -395,6 +403,9 @@ class WebtoonManagerMetadataProvider(BaseMetadataProvider):
         cfg = self.get_plugin_config(db_type, default={}) or {}
         merged = dict(DEFAULTS)
         merged.update({k: v for k, v in cfg.items() if v not in (None, "")})
+        if not cfg.get("SCHEDULE_CRON"):   # 예전 설정: 실행 주기(분)를 가장 가까운 crontab 식으로
+            from . import cronspec
+            merged["SCHEDULE_CRON"] = cronspec.from_interval(merged.get("INTERVAL_MINUTES") or 240)
         if not merged.get("DOWNLOAD_ROOT"):
             merged["DOWNLOAD_ROOT"] = ss.DOWNLOAD_DEFAULT_DIR
         if not for_settings:
@@ -539,6 +550,8 @@ class WebtoonManagerMetadataProvider(BaseMetadataProvider):
                 "TEMP_DOWNLOAD_ROOT": ss.temp_root(cfg),
                 "ENABLE_SCHEDULER": bool(cfg.get("ENABLE_SCHEDULER")),
                 "INTERVAL_MINUTES": cfg.get("INTERVAL_MINUTES"),
+                "SCHEDULE_CRON": cfg.get("SCHEDULE_CRON"),
+                "SCHEDULE_NEXT": _cron_next(cfg.get("SCHEDULE_CRON")),
                 "FINISHED_SCAN_HOUR": cfg.get("FINISHED_SCAN_HOUR"),
                 "AUTO_SUBSCRIBE_NEW_TITLES": bool(cfg.get("AUTO_SUBSCRIBE_NEW_TITLES")),
                 "NAVER_DOWNLOAD_DAILY_PLUS": bool(pipeline._truthy(cfg.get("NAVER_DOWNLOAD_DAILY_PLUS"))),
@@ -1660,7 +1673,7 @@ class WebtoonManagerMetadataProvider(BaseMetadataProvider):
     # (섹션, 그룹 제목, 키들) - 섹션은 설정 화면의 [공통][네이버][카카오페이지] 탭
     # (섹션, 그룹 제목, 키들[, 그룹 설명]) - 섹션은 설정 화면의 탭
     _SETTINGS_GROUPS = [
-        ("common", "자동 실행", ("ENABLE_SCHEDULER", "INTERVAL_MINUTES", "FINISHED_SCAN_HOUR", "NEW_EP_SCOPE",
+        ("common", "자동 실행", ("ENABLE_SCHEDULER", "SCHEDULE_CRON", "FINISHED_SCAN_HOUR", "NEW_EP_SCOPE",
                                 "CHECK_PLAN_ENABLE")),
         ("common", "구독 / 다운로드 대상", ("AUTO_SUBSCRIBE_NEW_TITLES", "INITIAL_EPISODES_LIMIT",
                                          "ALLOW_BL", "ALLOW_GL", "HIDE_BL_GL"),
@@ -1800,6 +1813,12 @@ class WebtoonManagerMetadataProvider(BaseMetadataProvider):
                 patch[k] = str(v if v is not None else "").strip()
         if errors:
             return False, "잘못된 값이 있습니다: %s" % ", ".join(errors)
+        if "SCHEDULE_CRON" in patch:   # crontab 식 확인 (비우면 기본값)
+            from . import cronspec
+            try:
+                patch["SCHEDULE_CRON"] = cronspec.validate(patch["SCHEDULE_CRON"] or DEFAULTS["SCHEDULE_CRON"])
+            except cronspec.CronError as e:
+                return False, "실행 시각(crontab): %s" % e
         # 쿠키 칸: 쿠키처럼 생기지 않은 값(브라우저가 자동으로 채운 비밀번호 등)은 저장하지 않는다
         from . import kakao_api
         labels = {f["key"]: f.get("label") or f["key"] for f in self.settings_schema}

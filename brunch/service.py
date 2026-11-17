@@ -8,7 +8,7 @@
   (brunch/kavita.py, 설정에서 끌 수 있음). 예전(2.55.0까지) 작가 폴더에 바로 받은 책은 한 번 다시 받아 책 폴더로 옮긴다.
 - 저장 폴더가 BookOasis 보관함 안이면 웹툰처럼 드라이브 변경 감시에 넘겨 바로 스캔한다 (gdw/handoff.py).
 - 화면의 [내려받기]로 브라우저에도 받을 수 있다.
-- 새 글 자동 받기: 받은 브런치북(연재 중)을 정해 둔 간격(기본 6시간)마다 확인해, 발행된 회차가 늘었으면 다시 받아 덮어쓴다.
+- 새 글 자동 받기: 받은 브런치북(연재 중)을 정해 둔 간격(분 - 10·20·30분 … 기본 6시간)마다 확인해, 발행된 회차가 늘었으면 다시 받아 덮어쓴다.
   책마다 [자동 받기]를 끌 수 있고, 완결된 책은 확인하지 않는다.
 설정·기록: DATA_DIR/brunch/ (settings.json, history.json, check.json)
 """
@@ -34,7 +34,9 @@ _LOCK = threading.RLock()
 _JOBS = deque(maxlen=50)  # 최근 작업 (대기·진행·끝)
 _WAKE = threading.Event()
 _STATE = {"thread": None, "client": None, "checking": False}
-CHECK_HOURS = (1, 2, 3, 6, 12, 24)
+CHECK_MINUTES = (10, 20, 30, 40, 50, 60, 90, 120, 180, 360, 720, 1440)
+CHECK_HOURS = tuple(m // 60 for m in CHECK_MINUTES if m % 60 == 0)   # (예전 설정 값 - 화면은 분 단위)
+DEFAULT_CHECK_MIN = 360
 FIRST_CHECK_DELAY = 120   # 켠 뒤 처음 확인까지 (시작을 무겁게 하지 않게)
 
 
@@ -74,15 +76,25 @@ def _write_json(path, data):
     os.replace(tmp, path)
 
 
+def _check_min(s):
+    """새 글 확인 간격(분) - check_minutes, 예전 설정은 check_hours x 60"""
+    try:
+        if s.get("check_minutes") not in (None, ""):
+            return int(s["check_minutes"])
+        if s.get("check_hours") not in (None, ""):
+            return int(s["check_hours"]) * 60
+    except (TypeError, ValueError):
+        pass
+    return DEFAULT_CHECK_MIN
+
+
 def load_settings():
     s = _read_json(_settings_path(), {})
-    try:
-        hours = int(s.get("check_hours") or 6)
-    except (TypeError, ValueError):
-        hours = 6
+    minutes = _check_min(s)
+    minutes = minutes if minutes in CHECK_MINUTES else DEFAULT_CHECK_MIN
     return {"save_dir": str(s.get("save_dir") or ""), "by_author": s.get("by_author", True) is not False,
             "auto_check": s.get("auto_check", True) is not False, "kavita_yaml": s.get("kavita_yaml", True) is not False,
-            "check_hours": hours if hours in CHECK_HOURS else 6}
+            "check_minutes": minutes, "check_hours": round(minutes / 60, 2)}
 
 
 def save_root(settings=None):
@@ -97,14 +109,11 @@ def clean_settings(body):
         if "\x00" in save_dir or not os.path.isabs(save_dir):
             raise ValueError("저장 폴더는 서버의 절대 경로로 적으세요 (예: /mnt/books/브런치).")
         save_dir = os.path.normpath(save_dir)
-    try:
-        hours = int(body.get("check_hours") or 6)
-    except (TypeError, ValueError):
-        hours = 6
-    if hours not in CHECK_HOURS:
-        raise ValueError("새 글 확인 간격은 %s시간 중 하나입니다." % ", ".join(map(str, CHECK_HOURS)))
+    minutes = _check_min(body)
+    if minutes not in CHECK_MINUTES:
+        raise ValueError("새 글 확인 간격은 %s분 중 하나입니다." % ", ".join(map(str, CHECK_MINUTES)))
     return {"save_dir": save_dir, "by_author": bool(body.get("by_author", True)),
-            "auto_check": bool(body.get("auto_check", True)), "check_hours": hours,
+            "auto_check": bool(body.get("auto_check", True)), "check_minutes": minutes,
             "kavita_yaml": bool(body.get("kavita_yaml", True))}
 
 
@@ -241,7 +250,7 @@ def _check_due(started):
     if not s["auto_check"] or time.time() - started < FIRST_CHECK_DELAY:
         return False
     last = float(check_state().get("last") or 0)
-    return time.time() - last >= s["check_hours"] * 3600
+    return time.time() - last >= s["check_minutes"] * 60
 
 
 def _public_history():
@@ -408,12 +417,15 @@ def _run(job):
             yaml_ok = bool(kavita.write(os.path.dirname(final), data))
         except Exception as e:  # noqa: BLE001 - 메타데이터는 덤, EPUB 받기를 막지 않는다
             log.warning("브런치 kavita.yaml을 만들지 못했습니다 (%s): %s", meta["title"], e)
+    replaced = os.path.exists(final)   # 예전에 받은(올린) 같은 책을 새 회차까지 담아 덮어씀
     _move(local, final)
     size = os.path.getsize(final)
     old = _entry_by_key(job["key"])
     if old and old.get("file"):   # 예전 위치(예전 작가 폴더·바뀐 제목)에 받은 파일은 치운다
         _remove_book_file(old["file"], keep=final)
-    scan = _handoff(final)
+    # 덮어쓴 책은 '수정'으로 넘긴다 - '추가'로 넘기면 같은 경로가 이미 BookOasis에 있어 '이미 등록된 파일'로 건너뛰어
+    # 새 회차가 반영되지 않았다
+    scan = _handoff(final, action="edit" if replaced else "create")
     entry = {"id": uuid.uuid4().hex[:12], "key": job["key"], "kind": job["kind"], "title": meta["title"], "author": meta["author"],
              "url": meta["url"], "chapters": len(chapters), "images": len(images), "restricted": restricted,
              "skipped": skipped, "status": meta.get("status") or "", "file": final, "file_name": os.path.basename(final),
@@ -455,8 +467,8 @@ def _state():
     chk = check_state()
     last = float(chk.get("last") or 0)
     return {"success": True, "settings": s, "root": save_root(s), "env_root": config.env("BRUNCH_DOWNLOAD_ROOT", "").strip(),
-            "jobs": _public_jobs(), "history": _public_history(), "check_hours": list(CHECK_HOURS),
-            "check": {"last": last, "next": (last + s["check_hours"] * 3600) if (s["auto_check"] and last) else 0,
+            "jobs": _public_jobs(), "history": _public_history(), "check_minutes": list(CHECK_MINUTES),
+            "check": {"last": last, "next": (last + s["check_minutes"] * 60) if (s["auto_check"] and last) else 0,
                       "found": chk.get("found", 0), "error": chk.get("error", ""), "running": _STATE["checking"]}}
 
 

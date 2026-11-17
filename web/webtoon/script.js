@@ -461,7 +461,7 @@
       ['쿠키 등록', cfg.has_cookie ? '등록됨' : '(미설정)'],
       ['다운로드 경로', cfg.DOWNLOAD_ROOT || '(기본값)'],
       ['임시 작업 경로', cfg.TEMP_DOWNLOAD_ROOT || '(기본값)'],
-      ['자동 실행', cfg.ENABLE_SCHEDULER ? ('사용 / ' + cfg.INTERVAL_MINUTES + '분 주기') : '사용 안 함'],
+      ['자동 실행', cfg.ENABLE_SCHEDULER ? ('사용 / ' + (cfg.SCHEDULE_CRON ? 'crontab ' + cfg.SCHEDULE_CRON + ((cfg.SCHEDULE_NEXT || []).length ? ' (다음 ' + cfg.SCHEDULE_NEXT.join(', ') + ')' : '') : cfg.INTERVAL_MINUTES + '분 주기')) : '사용 안 함'],
       ['신간 자동 구독', cfg.AUTO_SUBSCRIBE_NEW_TITLES ? '사용' : '사용 안 함(관심 작가만 자동구독)'],
       ['매일+ 작품 받기', cfg.NAVER_DOWNLOAD_DAILY_PLUS ? '받음' : '받지 않음'],
       ['ComicInfo.xml 생성', cfg.GENERATE_COMICINFO_XML ? '사용' : '사용 안 함'],
