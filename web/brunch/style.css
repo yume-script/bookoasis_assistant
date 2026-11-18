@@ -79,3 +79,5 @@
 
 .brunch .br-search { min-width: 200px; flex: 1 1 200px; max-width: 320px; margin-left: auto; }
 @media (max-width: 640px) { .brunch .br-search { max-width: none; margin-left: 0; } }
+.br-epub.none { color: var(--muted, #9aa0a6); background: color-mix(in srgb, currentColor 10%, transparent); }
+.brunch .br-saved { font-size: 0.75rem; color: var(--muted, #9aa0a6); }

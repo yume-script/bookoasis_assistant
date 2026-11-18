@@ -398,8 +398,12 @@ def epub_state(items):
             it["epub"] = "old"
         else:
             it["epub"] = ""
-        if books:
-            it["epub_at"] = books[0].get("at") or ""
+        if books:   # 받아 둔 EPUB이 어디까지인지 (가장 최근에 받은 것): 회차 수, 마지막 회차, 그 회차가 발행된 날
+            b = max(books, key=lambda h: str(h.get("at") or ""))
+            it["epub_at"] = b.get("at") or ""
+            it["epub_chapters"] = int(b.get("chapters") or 0)
+            it["epub_latest"] = b.get("latest_title") or ""
+            it["epub_last_pub"] = b.get("last_published") or ""
     return items
 
 

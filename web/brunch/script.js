@@ -162,7 +162,12 @@
             const dl = h('button', { class: `btn btn-sm${it.epub === 'done' ? '' : ' btn-accent'}`, type: 'button', title: '이 글이 든 브런치북 전체를 EPUB 한 권으로' },
                 icon(old ? 'rotate' : 'download'), old ? ' 다시 받기' : it.epub === 'done' ? ' 다시 받기' : ' EPUB 받기');
             const b = EPUB_BADGE[it.epub];
-            const badge = b ? h('div', { class: b[0], title: b[3] + (it.epub_at ? ` (마지막으로 받은 때 ${it.epub_at})` : '') }, icon(b[1]), ` ${b[2]}`) : null;
+            const badge = b ? h('div', { class: b[0], title: b[3] + (it.epub_at ? ` (마지막으로 받은 때 ${it.epub_at})` : '') }, icon(b[1]), ` ${b[2]}`)
+                : h('div', { class: 'br-epub none', title: '이 브런치북은 아직 EPUB으로 받지 않았습니다' }, icon('circle'), ' 아직 안 받음');
+            // 받아 둔 EPUB이 어디까지인지: 몇 화 · 마지막 회차가 발행된 날 · 받은 때
+            const saved = it.epub_chapters ? h('div', { class: 'br-saved', title: it.epub_latest ? `EPUB의 마지막 회차: ${it.epub_latest}` : '' },
+                `EPUB ${it.epub_chapters}화` + (it.epub_last_pub ? ` · ${it.epub_last_pub.replace(/-/g, '.')} 발행분까지` : '')
+                + (it.epub_at ? ` · 받은 때 ${it.epub_at.slice(5)}` : '')) : null;
             dl.addEventListener('click', () => busy(dl, () => download({ url: it.url, scope: 'book', title: it.book_title }, it.book_title)));
             const thumb = it.image ? h('img', { class: 'br-thumb', src: it.image, alt: '', loading: 'lazy', referrerpolicy: 'no-referrer' })
                 : h('div', { class: 'br-thumb br-thumb-empty' }, icon('book-open'));
@@ -173,7 +178,7 @@
                     h('div', { class: 'br-meta', text: [it.author, fmtDate(it.publish_time),
                         it.days && it.days.length ? (it.days.includes('완결') ? '완결' : `${it.days.join('·')}요일 연재`) : ''].filter(Boolean).join(' · ') }),
                     h('div', { class: 'br-ep', title: it.title, text: `최근: ${it.title}` }),
-                    badge,
+                    badge, saved,
                     h('div', { class: 'toolbar' }, dl,
                         h('a', { class: 'btn btn-sm', href: it.url, target: '_blank', rel: 'noopener noreferrer' }, icon('arrow-up-right-from-square'), ' 브런치'))));
         };
