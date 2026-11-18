@@ -277,6 +277,76 @@ class WinFspPathTest(unittest.TestCase):
                 del ctypes.windll
 
 
+class ResumePartsTest(unittest.TestCase):
+    """나눠 올리다 서버를 다시 켜면 다 올린 조각 다음부터 이어 올린다 (영상만 올라가고 자막 전에 멈춘 조각은 지우고 그 조각부터)"""
+
+    @unittest.skipUnless(HAVE_AIOHTTP, "aiohttp 없음")
+    def test_resume(self):
+        import asyncio
+        import types
+        from tgup import compat, plex_to_tg as m
+        if "telethon.tl.types" not in sys.modules:
+            try:
+                import telethon.tl.types  # noqa: F401
+            except ImportError:
+                ty = types.ModuleType("telethon.tl.types")
+                ty.DocumentAttributeFilename = ty.DocumentAttributeVideo = lambda *a, **k: None
+                sys.modules.update({"telethon": types.ModuleType("telethon"), "telethon.tl": types.ModuleType("telethon.tl"),
+                                    "telethon.tl.types": ty})
+        data = tempfile.mkdtemp(prefix="tgup-resume-")
+        old_dir, compat.DATA_DIR = compat.DATA_DIR, data
+        self.addCleanup(setattr, compat, "DATA_DIR", old_dir)
+
+        class Client:
+            def __init__(self, base, fail_at=None):
+                self.n, self.sent, self.deleted, self.fail_at = base, [], [], fail_at
+
+            async def send_file(self, peer, path, **kw):
+                if os.path.basename(path) == self.fail_at:
+                    raise asyncio.CancelledError()   # 서버 다시 켜기
+                self.n += 1
+                self.sent.append(os.path.basename(path))
+                return types.SimpleNamespace(id=self.n)
+
+            async def delete_messages(self, peer, ids):
+                self.deleted += list(ids)
+
+        async def run():
+            mir = m.Mirror(None, None, lambda *a: None, None)
+            lane = m.Lane("tg")
+            m._LANE.set(lane)
+            pieces = []
+            for i in range(3):
+                p = os.path.join(data, f"v_{i}.mp4")
+                with open(p, "wb") as f:
+                    f.write(b"x")
+                pieces.append((p, i * 10, 10))
+            sub = os.path.join(data, "sub.srt")
+            with open(sub, "w", encoding="utf-8") as f:
+                f.write("1\n00:00:01,000 --> 00:00:29,000\nhi\n")
+            lane.current_job = {"rule": "r1", "key": "K", "tg": "tg"}
+            c1 = Client(100, fail_at="cut2_sub.srt")   # 2번째 조각의 영상은 올라갔고 자막 전에 멈춤
+            with self.assertRaises(asyncio.CancelledError):
+                await mir._send_pieces(c1, None, pieces, "v.mp4", "제목", 1, 1, None, [(sub, "ko", "srt")], "t", data, [])
+            lane.resume = mir._resumable({"id": "r1"}, "K")
+            self.assertEqual((lane.resume["n"], lane.resume["done"], lane.resume["cur"]), (3, 1, [103]))
+            c2, msgs = Client(200), []
+            await mir._send_pieces(c2, None, pieces, "v.mp4", "제목", 1, 1, None, [(sub, "ko", "srt")], "t", data, msgs)
+            self.assertEqual(c2.sent, ["v_1.mp4", "cut2_sub.srt", "v_2.mp4", "cut3_sub.srt"])   # 1번 조각은 다시 안 올림
+            self.assertEqual(c2.deleted, [103])                                                 # 반쪽 조각만 지움
+            self.assertEqual(msgs, [101, 201, 203])
+            # 다르게 나뉘면(조각 수가 다름) 올려 둔 것을 지우고 처음부터
+            lane.resume = {"n": 4, "done": 2, "vids": [1, 2], "cur": []}
+            st = m.load_state()
+            st["rules"]["r1"]["sending"]["K"] = [1, 2]
+            m.save_state(st)
+            c3 = Client(300)
+            await mir._send_pieces(c3, None, pieces, "v.mp4", "제목", 1, 1, None, [], "t", data, [])
+            self.assertEqual((c3.sent, c3.deleted), (["v_0.mp4", "v_1.mp4", "v_2.mp4"], [1, 2]))
+        asyncio.run(run())
+        shutil.rmtree(data, ignore_errors=True)
+
+
 class ChannelIndexTest(unittest.TestCase):
     """채널 중복 확인: 채널의 영상 메시지를 읽어 두고 같은 파일 이름·같은 회차를 찾는다 (처음엔 전부, 그 뒤엔 새 것만)"""
 
