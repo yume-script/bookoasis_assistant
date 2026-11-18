@@ -170,12 +170,43 @@
             return h('div', { class: 'br-card' }, thumb,
                 h('div', { class: 'br-body' },
                     h('div', { class: 'br-book' }, it.book_title, it.is_new ? h('span', { class: 'br-new', text: 'NEW' }) : null),
-                    h('div', { class: 'br-meta', text: [it.author, fmtDate(it.publish_time)].filter(Boolean).join(' · ') }),
+                    h('div', { class: 'br-meta', text: [it.author, fmtDate(it.publish_time),
+                        it.days && it.days.length ? (it.days.includes('완결') ? '완결' : `${it.days.join('·')}요일 연재`) : ''].filter(Boolean).join(' · ') }),
                     h('div', { class: 'br-ep', title: it.title, text: `최근: ${it.title}` }),
                     badge,
                     h('div', { class: 'toolbar' }, dl,
                         h('a', { class: 'btn btn-sm', href: it.url, target: '_blank', rel: 'noopener noreferrer' }, icon('arrow-up-right-from-square'), ' 브런치'))));
         };
+        // 제목으로 찾기: 모든 요일·완결 목록에서 (서버가 처음 한 번 모아 두는 동안은 조금 기다렸다 다시 묻는다)
+        const searchBox = h('input', { class: 'input br-search', type: 'search', placeholder: '제목·작가로 찾기',
+            title: '모든 요일과 완결 목록에서 브런치북 제목·회차 제목·작가로 찾습니다' });
+        const searchNote = h('p', { class: 'field-hint', hidden: true });
+        let searchSeq = 0, searchTimer = null;
+        const runSearch = async () => {
+            const q = searchBox.value.trim();
+            const seq = ++searchSeq;
+            clearTimeout(searchTimer);
+            if (!q) { searchNote.hidden = true; chips.hidden = false; sortSel.hidden = false; paintChips(); load(false); return; }
+            chips.hidden = true; sortSel.hidden = true; bulkBtn.hidden = true; moreBtn.hidden = true;
+            if (!grid.querySelector('.br-card')) clear(grid).appendChild(loading());
+            try {
+                const data = await api(`api/brunch/search?${new URLSearchParams({ q })}`);
+                if (seq !== searchSeq) return;
+                clear(grid);
+                data.items.forEach((it) => grid.appendChild(card(it)));
+                searchNote.hidden = false;
+                searchNote.textContent = data.building
+                    ? `연재 목록을 모으는 중입니다 (${data.pages}쪽째) - 찾은 것 ${data.items.length}개, 다 모으면 다시 찾습니다.`
+                    : `'${q}' - ${data.items.length}개 찾음 (모든 요일·완결 브런치북 ${data.total}권 중)` + (data.error ? ` · 오류: ${data.error}` : '');
+                if (!data.items.length && !data.building) grid.appendChild(h('p', { class: 'muted', text: '찾은 브런치북이 없습니다.' }));
+                if (data.building) searchTimer = setTimeout(() => { if (seq === searchSeq) runSearch(); }, 2500);
+            } catch (e) {
+                if (seq === searchSeq) clear(grid).appendChild(h('p', { class: 'error-text', text: `찾지 못했습니다: ${e.message}` }));
+            }
+        };
+        let typing = null;
+        searchBox.addEventListener('input', () => { clearTimeout(typing); typing = setTimeout(runSearch, 400); });
+        searchBox.addEventListener('keydown', (e) => { if (e.key === 'Enter') { clearTimeout(typing); runSearch(); } });
         const load = async (more) => {
             if (!more) { clear(grid).appendChild(loading()); next = ''; }
             moreBtn.hidden = true;
@@ -195,7 +226,7 @@
         const paintChips = () => {
             clear(chips);
             DAYS.forEach(([v, t]) => chips.appendChild(h('button', { type: 'button', class: 'chip' + (browse.day === v ? ' is-on' : ''), text: t,
-                on: { click: () => { browse.day = v; paintChips(); load(false); } } })));
+                on: { click: () => { browse.day = v; searchBox.value = ''; searchNote.hidden = true; paintChips(); load(false); } } })));
             sortSel.disabled = browse.day === 'COMPLETE';
             bulkBtn.hidden = browse.day !== 'COMPLETE';
         };
@@ -203,7 +234,7 @@
         sortSel.addEventListener('change', () => { browse.sort = sortSel.value; load(false); });
         moreBtn.addEventListener('click', () => busy(moreBtn, () => load(true)));
         paintChips();
-        pane.append(h('div', { class: 'toolbar' }, chips, sortSel, bulkBtn),
+        pane.append(h('div', { class: 'toolbar' }, chips, sortSel, bulkBtn, searchBox), searchNote,
             h('p', { class: 'field-hint', text: '브런치북 오리지널 연재 목록입니다. [EPUB 받기]는 그 글이 든 브런치북의 발행된 회차 전부를 한 권으로 받습니다 (멤버십 글은 공개된 앞부분만). '
                 + '카드 아래 표시: "EPUB 반영됨"은 이 회차까지 EPUB에 들어 있음, "새 회차 미반영"은 받아 둔 EPUB에 이 회차가 아직 없음([다시 받기]). 완결 탭의 [완결작 모두 EPUB으로]는 아직 받지 않은 완결작을 모두 받습니다.' }),
             grid, moreBtn);

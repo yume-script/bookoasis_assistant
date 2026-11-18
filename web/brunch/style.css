@@ -76,3 +76,6 @@
 .br-epub.done { color: var(--ok); background: color-mix(in srgb, var(--ok) 14%, transparent); }
 .br-epub.old { color: #e0a33a; background: color-mix(in srgb, #e0a33a 16%, transparent); }
 .br-epub.queued { color: var(--accent); background: rgba(var(--accent-rgb), 0.14); }
+
+.brunch .br-search { min-width: 200px; flex: 1 1 200px; max-width: 320px; margin-left: auto; }
+@media (max-width: 640px) { .brunch .br-search { max-width: none; margin-left: 0; } }

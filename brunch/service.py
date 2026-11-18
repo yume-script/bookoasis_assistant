@@ -437,6 +437,72 @@ def bulk_complete():
 _BULK = {}
 
 
+# ── 제목으로 찾기 ──
+# 브런치 연재 목록 API는 요일별·완결로만 나뉘어 있고 찾기가 없다 - 모든 요일과 완결 목록을 끝까지 넘겨 모아 두고
+# (뒤에서, SEARCH_CACHE_SEC 동안 다시 쓰기) 그 안에서 브런치북 제목·회차 제목·작가로 찾는다.
+SEARCH_CACHE_SEC = 30 * 60
+SEARCH_MAX_PAGES = 40       # 요일·완결 목록마다 넘겨 볼 쪽 수
+_DAY_LABEL = {"MONDAY": "월", "TUESDAY": "화", "WEDNESDAY": "수", "THURSDAY": "목", "FRIDAY": "금",
+              "SATURDAY": "토", "SUNDAY": "일", "COMPLETE": "완결"}
+_SEARCH = {"items": [], "at": 0.0, "building": False, "pages": 0, "error": ""}
+_SEARCH_LOCK = threading.Lock()
+
+
+def _norm_q(text):
+    return re.sub(r"\s+", "", str(text or "")).casefold()
+
+
+def _build_search_index():
+    st = _SEARCH
+    try:
+        c, items, pages = _client(), {}, 0
+        for day in list(_DAY_LABEL):
+            nxt = None
+            for _ in range(SEARCH_MAX_PAGES):
+                res = c.list(day, "", nxt)
+                pages += 1
+                st["pages"] = pages
+                for it in res["items"]:
+                    if not it.get("url"):
+                        continue
+                    key = (it.get("book_title") or it.get("title"), it.get("author"))
+                    have = items.get(key)
+                    if have is None or (it.get("publish_time") or 0) > (have.get("publish_time") or 0):
+                        days = (have or {}).get("days") or []
+                        items[key] = dict(it, days=days)
+                    if _DAY_LABEL[day] not in items[key]["days"]:
+                        items[key]["days"] = items[key]["days"] + [_DAY_LABEL[day]]
+                nxt = res.get("next_url") or None
+                if not (res.get("more") and nxt):
+                    break
+        st.update(items=sorted(items.values(), key=lambda x: -(x.get("publish_time") or 0)), at=time.time(), error="")
+        log.info("브런치 찾기: 연재 목록 %d쪽에서 브런치북 %d권을 모음", pages, len(items))
+    except Exception as e:  # noqa: BLE001
+        st["error"] = str(e)[:300]
+        log.warning("브런치 찾기 목록 모으기 실패: %s", e)
+    finally:
+        st["building"] = False
+
+
+def search(q, limit=60):
+    """{"items", "building"(아직 모으는 중), "pages", "total"(모은 책 수), "error"} - 처음이거나 오래됐으면 뒤에서 모으기 시작"""
+    st = _SEARCH
+    with _SEARCH_LOCK:
+        if not st["building"] and (not st["items"] or time.time() - st["at"] > SEARCH_CACHE_SEC):
+            st.update(building=True, pages=0)
+            threading.Thread(target=_build_search_index, name="brunch-search", daemon=True).start()
+    want = _norm_q(q)
+    hits = []
+    if want:
+        for it in st["items"]:
+            if any(want in _norm_q(it.get(k)) for k in ("book_title", "title", "author")):
+                hits.append(dict(it))
+                if len(hits) >= limit:
+                    break
+    return {"items": epub_state(hits), "building": st["building"], "pages": st["pages"],
+            "total": len(st["items"]), "error": st["error"], "success": True}
+
+
 def _public_jobs():
     with _LOCK:
         return [{k: j.get(k) for k in ("id", "key", "kind", "title", "state", "done", "total", "error", "note", "added", "history_id", "auto")}
@@ -622,6 +688,8 @@ def api_get(path, query):
             res = c.list(query.get("day", "MONDAY"), query.get("sort", ""), query.get("next") or None)
             # (캐시한 목록을 고치지 않게 글마다 복사해서 EPUB 상태를 붙인다)
             return dict(res, items=epub_state([dict(x) for x in res["items"]]), success=True)
+        if path == "/api/brunch/search":   # 제목으로 찾기 (?q=)
+            return search(query.get("q", ""))
         if path == "/api/brunch/resolve":   # 붙여 넣은 주소 미리 보기
             kind, target = fetch.parse_input(query.get("url", ""))
             if kind == "book":
