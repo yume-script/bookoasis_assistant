@@ -3735,6 +3735,11 @@ def main():
     lock = acquire_lock(os.path.join(data_dir, "worker.lock"))
     if lock is None:
         return 0  # 이미 실행 중
+    try:   # 상주 워커도 10분마다 쓰고 난 메모리를 OS에 (스왑 줄이기)
+        from gdw import memtrim
+        memtrim.start_loop()
+    except Exception:  # noqa: BLE001
+        pass
     # 하루 단위로 나눠 저장하고, 처리 옵션의 '로그 보관(일)'만큼만 남긴다 (Worker.load에서 적용)
     handler = logging.handlers.TimedRotatingFileHandler(os.path.join(data_dir, "worker.log"), when="midnight",
                                                         backupCount=3, encoding="utf-8")

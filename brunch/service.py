@@ -23,7 +23,7 @@ import uuid
 from collections import deque
 from datetime import datetime
 
-from gdw import config
+from gdw import config, memtrim
 
 from . import epub, fetch, kavita
 
@@ -349,6 +349,7 @@ def _loop(stop_event):
             log.warning("브런치 EPUB 받기 실패 (%s): %s", job.get("title") or job["key"], e)
             job["state"], job["error"] = "error", str(e)
         job["finished"] = time.time()
+        memtrim.release()   # 그림을 많이 담은 EPUB 뒤 쓰고 난 메모리를 OS에
 
 
 def enqueue(kind, target, title="", auto=False):

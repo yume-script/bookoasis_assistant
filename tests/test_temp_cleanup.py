@@ -66,3 +66,16 @@ class TgupTmpTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MemtrimTest(unittest.TestCase):
+    def test_release_and_loop(self):
+        import threading
+        from gdw import memtrim
+        self.assertIn(memtrim.release(), (True, False))
+        ev = threading.Event()
+        t = memtrim.start_loop(ev, every=0.01)
+        time.sleep(0.05)
+        ev.set()
+        t.join(1)
+        self.assertFalse(t.is_alive())
