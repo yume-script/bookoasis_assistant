@@ -211,6 +211,10 @@ class ServiceTest(unittest.TestCase):
             self.assertIn("<dc:date>%s</dc:date>" % day, opf)
             self.assertIn("%s 발행" % day.replace("-", "."), ch)
             self.assertEqual(s._public_history()[0]["first_published"], day)
+            # 연재 목록 카드: 받아 둔 EPUB이 어디까지인지 (회차 수 · 마지막 회차 발행일)
+            it = s.epub_state([{"book_title": h["title"], "user_id": "nobody", "article_no": 999999}])[0]
+            self.assertEqual((it["epub"], it["epub_chapters"], it["epub_last_pub"]), ("old", h["chapters"], day))
+            self.assertEqual(s.epub_state([{"book_title": "받지 않은 책", "user_id": "x", "article_no": 1}])[0]["epub"], "")
             self.assertIn(f'Year: "{day[:4]}"', yml)
             self.assertEqual(job["done"], 2)
             # 같은 책을 다시 받으면 받은 목록에 한 줄만 남는다
