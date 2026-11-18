@@ -1215,6 +1215,15 @@ def run_finished_scan_job(cfg, log=print):
         raise
 
 
+def _release_memory():
+    """전체 실행 뒤 쓰고 난 메모리를 OS에 돌려준다 (스왑 줄이기, gdw/memtrim)"""
+    try:
+        from gdw import memtrim
+        memtrim.release()
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def run_full_cycle(cfg, log=print):
     """스케줄러의 기본 주기(INTERVAL_MINUTES)마다 도는 빠른 사이클: 요일별
     스캔 + 다운로드만 한다. 완결 전체 스캔은 무겁고 느려서 여기 포함하지
@@ -1277,3 +1286,5 @@ def run_full_cycle(cfg, log=print):
         ss.save_job_state({"running": False, "stage": "error", "finished_at": time.time(),
                             "last_error": str(e)})
         raise
+    finally:
+        _release_memory()

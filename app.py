@@ -143,6 +143,8 @@ def main():
         return 2
 
     stop_event = threading.Event()
+    from gdw import memtrim
+    memtrim.start_loop(stop_event)   # 10분마다 쓰고 난 메모리를 OS에 (스왑 줄이기)
     if svc is not None:
         svc._sync_runtime(force_libraries=True)
         screener.start(stop_event)

@@ -72,6 +72,7 @@ import urllib.parse
 from aiohttp import ClientTimeout
 
 from . import compat as config_store, compat as transcode, folder_watch, tgaccount as telegram_src
+from gdw import memtrim  # noqa: E402 - 큰 작업 뒤 쓰고 난 메모리를 OS에
 
 log = logging.getLogger("ym_player.plex_to_tg")
 
@@ -2084,6 +2085,7 @@ class Mirror:
             await self._save_meta(rule, cfg, src, m, [x for x in msgs if x], tmp)
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
+            memtrim.release()   # 큰 작업 뒤 쓰고 난 메모리를 OS에 (스왑 줄이기)
         log.info("자동 올리기: %s -> %s", fields["name"], rule["channel_title"] or rule["channel"])
         self.subs_label = ("화면에 입힘" if burned else f"파일 {sent_subs}개" if sent_subs
                            else "옮기지 못함" if soft_lost else "소프트 자막" if embedded else "없음")
@@ -2226,6 +2228,7 @@ class Mirror:
                                                 thumb, sub_files, fields["name"], tmp, msgs)
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
+            memtrim.release()   # 큰 작업 뒤 쓰고 난 메모리를 OS에 (스왑 줄이기)
         log.info("자동 올리기(폴더): %s -> %s", key, rule["channel_title"] or rule["channel"])
         # Plex 정보가 없으니 TMDB에서 작품을 찾아 둔다 (목록 카드의 포스터) - 같은 드라마는 처음 찾은 것을 그대로
         poster = await self._find_poster(rule, fields["name"], os.path.basename(key))

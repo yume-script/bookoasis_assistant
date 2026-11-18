@@ -138,12 +138,29 @@ class _Runner:
 RUNNER = _Runner()
 
 
+def _sweep_tmp():
+    """지난번에 꺼지거나 죽어서 남은 자동 올리기 작업 폴더(받다 만 원본·나눈 조각·인코딩 결과) 지우기.
+    나눠 올리기를 이어 할 때도 원본에서 다시 나누므로 지워도 된다 (작업은 이 정리 뒤에 시작)"""
+    import os
+    import shutil
+    from . import compat
+    tmp = os.path.join(compat.DATA_DIR, "plex_to_tg_tmp")
+    if not os.path.isdir(tmp):
+        return 0
+    n = len(os.listdir(tmp))
+    shutil.rmtree(tmp, ignore_errors=True)
+    if n:
+        log.info("텔레그램 자동 올리기: 지난번에 남은 작업 폴더 %d개를 지웠습니다", n)
+    return n
+
+
 def start(stop_event=None):
     try:
         import aiohttp  # noqa: F401
     except ImportError:
         log.warning("aiohttp가 없어 텔레그램 자동 올리기를 켜지 못했습니다: pip install -r requirements.txt")
         return False
+    _sweep_tmp()
     RUNNER.start(stop_event)
     log.info("텔레그램 자동 올리기: 규칙 %d개 (data/tgup)", len(plex_to_tg.load_settings()["rules"]))
     return True
