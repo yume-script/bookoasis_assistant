@@ -439,6 +439,42 @@ def flush_outbox(temp_root, log=None):
             pass
     if n and log:
         log("이전 실행에서 남은 회차 zip %d개를 라이브러리로 옮겼습니다" % n)
+    sweep_stale_temp(temp_root, log=log)
+    return n
+
+
+STALE_TEMP_DAYS = 14
+
+
+def sweep_stale_temp(temp_root, days=STALE_TEMP_DAYS, log=None):
+    """받다 끊긴 회차의 낱장 이미지 폴더(temp_root/작품번호/회차번호)는 다음에 이어 받으려고 남겨 두지만,
+    그 회차를 다시 받지 않으면(구독을 끊음·제외·영상만 있는 회차 등) 영원히 남는다 -> days일 넘게 손대지 않은 것만 지운다.
+    _outbox(옮길 zip)와 kakao(카카오 임시 경로, 따로 부름)는 건드리지 않는다. 지운 회차 수"""
+    if not temp_root or not os.path.isdir(temp_root):
+        return 0
+    cutoff = time.time() - days * 86400
+    n = 0
+    for title in os.listdir(temp_root):
+        tdir = os.path.join(temp_root, title)
+        if not title.isdigit() or not os.path.isdir(tdir):
+            continue
+        for ep in os.listdir(tdir):
+            edir = os.path.join(tdir, ep)
+            if not ep.isdigit() or not os.path.isdir(edir):
+                continue
+            try:
+                newest = max([os.path.getmtime(edir)] + [os.path.getmtime(os.path.join(edir, f)) for f in os.listdir(edir)])
+            except OSError:
+                continue
+            if newest < cutoff:
+                shutil.rmtree(edir, ignore_errors=True)
+                n += 0 if os.path.isdir(edir) else 1
+        try:
+            os.rmdir(tdir)   # 비었으면
+        except OSError:
+            pass
+    if n and log:
+        log("%d일 넘게 이어 받지 않은 회차 임시 폴더 %d개를 지웠습니다" % (days, n))
     return n
 
 

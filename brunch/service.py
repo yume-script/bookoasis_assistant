@@ -311,6 +311,7 @@ def start(stop_event=None):
     with _LOCK:
         if _STATE["thread"] and _STATE["thread"].is_alive():
             return True
+        sweep_tmp()
         t = threading.Thread(target=_loop, args=(stop_event,), name="brunch", daemon=True)
         _STATE["thread"] = t
         t.start()
@@ -605,7 +606,11 @@ def _run(job):
     os.makedirs(work, exist_ok=True)
     local = os.path.join(work, job["id"] + ".epub")
     ident = "brunch:" + job["key"]
-    epub.build(local, dict(meta, published=_pub_day(first_pub)), chapters, images, cover=cover, identifier=ident)
+    try:
+        epub.build(local, dict(meta, published=_pub_day(first_pub)), chapters, images, cover=cover, identifier=ident)
+    except BaseException:
+        _rm_quiet(local)   # 만들다 만 EPUB은 남기지 않는다
+        raise
     yaml_ok = False
     if settings["kavita_yaml"]:   # 책 폴더에 메타데이터 먼저 (EPUB이 들어오며 스캔될 때 같이 읽히게)
         try:
@@ -616,7 +621,12 @@ def _run(job):
         except Exception as e:  # noqa: BLE001 - 메타데이터는 덤, EPUB 받기를 막지 않는다
             log.warning("브런치 kavita.yaml을 만들지 못했습니다 (%s): %s", meta["title"], e)
     replaced = os.path.exists(final)   # 예전에 받은(올린) 같은 책을 새 회차까지 담아 덮어씀
-    _move(local, final)
+    try:
+        _move(local, final)
+    except BaseException:
+        _rm_quiet(local)
+        _rm_quiet(final + ".tmp")
+        raise
     size = os.path.getsize(final)
     old = _entry_by_key(job["key"])
     if old and old.get("file"):   # 예전 위치(예전 작가 폴더·바뀐 제목)에 받은 파일은 치운다
@@ -641,6 +651,34 @@ def _run(job):
     job["note"] = "%d화 · 그림 %d장 · %.1fMB%s" % (len(chapters), len(images), size / 1048576,
                                               " · 빠진 글 %d" % len(skipped) if skipped else "")
     log.info("브런치 EPUB: %s (%d화) -> %s", meta["title"], len(chapters), final)
+
+
+def _rm_quiet(path):
+    try:
+        os.remove(path)
+    except OSError:
+        pass
+
+
+def sweep_tmp(max_age=3600):
+    """data/brunch/tmp에 남은 작업 파일(꺼지거나 죽어서 남은 EPUB) 지우기 - 한 시간 넘은 것만 (지금 만드는 것은 그대로). 지운 수"""
+    work = os.path.join(data_dir(), "tmp")
+    n = 0
+    try:
+        names = os.listdir(work)
+    except OSError:
+        return 0
+    for name in names:
+        p = os.path.join(work, name)
+        try:
+            if os.path.isfile(p) and time.time() - os.path.getmtime(p) > max_age:
+                os.remove(p)
+                n += 1
+        except OSError:
+            pass
+    if n:
+        log.info("브런치 EPUB: 지난번에 남은 작업 파일 %d개를 지웠습니다", n)
+    return n
 
 
 def _move(src, dst):
