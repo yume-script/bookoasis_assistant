@@ -65,7 +65,8 @@
     <button class="wtm-tab" data-tab="manual">선택 회차 다운로드</button>
     <button class="wtm-tab" data-tab="authors">작가·태그 관리</button>
     <button class="wtm-tab" data-tab="history">다운로드 이력</button>
-    <button class="wtm-tab" data-tab="hourly">시간대별 다운로드</button>
+    <button class="wtm-tab" data-tab="hourly" hidden style="display:none">시간대별 다운로드</button><!-- 지금은 숨김 -->
+    <button class="wtm-tab" data-tab="plan">하루 계획표</button>
     <button class="wtm-tab" data-tab="settings">설정</button>
     <button class="wtm-tab" data-tab="help">도움말</button>
   </div>
@@ -146,6 +147,16 @@
     <div class="wtm-history-list" data-el="history-list"></div>
   </div>
 
+  <div class="wtm-panel" data-panel-view="plan" style="display:none">
+    <div class="wtm-box">
+      <div class="wtm-box-title" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <span style="flex:1">하루 계획표 - 카카오 기다무 대여권 · 네이버 연재일 확인</span>
+        <button class="wtm-btn wtm-btn-ghost wtm-btn-small" data-el="plan-reload">새로고침</button>
+      </div>
+      <div data-el="plan-body"><div class="wtm-hint">불러오는 중...</div></div>
+    </div>
+  </div>
+
   <div class="wtm-panel" data-panel-view="hourly" style="display:none">
     <div class="wtm-box">
       <div class="wtm-box-title" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
@@ -154,8 +165,6 @@
         <button class="wtm-btn wtm-btn-ghost wtm-btn-small" data-el="hourly-reload">새로고침</button>
       </div>
       <div data-el="hourly-body"><div class="wtm-hint">불러오는 중...</div></div>
-      <div class="wtm-box-title" style="margin-top:18px">기다무 하루 계획표</div>
-      <div data-el="plan-body"><div class="wtm-hint">불러오는 중...</div></div>
       <p class="wtm-hint">
         <b>예약</b>: 지금 기록된 충전 시각(마지막으로 쓴 시각 + 충전 주기)대로라면 하루에 그 시간대에 충전되는 대여권 수 - 처리 지연은 넣지 않은
         '배치'입니다. <b>밀림</b>: 충전됐는데 아직 쓰지 못한 대여권. <b>실제</b>: 그 시간대에 받은 회차 수.

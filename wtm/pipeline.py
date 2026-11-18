@@ -177,7 +177,8 @@ def naver_spread_window(cfg):
     """새 회차 작품별 확인 시각을 펼칠 시간대 (시작 시, 끝 시) 또는 None(끔). 확인 계획을 켰으면 오후(12~20시)"""
     if plan_enabled(cfg):
         return PLAN_PM
-    if not cfg.get("NAVER_SPREAD_ENABLE"):
+    from . import daily_plan
+    if not cfg.get("NAVER_SPREAD_ENABLE") and not daily_plan.enabled(cfg):   # 하루 계획표도 작품별 확인 시각을 쓴다
         return None
     try:
         a = int(float(cfg.get("NAVER_SPREAD_START", 5))) % 24
@@ -267,7 +268,7 @@ def naver_slot_tick(cfg, log=print):
     _naver_tick["at"] = time.time()
     due = [tid for tid, t in ss.load_titles().items()
            if t.get("subscribed") and not t.get("excluded") and not t.get("unsubscribed")
-           and in_new_episode_scope(cfg, t, "naver")]
+           and in_new_episode_scope(cfg, t, "naver", tid=tid)]
     kdue = []
     if plan_enabled(cfg) and _cfg_bool(cfg, "KAKAO_ENABLE", False) and _cfg_bool(cfg, "KAKAO_AUTO", True):
         from . import kakao_pipeline as kp
@@ -296,7 +297,7 @@ def naver_slot_tick(cfg, log=print):
         raise
 
 
-def in_new_episode_scope(cfg, t, platform="naver", now=None):
+def in_new_episode_scope(cfg, t, platform="naver", now=None, tid=None):
     """자동 실행(실행 주기마다)에서 이 작품의 새 회차를 확인할지. 설정 NEW_EP_SCOPE가 'today'(기본)일 때:
       - 아직 한 번도 받지 않은 작품: 바로
       - 요일 연재작: 그 요일(전날 늦게 올라온 회차 보완으로 다음 날까지, 22시 이후엔 다음 날 연재분도)만
@@ -309,6 +310,10 @@ def in_new_episode_scope(cfg, t, platform="naver", now=None):
     if t.get("last_downloaded_no") is None:
         return True        # 새로 구독한 작품은 요일과 상관없이 바로 첫 다운로드
     now = now or time.time()
+    if platform == "naver" and tid is not None:
+        from . import daily_plan
+        if daily_plan.enabled(cfg):   # 하루 계획표: 오늘 계획에 든(연재일) 작품만, 정한 시각에 하루 한 번
+            return daily_plan.naver_due(cfg, tid, t, now)
     if plan_enabled(cfg):
         return _plan_due(cfg, t, platform, now)   # 신규 회차 확인 계획이 '확인 범위' 설정보다 우선
     if str(cfg.get("NEW_EP_SCOPE") or "today") == "all":
@@ -847,7 +852,7 @@ def run_download_cycle(cfg, log=print):
     subscribed = {tid: t for tid, t in titles.items()
                   if t.get("subscribed") and not t.get("excluded") and not t.get("unsubscribed")}
     all_sub = len(subscribed)
-    subscribed = {tid: t for tid, t in subscribed.items() if in_new_episode_scope(cfg, t, "naver")}
+    subscribed = {tid: t for tid, t in subscribed.items() if in_new_episode_scope(cfg, t, "naver", tid=tid)}
     bl_skip = [tid for tid, t in subscribed.items() if bl_blocked(cfg, t)]
     if bl_skip:
         log("BL/GL 장르 %d개 작품은 설정에 따라 다운로드하지 않음" % len(bl_skip))

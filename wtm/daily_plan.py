@@ -5,10 +5,13 @@
   1시간·2시간·3시간·6시간·12시간 기다무: 그 주기마다 (충전 시각부터 24시간 안에 들어가는 만큼)
   1일 기다무: 하루에 한 번 (오늘 충전되는 시각)
   2일·3일·7일 기다무: 오늘 충전되는 날만 - 아니면 오늘 계획에서 뺀다 (다음 충전 날에 들어감)
+  네이버 구독작: 오늘이 연재일(매일+는 매일)이면 작품마다 정한 확인 시각(네이버 확인 시간대, 기본 05~20시에 고르게)에
+                 하루 한 번 - 연재일이 아니면 오늘 계획에서 뺀다. 한 번도 받지 않은 작품은 계획과 상관없이 바로 받는다.
 
 쓸 수 있는 시각은 kakao_pipeline.ready_at(충전 시각, 새벽 사용·확인 계획 규칙 포함)을 그대로 쓴다. 지난 충전을
 못 쓴 작품은 계획 시작 시각에 넣는다. 계획을 짠 뒤에 새로 구독한 작품은 처음 볼 때 오늘 계획에 더한다.
-저장: job_state["waitfree_plan"] = {"start", "made_at", "items": {sid: {title, period, slots}}, "skipped": {sid: {title, period, next}}}
+저장: job_state["waitfree_plan"] = {"start", "made_at", "items": {sid: {title, period, slots}}, "skipped": {sid: {title, period, next}},
+                                    "naver": {tid: {title, slot}}, "naver_skipped": {tid: {title, next}}}
 """
 import time
 
@@ -57,6 +60,33 @@ def _entry(cfg, t, nums, start, end, now, night):
     return "item", dict(base, slots=slots)
 
 
+def _naver_candidates():
+    from . import state_store as ss
+    return {tid: t for tid, t in ss.load_titles().items()
+            if t.get("subscribed") and not t.get("excluded") and not t.get("unsubscribed")}
+
+
+def _naver_entry(cfg, t, start, end):
+    """네이버 작품 하나: ("item", {title, slot}) - 오늘 계획 안의 확인 시각이 연재일이면, 아니면 ("skip", {title, next})"""
+    from . import pipeline as pl
+    m = pl.naver_slot_min(cfg, t)
+    if m is None:
+        m = 12 * 60
+    lt = time.localtime(start)
+    at = time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday, m // 60, m % 60, 0, 0, 0, -1))
+    if at < start:
+        at += 86400
+    base = {"title": t.get("title") or "", "label": "네이버"}
+    if at < end and pl._serial_on(t, at, "naver"):
+        return "item", dict(base, slot=int(at))
+    nxt = at
+    for _ in range(14):   # 다음 연재일의 확인 시각
+        nxt += 86400
+        if pl._serial_on(t, nxt, "naver"):
+            break
+    return "skip", dict(base, next=int(nxt))
+
+
 def build(cfg, now=None):
     """오늘(계획 하루) 계획을 새로 짠다 (저장하지 않음)"""
     from . import kakao_pipeline as kp
@@ -64,7 +94,10 @@ def build(cfg, now=None):
     start = day_start(cfg, now)
     end = start + 86400
     nums, cands = kp._waitfree_candidates(cfg)
-    plan = {"start": int(start), "made_at": int(now), "items": {}, "skipped": {}}
+    plan = {"start": int(start), "made_at": int(now), "items": {}, "skipped": {}, "naver": {}, "naver_skipped": {}}
+    for tid, t in _naver_candidates().items():
+        kind, e = _naver_entry(cfg, t, start, end)
+        plan["naver" if kind == "item" else "naver_skipped"][tid] = e
     if not nums:
         return plan
     night = kp.night_info(cfg, now)
@@ -82,8 +115,11 @@ def summary(plan):
     order = sorted(by, key=lambda k: next((e["period"] for e in plan["items"].values() if e["label"] == k), 0))
     slots = sum(len(e["slots"]) for e in plan["items"].values())
     parts = ", ".join("%s %d개" % (k.replace(" 기다무", ""), by[k]) for k in order)
-    return "작품 %d개 · 대여권 사용 %d번%s · 오늘 쉼 %d개" % (
+    out = "카카오 기다무 %d개 · 대여권 사용 %d번%s · 오늘 쉼 %d개" % (
         len(plan["items"]), slots, " (%s)" % parts if parts else "", len(plan["skipped"]))
+    if plan.get("naver") or plan.get("naver_skipped"):
+        out += " / 네이버 연재일 확인 %d개 · 오늘 연재 없음 %d개" % (len(plan.get("naver") or {}), len(plan.get("naver_skipped") or {}))
+    return out
 
 
 def current(cfg, now=None, log=None):
@@ -98,8 +134,18 @@ def current(cfg, now=None, log=None):
         if log:
             log("카카오 기다무 하루 계획 (%s부터 24시간): %s" % (time.strftime("%m-%d %H:%M", time.localtime(start)), summary(plan)))
         return plan
+    changed = 0
+    plan.setdefault("naver", {})
+    plan.setdefault("naver_skipped", {})
+    for tid, t in _naver_candidates().items():   # 계획 뒤 새로 구독한 네이버 작품
+        if tid not in plan["naver"] and tid not in plan["naver_skipped"]:
+            kind, e = _naver_entry(cfg, t, start, start + 86400)
+            plan["naver" if kind == "item" else "naver_skipped"][tid] = e
+            changed += 1
     nums, cands = kp._waitfree_candidates(cfg)
     new = [sid for sid in cands if sid not in plan["items"] and sid not in plan["skipped"]]
+    if changed and not new:
+        ss.save_job_state({"waitfree_plan": plan})
     if new and nums:
         night = kp.night_info(cfg, now)
         for sid in new:
@@ -109,6 +155,15 @@ def current(cfg, now=None, log=None):
         if log:
             log("카카오 기다무 하루 계획: 새로 생긴 기다무 작품 %d개를 오늘 계획에 더함" % len(new))
     return plan
+
+
+def naver_due(cfg, tid, t, now=None):
+    """하루 계획표: 이 네이버 작품을 지금 확인할지 - 오늘 계획에 들었고(연재일) 확인 시각이 지났고 그 뒤로 아직 안 봤으면"""
+    now = now or time.time()
+    e = (current(cfg, now).get("naver") or {}).get(str(tid))
+    if not e:
+        return False   # 오늘 연재일이 아님 - 오늘 계획에서 뺐다
+    return now >= e["slot"] and float(t.get("last_auto_check_at") or 0) < e["slot"]
 
 
 def allowed(cfg, cands, now=None):
@@ -137,8 +192,18 @@ def report(cfg, now=None):
                 hours[i]["count"] += 1
                 hours[i]["done"] += 1 if done else 0
                 hours[i]["titles"].append({"sid": sid, "title": e["title"], "label": e["label"], "at": s, "done": done})
+    ntitles = ss.load_titles()
+    for tid, e in (plan.get("naver") or {}).items():
+        i = int((e["slot"] - plan["start"]) // 3600)
+        if 0 <= i < 24:
+            done = float((ntitles.get(tid) or {}).get("last_auto_check_at") or 0) >= e["slot"]
+            hours[i]["count"] += 1
+            hours[i]["done"] += 1 if done else 0
+            hours[i]["titles"].append({"sid": tid, "title": e["title"], "label": "네이버", "at": e["slot"], "done": done, "naver": True})
     for hrow in hours:
         hrow["titles"].sort(key=lambda x: x["at"])
-    skipped = sorted(({"sid": sid, **e} for sid, e in plan["skipped"].items()), key=lambda x: x["next"])
+    skipped = sorted([{"sid": sid, **e} for sid, e in plan["skipped"].items()]
+                     + [{"sid": tid, **e, "naver": True} for tid, e in (plan.get("naver_skipped") or {}).items()],
+                     key=lambda x: x["next"])
     return {"enabled": on, "start": plan["start"], "made_at": plan["made_at"], "hour": plan_hour(cfg),
             "summary": summary(plan), "hours": hours, "skipped": skipped}

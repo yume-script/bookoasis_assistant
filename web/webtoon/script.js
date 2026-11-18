@@ -720,6 +720,7 @@
     pollTimer = setTimeout(function () {
       if (!alive()) return;
       if (!document.hidden && currentTab === 'hourly') loadHourly(false);
+      if (!document.hidden && currentTab === 'plan' && Date.now() - planAt > 60000) loadPlan();
       if (!document.hidden) pollLight().catch(function () {}).then(schedulePoll);
       else schedulePoll();
     }, interval);
@@ -991,14 +992,15 @@
       var d = await resp.json();
       if (!d.success) throw new Error(d.error || ('HTTP ' + resp.status));
       renderHourly(d);
-      loadPlan();
     } catch (e) {
       if (body) body.innerHTML = '<div class="wtm-hint">불러오지 못했습니다: ' + escapeHtml(e.message || String(e)) + '</div>';
     }
   }
 
   // 기다무 하루 계획표 - GET api/wtm/plan (시간마다 쓸 작품, 오늘 쉬는 2일·3일 기다무)
+  var planAt = 0;
   async function loadPlan() {
+    planAt = Date.now();
     var box = el('[data-el="plan-body"]');
     if (!box) return;
     try {
@@ -1016,7 +1018,7 @@
     var now = Date.now() / 1000;
     var head = '<div class="wtm-hint">' + (d.enabled
       ? ('켜짐 · 매일 ' + d.hour + '시에 짭니다 · ' + md(d.start) + '부터 24시간 · 짠 때 ' + md(d.made_at))
-      : '꺼져 있어 미리 보기만 합니다 ([설정] > 카카오웹툰 > 대여권의 "기다무 하루 계획표"를 켜면 이대로 씁니다)') +
+      : '꺼져 있어 미리 보기만 합니다 ([설정] > 카카오웹툰 > 대여권의 "하루 계획표"를 켜면 이대로 씁니다)') +
       '<br><b>' + escapeHtml(d.summary) + '</b></div>';
     var rows = d.hours.map(function (h) {
       var cur = now >= h.at && now < h.at + 3600;
@@ -1028,7 +1030,7 @@
         (h.done ? ' (쓴 것 ' + h.done + ')' : '') + '</summary><div style="display:flex;flex-wrap:wrap;gap:4px;margin:4px 0 8px">' +
         (names || '<span class="wtm-hint">없음</span>') + '</div></details>';
     }).join('');
-    var skip = d.skipped.length ? '<details><summary>오늘 계획에서 뺀 작품 ' + d.skipped.length + '개 (오늘 충전되지 않음)</summary>' +
+    var skip = d.skipped.length ? '<details><summary>오늘 계획에서 뺀 작품 ' + d.skipped.length + '개 (오늘 충전되지 않는 기다무 · 오늘 연재일이 아닌 네이버)</summary>' +
       '<div style="display:flex;flex-wrap:wrap;gap:4px;margin:4px 0">' + d.skipped.map(function (x) {
         return '<span class="wtm-badge">' + escapeHtml(x.title) + ' · ' + escapeHtml(x.label) + ' · 다음 ' + md(x.next) + '</span>';
       }).join(' ') + '</div></details>' : '';
@@ -1105,6 +1107,7 @@
 
     if (tab === 'settings') { loadLibraryOptionsIfNeeded(); loadSettingsForm(false); }
     if (tab === 'hourly') loadHourly(true);
+    if (tab === 'plan') loadPlan();
 
     renderGrid();
   }
@@ -1169,6 +1172,7 @@
       settingsDirty = false; loadSettingsForm(true); return;
     }
     if (ev.target.closest('[data-el="hourly-reload"]')) { loadHourly(true); return; }
+    if (ev.target.closest('[data-el="plan-reload"]')) { loadPlan(); return; }
 
     var moreBtn = ev.target.closest('[data-el="grid-more"]');
     if (moreBtn) {
