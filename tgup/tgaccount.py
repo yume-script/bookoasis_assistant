@@ -347,10 +347,16 @@ async def refresh_channel(acc, channel):
             log.info("텔레그램 채널 %s 목록: 영상 %d개 더 읽음 (모두 %d개)", key, n, len(idx["items"]))
 
 
+_PART_TAIL = re.compile(r"(?:_\d{3,4}"                                   # 자동 올리기 조각 _0000 (3자리도)
+                        r"|[ ._-]+(?:part|pt|cd|disc|disk)[ ._-]?\d{1,2}"   # 다른 사람이 나눈 것 .part1 / CD2 / disc 1
+                        r"|\s*[(\[]\s*\d{1,2}\s*(?:/|of)\s*\d{1,2}\s*[)\]])$", re.I)   # (1/2) [2 of 3]
+
+
 def file_stem_key(file_name):
-    """같은 파일 이름 비교용 (확장자·나눈 조각 꼬리 _0000 무시, 대소문자 무시) - YMPlayer telegram_src와 같게"""
+    """같은 파일 이름 비교용 (확장자, 나눈 조각 꼬리 _0000·.part1·CD2·(1/2) 무시, 대소문자 무시).
+    꼬리만 지운다 - "…Part.1.2010.1080p"처럼 이름 가운데의 Part 1(작품 이름)은 그대로라 1편·2편이 섞이지 않는다"""
     stem = os.path.splitext(os.path.basename(str(file_name or "")))[0]
-    return re.sub(r"_\d{4}$", "", stem).casefold()
+    return _PART_TAIL.sub("", stem).casefold()
 
 
 def _cached(cache, channel, build):
@@ -375,6 +381,30 @@ def channel_file(_sid, channel, file_name):
             out.setdefault(file_stem_key(name), title or name)
         return out
     return _cached(_NAME_CACHE, channel, build).get(want, "")
+
+
+_MOVIE_CACHE = {}        # 채널 -> (항목 수, 마지막 메시지, {(작품 키, 연도): 제목})
+
+
+def channel_movie(_sid, channel, name_key, year):
+    """이 채널에 같은 영화(작품 이름 + 연도)가 이미 있으면 그 제목 (없으면 "") - 파일 이름, 안 되면 캡션 첫 줄에서 읽는다.
+    회차 표시가 있는 것(드라마)은 빼고, 연도가 없으면 비교하지 않는다 (같은 이름의 다른 영화와 섞이지 않게)"""
+    if not name_key or not year:
+        return ""
+    from . import folder_watch, plex_to_tg   # (순환 import를 피해 여기서)
+
+    def build(items):
+        out = {}
+        for msg in sorted(items, key=int):
+            title, name = items[msg]
+            cap = re.sub(r"\s*[(\[]\s*\d{1,2}\s*(?:/|of)\s*\d{1,2}\s*[)\]]\s*$", "", title or "")   # 캡션 꼬리 (1/2)
+            for text in (name, f"{cap}.mp4" if cap else ""):
+                f = folder_watch.file_fields(text) if text else None
+                if f and f.get("year") and not plex_to_tg.episode_key(f):
+                    out.setdefault((plex_to_tg._name_key(f.get("title")), str(f["year"])), title or name)
+                    break
+        return out
+    return _cached(_MOVIE_CACHE, channel, build).get((name_key, str(year)), "")
 
 
 def channel_episode(_sid, channel, name_key, season, ep):

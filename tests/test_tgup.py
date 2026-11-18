@@ -388,3 +388,26 @@ class ChannelIndexTest(unittest.TestCase):
         asyncio.run(tgaccount.refresh_channel(Acc(), -100))
         self.assertEqual(calls, [0, 3])
         self.assertTrue(tgaccount.channel_file("tg2", -100, "무빙.S01E03.mkv"))
+        # 다른 사람이 나눠 올린 것(.part1 / CD2 / (1 of 2))도 같은 파일 이름으로, 이름 가운데의 Part 1(작품 이름)은 그대로
+        msgs.insert(0, video(5, "Hope.2026.1080p-KyoGo.part1.mkv"))
+        msgs.insert(0, video(6, "file_6.mp4", "인셉션 (2010) (1/2)"))
+        tgaccount._INDEX[100]["at"] = 0
+        asyncio.run(tgaccount.refresh_channel(Acc(), -100))
+        self.assertTrue(tgaccount.channel_file("tg", -100, "Hope.2026.1080p-KyoGo.mkv"))
+        self.assertTrue(tgaccount.channel_file("tg", -100, "Hope.2026.1080p-KyoGo_0001.mp4"))
+        self.assertNotEqual(tgaccount.file_stem_key("Harry.Potter.Deathly.Hallows.Part.1.2010.mkv"),
+                            tgaccount.file_stem_key("Harry.Potter.Deathly.Hallows.Part.2.2011.mkv"))
+        # 영화: 작품 이름 + 연도 (파일 이름이 달라도 캡션 첫 줄로), 연도가 다르면 다른 영화
+        nk = plex_to_tg._name_key
+        self.assertEqual(tgaccount.channel_movie("tg", -100, nk("인셉션"), "2010"), "인셉션 (2010) (1/2)")
+        self.assertEqual(tgaccount.channel_movie("tg", -100, nk("Some Movie"), "2024"), "Some Movie (2024)")
+        self.assertEqual(tgaccount.channel_movie("tg", -100, nk("Some Movie"), "1999"), "")
+        self.assertEqual(tgaccount.channel_movie("tg", -100, nk("무빙"), ""), "")
+
+
+class TmdbFieldsTest(unittest.TestCase):
+    def test_item_fields_tmdb(self):
+        from tgup import plex_to_tg
+        m = {"type": "movie", "title": "Inception", "year": 2010, "Guid": [{"id": "imdb://tt1375666"}, {"id": "tmdb://27205"}]}
+        self.assertEqual(plex_to_tg.item_fields(m)["tmdb"], "movie:27205")
+        self.assertEqual(plex_to_tg.item_fields({"type": "movie", "title": "X"})["tmdb"], "")

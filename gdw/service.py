@@ -304,9 +304,21 @@ class Service:
                               "cron_schedule": lib.get("cron_schedule") or ""})
         return items
 
+    @staticmethod
+    def _manual_newer(cached):
+        """BookOasis DB 없이 쓰는데 보관함 파일(libraries.manual.json)을 기억해 둔 목록보다 나중에 고쳤으면 True
+        (고친 내용이 기억해 둔 목록 때문에 한참 늦게 반영되지 않게)"""
+        if bookoasis_db.configured():
+            return False
+        try:
+            return os.path.getmtime(config.libraries_file()) >= float(cached.get("ts") or 0)
+        except OSError:
+            return False
+
     def _libraries(self, force=False):
         cached = _read_json("libraries.json")
-        if cached and not force and time.time() - float(cached.get("ts") or 0) < LIBRARY_REFRESH_SECONDS:
+        if cached and not force and time.time() - float(cached.get("ts") or 0) < LIBRARY_REFRESH_SECONDS \
+                and not self._manual_newer(cached):
             return cached["items"]
         with Service._LIB_LOCK:
             if not bookoasis_db.configured():
