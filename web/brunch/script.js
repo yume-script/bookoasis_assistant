@@ -329,7 +329,9 @@
                 state = await post('api/brunch/forget', { id: x.id, remove_file: removeFile });
                 renderHistory(pane);
             }));
-            const sub = [x.author, `${x.chapters}화`, x.images ? `그림 ${x.images}장` : '', fmtSize(x.size), x.at,
+            const sub = [x.author, `${x.chapters}화`, x.images ? `그림 ${x.images}장` : '', fmtSize(x.size),
+                x.first_published ? `발행 ${x.first_published.replace(/-/g, '.')}${x.last_published && x.last_published !== x.first_published ? `~${x.last_published.replace(/-/g, '.')}` : ''}` : '',
+                x.at ? `받은 때 ${x.at}` : '',
                 x.restricted ? `멤버십 글 ${x.restricted}개는 앞부분만` : '', (x.skipped || []).length ? `빠진 글 ${x.skipped.length}개` : '',
                 x.yaml ? 'kavita.yaml' : '', x.scan ? 'BookOasis 스캔 요청함' : ''].filter(Boolean).join(' · ');
             // EPUB 상태: 최신 회차까지 담겼는지

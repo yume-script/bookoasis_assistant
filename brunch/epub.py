@@ -17,6 +17,7 @@ body { margin: 0 4%; line-height: 1.85; word-break: keep-all; overflow-wrap: bre
 p { margin: 0 0 0.8em 0; }
 h1 { font-size: 1.35em; margin: 1.4em 0 0.3em 0; line-height: 1.4; }
 h2.sub { font-size: 0.95em; font-weight: normal; color: #666; margin: 0 0 1.6em 0; }
+p.date { font-size: 0.8em; color: #888; margin: -1.2em 0 1.6em 0; }
 .num { display: block; font-size: 0.8em; color: #888; letter-spacing: 0.1em; margin-top: 2em; }
 img { max-width: 100%; height: auto; }
 figure, div.bb-item_type_img { text-align: center; margin: 1em 0; }
@@ -78,6 +79,8 @@ def build(path, book, chapters, images, cover=None, identifier=None):
         head += "<h1>%s</h1>" % escape(ch.get("title") or "%d화" % i)
         if ch.get("subtitle"):
             head += '<h2 class="sub">%s</h2>' % escape(ch["subtitle"])
+        if ch.get("published"):   # 브런치에 발행된 날
+            head += '<p class="date">%s 발행</p>' % escape(ch["published"].replace("-", "."))
         tail = ""
         if ch.get("restricted"):
             tail = ('<p class="note">멤버십 글이라 공개된 앞부분만 담았습니다. 전체는 브런치에서 읽을 수 있습니다: '
@@ -112,6 +115,7 @@ def build(path, book, chapters, images, cover=None, identifier=None):
             "<dc:title>%s</dc:title>" % escape(title),
             "<dc:language>ko</dc:language>",
             "<dc:publisher>브런치</dc:publisher>",
+            *(["<dc:date>%s</dc:date>" % escape(book["published"])] if book.get("published") else []),
             '<meta property="dcterms:modified">%s</meta>' % modified]
     if book.get("author"):
         meta.append("<dc:creator>%s</dc:creator>" % escape(book["author"]))

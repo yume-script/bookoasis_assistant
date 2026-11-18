@@ -40,7 +40,7 @@ BOOK_PAGE = """<html><head>
 </body></html>"""
 
 ARTICLE_PAGE = """<html><body>
-<script type="application/json" id="ARTICLE_DATA">{"title": "첫 글", "subTitle": "부제", "authorName": "예시 작가",
+<script type="application/json" id="ARTICLE_DATA">{"title": "첫 글", "subTitle": "부제", "authorName": "예시 작가", "publishTime": 1793750400000,
  "articleImageUrl": "http://t1.kakaocdn.net/x.jpg", "isMembershipContent": %s}</script>
 <a class="link_magazinetit #brunchbook_title" href="/brunchbook/example1">예시 책</a>
 <div id="ArticleView" class="text_align_left">
@@ -199,6 +199,19 @@ class ServiceTest(unittest.TestCase):
             h = s.load_history()[0]
             self.assertEqual((h["chapters"], h["images"], h["key"]), (1, 1, "book:example1"))
             self.assertEqual(len(h["skipped"]), 1)          # 삭제된 글은 빠지고 나머지로 만든다
+            # 회차 발행일은 받은 날이 아니라 브런치에 발행된 날 (글의 publishTime)
+            from datetime import datetime as _dt
+            day = _dt.fromtimestamp(1793750400).strftime("%Y-%m-%d")
+            self.assertEqual((h["first_published"], h["last_published"]), (day, day))
+            self.assertEqual(set(h["episode_dates"].values()), {day})
+            with zipfile.ZipFile(out) as z:
+                opf = z.read("OEBPS/content.opf").decode("utf-8") if "OEBPS/content.opf" in z.namelist() else \
+                    next(z.read(n).decode("utf-8") for n in z.namelist() if n.endswith(".opf"))
+                ch = next(z.read(n).decode("utf-8") for n in z.namelist() if n.endswith("ch001.xhtml"))
+            self.assertIn("<dc:date>%s</dc:date>" % day, opf)
+            self.assertIn("%s 발행" % day.replace("-", "."), ch)
+            self.assertEqual(s._public_history()[0]["first_published"], day)
+            self.assertIn(f'Year: "{day[:4]}"', yml)
             self.assertEqual(job["done"], 2)
             # 같은 책을 다시 받으면 받은 목록에 한 줄만 남는다
             s._run(dict(job, id="t2"))
