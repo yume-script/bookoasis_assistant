@@ -8,7 +8,7 @@
   네이버 구독작: 오늘이 연재일(매일+는 매일)이면 작품마다 정한 확인 시각(네이버 확인 시간대, 기본 05~20시에 고르게)에
                  하루 한 번 - 연재일이 아니면 오늘 계획에서 뺀다. 한 번도 받지 않은 작품은 계획과 상관없이 바로 받는다.
 
-쓸 수 있는 시각은 kakao_pipeline.ready_at(충전 시각, 새벽 사용·확인 계획 규칙 포함)을 그대로 쓴다. 지난 충전을
+쓸 수 있는 시각은 kakao_pipeline.ready_at(충전 시각, 확인 계획 규칙 포함)을 그대로 쓴다. 지난 충전을
 못 쓴 작품은 계획 시작 시각에 넣는다. 계획을 짠 뒤에 새로 구독한 작품은 처음 볼 때 오늘 계획에 더한다.
 저장: job_state["waitfree_plan"] = {"start", "made_at", "items": {sid: {title, period, slots}}, "skipped": {sid: {title, period, next}},
                                     "naver": {tid: {title, slot}}, "naver_skipped": {tid: {title, next}}}
@@ -41,11 +41,11 @@ def day_start(cfg, now=None):
     return s
 
 
-def _entry(cfg, t, nums, start, end, now, night):
+def _entry(cfg, t, nums, start, end, now):
     """작품 하나의 오늘 계획: ("item", {..slots}) 또는 ("skip", {..next})"""
     from . import kakao_pipeline as kp
     period = kp.waitfree_period(t)
-    first = min(kp.ready_at(cfg, t, n, now, night, nums) for n in nums)
+    first = min(kp.ready_at(cfg, t, n, now) for n in nums)
     first = max(first, start)   # 지난 충전을 아직 못 썼으면 오늘 계획 시작부터
     base = {"title": t.get("title") or "", "period": period // 60, "label": kp.waitfree_label(t)}
     if first >= end:   # 오늘 안에 충전되지 않음 (2일·3일 기다무의 쉬는 날, 늦게 쓴 1일 기다무)
@@ -100,9 +100,8 @@ def build(cfg, now=None):
         plan["naver" if kind == "item" else "naver_skipped"][tid] = e
     if not nums:
         return plan
-    night = kp.night_info(cfg, now)
     for sid, t in cands.items():
-        kind, e = _entry(cfg, t, nums, start, end, now, night)
+        kind, e = _entry(cfg, t, nums, start, end, now)
         plan["items" if kind == "item" else "skipped"][sid] = e
     return plan
 
@@ -147,9 +146,8 @@ def current(cfg, now=None, log=None):
     if changed and not new:
         ss.save_job_state({"waitfree_plan": plan})
     if new and nums:
-        night = kp.night_info(cfg, now)
         for sid in new:
-            kind, e = _entry(cfg, cands[sid], nums, start, start + 86400, now, night)
+            kind, e = _entry(cfg, cands[sid], nums, start, start + 86400, now)
             plan["items" if kind == "item" else "skipped"][sid] = e
         ss.save_job_state({"waitfree_plan": plan})
         if log:

@@ -173,19 +173,21 @@ def plan_enabled(cfg):
     return _truthy(cfg.get("CHECK_PLAN_ENABLE"))
 
 
+def _daily_on(cfg):
+    from . import daily_plan
+    return daily_plan.enabled(cfg)
+
+
+NAVER_WINDOW = (5, 20)   # 하루 계획표(확인 계획 없이)에서 네이버 작품별 확인 시각을 펼치는 시간대
+
+
 def naver_spread_window(cfg):
-    """새 회차 작품별 확인 시각을 펼칠 시간대 (시작 시, 끝 시) 또는 None(끔). 확인 계획을 켰으면 오후(12~20시)"""
+    """네이버 작품별 확인 시각을 펼칠 시간대 (시작 시, 끝 시) 또는 None(작품별 시각 없이 자동 실행 때마다).
+    신규 회차 확인 계획이면 오후(12~20시), 하루 계획표만 켰으면 05~20시"""
     if plan_enabled(cfg):
         return PLAN_PM
     from . import daily_plan
-    if not cfg.get("NAVER_SPREAD_ENABLE") and not daily_plan.enabled(cfg):   # 하루 계획표도 작품별 확인 시각을 쓴다
-        return None
-    try:
-        a = int(float(cfg.get("NAVER_SPREAD_START", 5))) % 24
-        b = int(float(cfg.get("NAVER_SPREAD_END", 20))) % 24
-    except (TypeError, ValueError):
-        return None
-    return a, b
+    return NAVER_WINDOW if daily_plan.enabled(cfg) else None
 
 
 def naver_slot_min(cfg, t):
@@ -298,7 +300,7 @@ def naver_slot_tick(cfg, log=print):
 
 
 def in_new_episode_scope(cfg, t, platform="naver", now=None, tid=None):
-    """자동 실행(실행 주기마다)에서 이 작품의 새 회차를 확인할지. 설정 NEW_EP_SCOPE가 'today'(기본)일 때:
+    """자동 실행(실행 주기마다)에서 이 작품의 새 회차를 확인할지. 신규 회차 확인 계획·하루 계획표가 꺼져 있으면:
       - 아직 한 번도 받지 않은 작품: 바로
       - 요일 연재작: 그 요일(전날 늦게 올라온 회차 보완으로 다음 날까지, 22시 이후엔 다음 날 연재분도)만
       - 매일+: 매일
@@ -306,7 +308,7 @@ def in_new_episode_scope(cfg, t, platform="naver", now=None, tid=None):
       - 카카오는 요일 목록 스캔에서 새 회차가 올라온 게 보인 작품도 (요일과 상관없이)
     카카오 기다무 대여권은 여기서 다루지 않는다 - 5분마다 도는 기다무 확인이 작품별 충전 주기
     (1시간·3시간·12시간·1일·2일·3일·7일 등)에 맞춰 충전된 작품만 따로 받는다.
-    'all'이면 구독작 전부."""
+    """
     if t.get("last_downloaded_no") is None:
         return True        # 새로 구독한 작품은 요일과 상관없이 바로 첫 다운로드
     now = now or time.time()
@@ -318,8 +320,6 @@ def in_new_episode_scope(cfg, t, platform="naver", now=None, tid=None):
         from . import daily_plan
         if daily_plan.enabled(cfg):   # 하루 계획표: 오늘 계획에 든(연재일) 작품만, 정한 시각에 하루 한 번
             return daily_plan.naver_due(cfg, tid, t, now)
-    if str(cfg.get("NEW_EP_SCOPE") or "today") == "all":
-        return True
     if platform == "naver":
         slot = naver_slot_at(cfg, t, now)
         if slot is not None:   # 작품마다 정해 둔 시각(05~20시 등)에 하루 1번
@@ -862,7 +862,7 @@ def run_download_cycle(cfg, log=print):
     subscribed = filter_auto_targets(cfg, subscribed, "naver", log=log)
     log("새 회차 확인 대상: 구독 %d개 중 %d개 (%s)" % (
         all_sub, len(subscribed),
-        "전체" if str(cfg.get("NEW_EP_SCOPE") or "today") == "all" else
+        "신규 회차 확인 계획" if plan_enabled(cfg) else "하루 계획표" if _daily_on(cfg) else
         "요일 %s + 매일+ + 첫 다운로드" % ",".join(sorted(target_weekdays()))))
 
     download_root = cfg.get("DOWNLOAD_ROOT") or ss.DOWNLOAD_DEFAULT_DIR
@@ -1200,7 +1200,7 @@ def run_finished_scan_job(cfg, log=print):
     ss.save_job_state({"running": True, "started_at": time.time(), "last_error": None})
     try:
         result = run_scan_finished(cfg, log=log)
-        try:   # 하루 1번: 1·2·3일 기다무 충전 시각을 정해 둔 시간대에 고르게 (설정에서 켰을 때)
+        try:   # 하루 1번: 1·2·3일 기다무 충전 시각을 오전(05~12시)에 고르게 (신규 회차 확인 계획을 켰을 때)
             from . import kakao_pipeline
             kakao_pipeline.spread_waitfree(cfg, log=log)
         except Exception as e:  # noqa: BLE001

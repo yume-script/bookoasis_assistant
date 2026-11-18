@@ -149,10 +149,9 @@ class DailyPlanTest(unittest.TestCase):
             "d2_today": (2880, 20), "d2_tomorrow": (2880, 30), "d3_today": (4320, 1)}
         cands = {sid: {"title": sid, "waitfree_period_min": p} for sid, (p, _h) in titles.items()}
         saved = {}
-        orig = (kp._waitfree_candidates, kp.ready_at, kp.night_info)
+        orig = (kp._waitfree_candidates, kp.ready_at)
         kp._waitfree_candidates = lambda cfg: ([1], dict(cands))
-        kp.ready_at = lambda cfg, t, n, now=None, night=None, nums=None: start + titles[t["title"]][1] * H
-        kp.night_info = lambda cfg, now=None: None
+        kp.ready_at = lambda cfg, t, n, now=None: start + titles[t["title"]][1] * H
         from wtm import pipeline as pl, state_store as ss
         orig_ss = (ss.load_job_state, ss.save_job_state, ss.load_titles)
         ss.load_job_state = lambda: dict(saved)
@@ -199,7 +198,7 @@ class DailyPlanTest(unittest.TestCase):
             self.assertTrue(pl.in_new_episode_scope(cfg, n101, "naver", start + 13.5 * H, tid="101"))
             self.assertIn("네이버 연재일 확인 2개", dp.summary(plan))
         finally:
-            kp._waitfree_candidates, kp.ready_at, kp.night_info = orig
+            kp._waitfree_candidates, kp.ready_at = orig
             ss.load_job_state, ss.save_job_state, ss.load_titles = orig_ss
 
 

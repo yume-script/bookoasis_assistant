@@ -16,7 +16,7 @@
 
 카카오는 실제 충전보다 앞당길 수 없으므로(거절됨) 자리가 충전보다 이르면 다음 주기(일 단위면 다음 날)의 같은 자리로
 보낸다 → 그만큼 대여권을 한 번 포기한다(한 작품당 최대 한 주기). 한 작품의 계정들은 같은 시각으로 맞춘다.
---apply는 설정도 바꾼다: 신규 회차 확인 계획 켬, 새벽 사용 끔, 매일 1일 이상 기다무를 오전에 유지.
+--apply는 설정도 바꾼다: 신규 회차 확인 계획 켬 (매일 1일 이상 기다무를 오전에 유지).
 작업 프로세스가 작품 기록을 메모리에 들고 있으므로 서비스를 멈추고 실행한다.
 """
 import os
@@ -195,9 +195,7 @@ def main(argv):
     if kslots:
         print("  카카오 %d개 새 회차 확인 시각: %02d~%02d시에 연재 요일별로 고르게" % (len(kslots), pm_a, (pm_b - 1) % 24))
 
-    settings = {"CHECK_PLAN_ENABLE": True, "WAITFREE_NIGHT_ENABLE": False, "WAITFREE_SPREAD_ENABLE": True,
-                "WAITFREE_SPREAD_START": start_h, "WAITFREE_SPREAD_END": end_h,
-                "NAVER_SPREAD_ENABLE": True, "NAVER_SPREAD_START": pm_a, "NAVER_SPREAD_END": pm_b}
+    settings = {"CHECK_PLAN_ENABLE": True}
     print("\n  설정: " + ", ".join("%s=%s" % kv for kv in settings.items()))
     if not apply:
         print("\n미리 보기입니다. 사용법 예시:")

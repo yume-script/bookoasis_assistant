@@ -105,14 +105,8 @@ DEFAULTS = {
     "KAKAO_AUTO": True,
     "KAKAO_USE_WAITFREE": False,
     "WAITFREE_CHECK_MINUTES": 5,
-    "WAITFREE_SPREAD_ENABLE": False,
-    "WAITFREE_SPREAD_START": 1,
-    "WAITFREE_SPREAD_END": 11,
-    "WAITFREE_NIGHT_ENABLE": False,
     "WAITFREE_DAILY_PLAN": False,
     "WAITFREE_PLAN_HOUR": 0,
-    "WAITFREE_NIGHT_START": 1,
-    "NEW_EP_SCOPE": "today",
     "NAVER_TRY_OWNED_PAID": True,
     "KAKAO_USE_OWNED_TICKETS": False,
     "KAKAO_USE_PAID_TICKETS": False,
@@ -121,9 +115,6 @@ DEFAULTS = {
     "KAKAO_SYNC_PURCHASED": True,
     "KAKAO_TODAY_GIFT": True,
     "CHECK_PLAN_ENABLE": False,
-    "NAVER_SPREAD_ENABLE": False,
-    "NAVER_SPREAD_START": 5,
-    "NAVER_SPREAD_END": 20,
     "KAKAO_NOVEL_DOWNLOAD_ROOT": "",
     "ALLOW_GL": False,
     "HIDE_BL_GL": False,
@@ -166,9 +157,6 @@ class WebtoonManagerMetadataProvider(BaseMetadataProvider):
                  "0 6 * * 1-5 (평일 6시). 카카오 기다무 대여권은 이 시각과 상관없이 5분마다 충전된 작품만 따로 받습니다."},
         {"key": "FINISHED_SCAN_HOUR", "label": "완결 목록 수집 시각(0~23시)", "type": "number", "default": 4,
          "hint": "하루 1번 완결 작품 전체 목록을 수집합니다."},
-        {"key": "NEW_EP_SCOPE", "label": "새 회차 확인 범위", "type": "select", "default": "today",
-         "options": [["today", "오늘 연재 요일 작품 + 매일+/기다무 + 아직 안 받은 작품"],
-                     ["all", "구독작 전부(매 실행마다)"]]},
         {"key": "AUTO_SUBSCRIBE_NEW_TITLES", "label": "신간 자동 구독", "type": "checkbox", "default": False,
          "hint": "요일별 목록에 처음 나타나는 작품을 전부 구독합니다(관심 작가 작품은 이 설정과 상관없이 자동 구독)."},
         {"key": "INITIAL_EPISODES_LIMIT", "label": "새로 구독한 작품은 최신 N화만 받기", "type": "number", "default": 0,
@@ -297,13 +285,9 @@ class WebtoonManagerMetadataProvider(BaseMetadataProvider):
          "hint": "오전 05~12시: 1일 이상 기다무 대여권 (그 밖 시각에 충전되면 다음 오전으로). 오후 12~20시: 네이버·카카오 연재일 새 "
                  "회차를 작품마다 정한 시각에 확인하고, 못 찾으면 12시간 뒤(다음 날 오전) 한 번 더. 1·2·3·6·12시간 기다무는 24시간 주기마다. "
                  "남은 회차가 10개 이하(최신 10화는 대여권으로 못 엶)인 기다무 작품은 대여권 대신 오후에 새 회차만. 20~05시는 비웁니다. "
-                 "켜면 '새벽 사용'·'네이버 확인 시각' 설정 대신 이 규칙을 씁니다. 처음 켤 때는 python3 -m wtm.rebalance --apply 로 "
-                 "기존 충전 시각도 맞추세요."},
-        {"key": "NAVER_SPREAD_ENABLE", "label": "네이버 작품별 확인 시각을 시간대에 고르게", "type": "checkbox", "default": False,
-         "hint": "구독 작품마다 아래 시간대 안의 확인 시각을 정해(고르게 퍼지게) 연재일 그 시각에 받습니다. 전체 실행(실행 주기)에 "
-                 "한꺼번에 몰리지 않습니다. 정확히 같은 간격으로 다시 놓으려면 python3 -m wtm.rebalance --apply"},
-        {"key": "NAVER_SPREAD_START", "label": "네이버 확인 시간대 시작(0~23시)", "type": "number", "default": 5},
-        {"key": "NAVER_SPREAD_END", "label": "네이버 확인 시간대 끝(0~23시, 이 시각 전까지)", "type": "number", "default": 20},
+                 "매일 완결 목록 수집 때 1일 이상 기다무의 충전 시각을 오전에 고르게 다시 놓습니다. 처음 켤 때는 "
+                 "python3 -m wtm.rebalance --apply 로 기존 충전 시각도 맞추세요. 끄면 자동 실행(실행 시각)마다 오늘·어제 연재 작품의 "
+                 "새 회차를 확인하고, 기다무 대여권은 충전되는 대로 씁니다."},
         {"key": "KAKAO_TODAY_GIFT", "label": "오늘의 선물 대여권 매일 받기", "type": "checkbox", "default": True,
          "hint": "하루 1번 page.kakao.com/today-gift 에서 받을 수 있는 대여권을 계정마다 받습니다(목록에 있는 작품 먼저). "
                  "받은 대여권은 '보유 대여권 자동 사용'을 켜면 다운로드에 씁니다. 직접: python3 -m wtm.today_gift"},
@@ -312,26 +296,12 @@ class WebtoonManagerMetadataProvider(BaseMetadataProvider):
         {"key": "WAITFREE_CHECK_MINUTES", "label": "기다무 확인 최대 간격(분, 1~30)", "type": "number", "default": 5,
          "hint": "다음 대여권이 충전되는 시각에 맞춰 바로 확인하고(1분 단위), 그 사이에도 이 간격마다 한 번은 확인합니다. "
                  "새로 잠긴 회차가 생긴 작품을 얼마나 빨리 잡는지에만 영향이 있습니다."},
-        {"key": "WAITFREE_SPREAD_ENABLE", "label": "기다무 충전 시각 고르게 (매일)", "type": "checkbox", "default": False,
-         "hint": "매일 완결 목록 수집 때, 대여권을 쓰는 1일·2일·3일 기다무 작품의 다음 충전 시각을 아래 시간대에 같은 간격으로 다시 "
-                 "놓습니다(시간당 비슷한 수). 앞당기지는 않고 늦출 수만 있어서, 처음 켤 때 일부 작품의 대여권이 한 번 늦어집니다. "
-                 "한 작품의 계정들은 같은 시각으로 맞춥니다. 1·2·3·12시간처럼 하루보다 짧은 기다무는 시간대에 몰 수 없으므로 "
-                 "주기별로 한 주기 안에 고르게 퍼뜨립니다(예: 3시간 기다무 240개면 45초마다 하나씩). "
-                 "직접 한 번 하려면 python3 -m wtm.shift_waitfree --spread 1 11."},
-        {"key": "WAITFREE_SPREAD_START", "label": "고르게 펼 시간대 시작(0~23시)", "type": "number", "default": 1},
-        {"key": "WAITFREE_SPREAD_END", "label": "고르게 펼 시간대 끝(0~23시, 이 시각 전까지)", "type": "number", "default": 11},
-        {"key": "WAITFREE_NIGHT_ENABLE", "label": "1일 이상 기다무는 새벽부터 사용", "type": "checkbox", "default": False,
-         "hint": "1일·2일·3일·7일 기다무는 아래 시작 시각부터 씁니다(3시간·12시간 기다무는 그대로). 끝나는 시각은 정하지 "
-                 "않고, 시작 시각에 풀린 작품과 이어서 충전되는 것(전날 이 무렵 쓴 것)을 다 쓸 때까지 계속합니다. 그 뒤 낮에 "
-                 "충전되는 것은 다음 시작 시각까지 기다려서, 켠 다음 날부터는 매일 같은 새벽 시간에 받게 됩니다(옮기는 첫날만 "
-                 "작품마다 최대 하루 늦어짐). 계정이 여럿이면 모두 충전됐을 때 같이 씁니다. 직접 누른 다운로드는 시각과 상관없이 씁니다."},
-        {"key": "WAITFREE_NIGHT_START", "label": "1일 이상 기다무 사용 시작 시각(0~23시)", "type": "number", "default": 1},
         {"key": "WAITFREE_DAILY_PLAN", "label": "하루 계획표 (매일 계획 시각에 24시간 계획: 카카오 기다무·네이버 연재일)", "type": "checkbox", "default": False,
          "hint": "매일 아래 시각(기본 0시)에 앞으로 24시간 동안 대여권을 쓸 작품과 시각을 정합니다. 1·2·3·6·12시간 기다무는 그 "
                  "주기마다, 1일 기다무는 하루 한 번, 2일·3일·7일 기다무는 충전되는 날만 넣고, 그날 계획에 없는 작품은 그날 쓰지 "
                  "않습니다(다음 충전 날 계획에 들어감). 시각은 충전 시각을 따르고, 지난 충전을 못 쓴 작품은 계획 시작에 넣습니다. "
-                 "네이버 구독작도 같이: 오늘이 연재일(매일+는 매일)인 작품만 작품마다 정한 확인 시각(네이버 확인 시간대, 기본 05~20시)에 "
-                 "하루 한 번 확인하고, 연재일이 아니면 그날 계획에서 뺍니다(네이버는 '새 회차 확인 범위' 대신 이 규칙). "
+                 "네이버 구독작도 같이: 오늘이 연재일(매일+는 매일)인 작품만 작품마다 정한 확인 시각(05~20시에 고르게)에 "
+                 "하루 한 번 확인하고, 연재일이 아니면 그날 계획에서 뺍니다. "
                  "'신규 회차 확인 계획'을 같이 켜면 그 규칙(1일 이상 기다무는 오전, 네이버는 오후 + 못 찾으면 12시간 뒤 한 번 더)을 "
                  "그대로 따르고 계획표는 그 시각으로 짭니다. 계획은 [하루 계획표] 탭에서 봅니다."},
         {"key": "WAITFREE_PLAN_HOUR", "label": "하루 계획을 짜는 시각(0~23시)", "type": "number", "default": 0},
@@ -1684,8 +1654,8 @@ class WebtoonManagerMetadataProvider(BaseMetadataProvider):
     # (섹션, 그룹 제목, 키들) - 섹션은 설정 화면의 [공통][네이버][카카오페이지] 탭
     # (섹션, 그룹 제목, 키들[, 그룹 설명]) - 섹션은 설정 화면의 탭
     _SETTINGS_GROUPS = [
-        ("common", "자동 실행", ("ENABLE_SCHEDULER", "SCHEDULE_CRON", "FINISHED_SCAN_HOUR", "NEW_EP_SCOPE",
-                                "CHECK_PLAN_ENABLE", "COOKIE_KEEPALIVE_HOURS"),
+        ("common", "자동 실행", ("ENABLE_SCHEDULER", "SCHEDULE_CRON", "FINISHED_SCAN_HOUR",
+                                "CHECK_PLAN_ENABLE", "WAITFREE_DAILY_PLAN", "WAITFREE_PLAN_HOUR", "COOKIE_KEEPALIVE_HOURS"),
          "요일별 스캔 + 새 회차 다운로드를 언제 돌릴지 정합니다. 쿠키 자동 갱신은 자동 실행을 꺼 둬도 따로 돕니다."),
         ("common", "구독 / 다운로드 대상", ("AUTO_SUBSCRIBE_NEW_TITLES", "INITIAL_EPISODES_LIMIT",
                                          "ALLOW_BL", "ALLOW_GL", "HIDE_BL_GL"),
@@ -1713,7 +1683,6 @@ class WebtoonManagerMetadataProvider(BaseMetadataProvider):
 
         ("naver", "계정", ("NAVER_COOKIE_JSON", "NAVER_KEEP_LOGIN")),
         ("naver", "다운로드", ("DOWNLOAD_ROOT", "NAVER_DOWNLOAD_DAILY_PLUS", "NAVER_TRY_OWNED_PAID")),
-        ("naver", "확인 시각", ("NAVER_SPREAD_ENABLE", "NAVER_SPREAD_START", "NAVER_SPREAD_END")),
         ("naver", "중복 확인", ("COMPARE_FOLDERS_NAVER", "NAVER_DOWNLOAD_OWNED")),
 
         ("kakao", "사용 / 계정(웹툰·웹소설 공통)", ("KAKAO_ENABLE", "KAKAO_COOKIE", "KAKAO_AUTO")),
@@ -1723,9 +1692,7 @@ class WebtoonManagerMetadataProvider(BaseMetadataProvider):
          "구매 작품 동기화도 모든 계정의 구매 목록을 모읍니다. 쿠키는 .env의 WTM_KAKAO_COOKIE_2~5에 저장됩니다. "
          "여러 계정으로 무료 혜택을 늘리는 것은 카카오 이용약관에 어긋날 수 있으니 본인·가족 계정으로만 쓰세요."),
         ("kakao", "다운로드", ("KAKAO_DOWNLOAD_ROOT", "KAKAO_DOWNLOAD_WAITFREE", "KAKAO_SYNC_PURCHASED")),
-        ("kakao", "대여권(웹툰·웹소설 공통)", ("KAKAO_USE_WAITFREE", "WAITFREE_CHECK_MINUTES", "WAITFREE_SPREAD_ENABLE", "WAITFREE_SPREAD_START",
-                                            "WAITFREE_SPREAD_END", "WAITFREE_NIGHT_ENABLE",
-                                            "WAITFREE_NIGHT_START", "WAITFREE_DAILY_PLAN", "WAITFREE_PLAN_HOUR", "KAKAO_TODAY_GIFT", "KAKAO_USE_OWNED_TICKETS",
+        ("kakao", "대여권(웹툰·웹소설 공통)", ("KAKAO_USE_WAITFREE", "WAITFREE_CHECK_MINUTES", "KAKAO_TODAY_GIFT", "KAKAO_USE_OWNED_TICKETS",
                                             "KAKAO_USE_PAID_TICKETS")),
         ("kakao", "중복 확인", ("COMPARE_FOLDERS_KAKAO", "KAKAO_DOWNLOAD_OWNED")),
 
@@ -1740,18 +1707,15 @@ class WebtoonManagerMetadataProvider(BaseMetadataProvider):
     _SETTINGS_HIDDEN = ()
     # 칸 -> 이 칸이 쓰이려면 켜져 있어야 하는 체크 칸 (화면에서 꺼져 있으면 흐리게 - 값은 그대로 저장)
     _SETTINGS_REQUIRES = {
-        "SCHEDULE_CRON": "ENABLE_SCHEDULER", "FINISHED_SCAN_HOUR": "ENABLE_SCHEDULER", "NEW_EP_SCOPE": "ENABLE_SCHEDULER",
+        "SCHEDULE_CRON": "ENABLE_SCHEDULER", "FINISHED_SCAN_HOUR": "ENABLE_SCHEDULER",
         "CHECK_PLAN_ENABLE": "ENABLE_SCHEDULER",
         "DOWNLOAD_NICE_LEVEL": "LOW_PRIORITY_MODE",
         "KAVITA_YAML_EMBED_COVER": "GENERATE_KAVITA_YAML", "KAVITA_YAML_COVER_WIDTH": "GENERATE_KAVITA_YAML",
-        "NAVER_SPREAD_START": "NAVER_SPREAD_ENABLE", "NAVER_SPREAD_END": "NAVER_SPREAD_ENABLE",
         "KAKAO_COOKIE": "KAKAO_ENABLE", "KAKAO_AUTO": "KAKAO_ENABLE",
         "KAKAO_COOKIE_2": "KAKAO_ENABLE", "KAKAO_COOKIE_3": "KAKAO_ENABLE", "KAKAO_COOKIE_4": "KAKAO_ENABLE", "KAKAO_COOKIE_5": "KAKAO_ENABLE",
         "KAKAO_DOWNLOAD_ROOT": "KAKAO_ENABLE", "KAKAO_DOWNLOAD_WAITFREE": "KAKAO_ENABLE", "KAKAO_SYNC_PURCHASED": "KAKAO_ENABLE",
-        "WAITFREE_CHECK_MINUTES": "KAKAO_USE_WAITFREE", "WAITFREE_SPREAD_ENABLE": "KAKAO_USE_WAITFREE",
-        "WAITFREE_SPREAD_START": "WAITFREE_SPREAD_ENABLE", "WAITFREE_SPREAD_END": "WAITFREE_SPREAD_ENABLE",
-        "WAITFREE_NIGHT_ENABLE": "KAKAO_USE_WAITFREE", "WAITFREE_NIGHT_START": "WAITFREE_NIGHT_ENABLE",
-        "WAITFREE_DAILY_PLAN": "KAKAO_USE_WAITFREE", "WAITFREE_PLAN_HOUR": "WAITFREE_DAILY_PLAN",
+        "WAITFREE_CHECK_MINUTES": "KAKAO_USE_WAITFREE",
+        "WAITFREE_DAILY_PLAN": "ENABLE_SCHEDULER", "WAITFREE_PLAN_HOUR": "WAITFREE_DAILY_PLAN",
         "KAKAO_USE_PAID_TICKETS": "KAKAO_USE_OWNED_TICKETS",
         "KAKAO_NOVEL_DOWNLOAD_ROOT": "KAKAO_NOVEL_ENABLE", "KAKAO_NOVEL_DOWNLOAD_WAITFREE": "KAKAO_NOVEL_ENABLE",
         "COMPARE_FOLDERS_NOVEL": "KAKAO_NOVEL_ENABLE", "KAKAO_NOVEL_DOWNLOAD_OWNED": "KAKAO_NOVEL_ENABLE",

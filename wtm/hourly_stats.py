@@ -112,12 +112,11 @@ def _cfg():
 def schedule(cfg, now, days=SCHEDULE_DAYS):
     """지금 충전 기록대로의 '배치': 작품·계정마다 대여권이 충전되는 시각(마지막으로 쓴 시각 + 충전 주기 + 1분)을
     주기마다 이어 놓고 하루(0~23시)에 몇 장씩 오는지 (days일에 걸쳐 센 하루 평균 - 2일·3일 기다무도 셀 수 있게).
-    처리 지연은 넣지 않는다 - 언제 받아야 하는지(배치)를 보려는 것. '1일 이상 기다무는 새벽부터'를 켰으면 그 시각으로.
+    처리 지연은 넣지 않는다 - 언제 받아야 하는지(배치)를 보려는 것. 확인 계획이면 1일 이상 기다무는 오전으로.
     반환 ({(플랫폼, 'N시간 기다무'): [24]}, {같은 키: 작품 수}, {같은 키: 지금 충전돼 기다리는 대여권 수})"""
     from . import kakao_pipeline as kp, state_store as ss
     nums, cands = kp._waitfree_candidates(cfg)
     out, titles, backlog = {}, {}, {}
-    night = kp.night_info(cfg, now)
     from .classify import open_left
     for sid, t in cands.items():
         left = open_left(t)
@@ -128,17 +127,14 @@ def schedule(cfg, now, days=SCHEDULE_DAYS):
         period = kp.waitfree_period(t)
         arr = out.setdefault(key, [0.0] * 24)
         for n in nums:
-            c = kp.ready_at(cfg, t, n, now=now, night=night, nums=nums)
+            c = kp.ready_at(cfg, t, n, now=now)
             if c <= now:
                 backlog[key] = backlog.get(key, 0) + 1   # 충전됐는데 아직 안 씀 (쓴 적 없는 계정 포함)
-            if kp._night_applies(cfg, t):   # 새벽 사용: 날마다 같은 시각에 (주기가 하루보다 길면 그만큼 나눠서)
-                arr[time.localtime(c).tm_hour] += 86400.0 / period
-                continue
             r = c
             while r < c + days * 86400:
                 arr[time.localtime(r).tm_hour] += 1.0 / days
                 r += period
-    # 네이버: 작품별 확인 시각(설정 '네이버 작품별 확인 시각을 시간대에 고르게')에 연재 요일만큼 (매일+는 매일)
+    # 네이버: 작품별 확인 시각(신규 회차 확인 계획 12~20시 / 하루 계획표 05~20시)에 연재 요일만큼 (매일+는 매일)
     from . import pipeline as pl
     if pl.naver_spread_window(cfg):
         key = ("naver", NON_WAITFREE)
@@ -175,11 +171,8 @@ def _window(cfg, p, kind):
     from . import pipeline as pl
     if p == "naver":
         win = pl.naver_spread_window(cfg)
-    elif kind != NON_WAITFREE and _period_min(kind) >= 1440 and cfg.get("WAITFREE_SPREAD_ENABLE"):
-        try:
-            win = (int(float(cfg.get("WAITFREE_SPREAD_START", 1))) % 24, int(float(cfg.get("WAITFREE_SPREAD_END", 11))) % 24)
-        except (TypeError, ValueError):
-            win = None
+    elif kind != NON_WAITFREE and _period_min(kind) >= 1440 and pl.plan_enabled(cfg):
+        win = pl.PLAN_AM   # 확인 계획: 1일 이상 기다무는 오전에
     else:
         win = None
     if not win:

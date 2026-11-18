@@ -1018,7 +1018,7 @@
     var now = Date.now() / 1000;
     var head = '<div class="wtm-hint">' + (d.enabled
       ? ('켜짐 · 매일 ' + d.hour + '시에 짭니다 · ' + md(d.start) + '부터 24시간 · 짠 때 ' + md(d.made_at))
-      : '꺼져 있어 미리 보기만 합니다 ([설정] > 카카오웹툰 > 대여권의 "하루 계획표"를 켜면 이대로 씁니다)') +
+      : '꺼져 있어 미리 보기만 합니다 ([설정] > 공통 > 자동 실행의 "하루 계획표"를 켜면 이대로 씁니다)') +
       '<br><b>' + escapeHtml(d.summary) + '</b></div>';
     var rows = d.hours.map(function (h) {
       var cur = now >= h.at && now < h.at + 3600;
