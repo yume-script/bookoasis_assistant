@@ -136,5 +136,71 @@ class EmptyEpisodeTest(unittest.TestCase):
         self.assertIn("받은 것으로 처리", desc)
 
 
+class DailyPlanTest(unittest.TestCase):
+    """기다무 하루 계획표: 1시간·3시간은 주기마다, 1일은 한 번, 2일·3일은 오늘 충전되는 날만"""
+
+    def test_build(self):
+        from wtm import daily_plan as dp, kakao_pipeline as kp
+        now = time.mktime((2026, 11, 18, 0, 5, 0, 0, 0, -1))   # 0시 5분 (계획 시각 0시)
+        start = time.mktime((2026, 11, 18, 0, 0, 0, 0, 0, -1))
+        H = 3600
+        titles = {   # sid: (주기 분, 다음 충전 = 하루 시작 + 몇 시간)
+            "h1": (60, 0.5), "h3": (180, 2), "h6": (360, -5), "d1": (1440, 9),
+            "d2_today": (2880, 20), "d2_tomorrow": (2880, 30), "d3_today": (4320, 1)}
+        cands = {sid: {"title": sid, "waitfree_period_min": p} for sid, (p, _h) in titles.items()}
+        saved = {}
+        orig = (kp._waitfree_candidates, kp.ready_at)
+        kp._waitfree_candidates = lambda cfg: ([1], dict(cands))
+        kp.ready_at = lambda cfg, t, n, now=None: start + titles[t["title"]][1] * H
+        from wtm import pipeline as pl, state_store as ss
+        orig_ss = (ss.load_job_state, ss.save_job_state, ss.load_titles)
+        ss.load_job_state = lambda: dict(saved)
+        ss.save_job_state = lambda patch: saved.update(patch)
+        # 네이버: 수요일(2026-11-18) 연재작, 목요일 연재작, 매일+ - 확인 시각은 작품마다 (분)
+        naver = {"101": {"title": "수요웹툰", "subscribed": True, "weekdays": ["wed"], "check_slot_min": 13 * 60},
+                 "102": {"title": "목요웹툰", "subscribed": True, "weekdays": ["thu"], "check_slot_min": 15 * 60},
+                 "103": {"title": "매일웹툰", "subscribed": True, "weekdays": ["dailyPlus"], "check_slot_min": 6 * 60},
+                 "104": {"title": "구독해제", "subscribed": False, "weekdays": ["wed"]}}
+        ss.load_titles = lambda: dict(naver)
+        try:
+            cfg = {"WAITFREE_DAILY_PLAN": True, "WAITFREE_PLAN_HOUR": 0}
+            plan = dp.current(cfg, now)
+            items, skipped = plan["items"], plan["skipped"]
+            self.assertEqual(len(items["h1"]["slots"]), 24)                    # 1시간 기다무: 24번 (00:30부터)
+            self.assertEqual([(x - start) / H for x in items["h3"]["slots"]], [2, 5, 8, 11, 14, 17, 20, 23])
+            self.assertEqual((items["h6"]["slots"][0] - start) / H, 0)        # 지난 충전을 못 씀 -> 계획 시작에
+            self.assertEqual(len(items["h6"]["slots"]), 4)
+            self.assertEqual(len(items["d1"]["slots"]), 1)                     # 1일: 한 번
+            self.assertIn("d2_today", items)
+            self.assertIn("d3_today", items)
+            self.assertIn("d2_tomorrow", skipped)                              # 오늘 충전 안 됨 -> 뺌
+            self.assertNotIn("d2_tomorrow", items)
+            self.assertEqual(set(dp.allowed(cfg, cands, now)), set(cands) - {"d2_tomorrow"})
+            self.assertEqual(set(dp.allowed({}, cands, now)), set(cands))      # 끄면 그대로
+            # 계획을 짠 뒤 새로 생긴 작품은 오늘 계획에 더한다
+            titles["new3"] = (180, 4)
+            cands["new3"] = {"title": "new3", "waitfree_period_min": 180}
+            self.assertIn("new3", dp.current(cfg, now + 600)["items"])
+            # 다음 날 0시가 지나면 새로 짠다
+            self.assertNotEqual(dp.current(cfg, now + 86400)["start"], plan["start"])
+            self.assertIn("오늘 쉼", dp.summary(plan))
+            # 네이버: 오늘 연재일인 작품만 정한 시각에, 아니면 뺌
+            self.assertEqual(set(plan["naver"]), {"101", "103"})
+            self.assertEqual((plan["naver"]["101"]["slot"] - start) / H, 13)
+            self.assertIn("102", plan["naver_skipped"])
+            self.assertEqual(time.localtime(plan["naver_skipped"]["102"]["next"]).tm_mday, 19)   # 다음 목요일 = 11/19
+            self.assertNotIn("104", plan["naver"])
+            n101 = dict(naver["101"], last_downloaded_no=10)
+            self.assertFalse(dp.naver_due(cfg, "101", n101, start + 12 * H))                 # 확인 시각 전
+            self.assertTrue(dp.naver_due(cfg, "101", n101, start + 13.5 * H))                # 시각이 지났고 안 봄
+            self.assertFalse(dp.naver_due(cfg, "101", dict(n101, last_auto_check_at=start + 13.2 * H), start + 14 * H))
+            self.assertFalse(dp.naver_due(cfg, "102", dict(naver["102"], last_downloaded_no=3), start + 16 * H))   # 오늘 연재 아님
+            self.assertTrue(pl.in_new_episode_scope(cfg, n101, "naver", start + 13.5 * H, tid="101"))
+            self.assertIn("네이버 연재일 확인 2개", dp.summary(plan))
+        finally:
+            kp._waitfree_candidates, kp.ready_at = orig
+            ss.load_job_state, ss.save_job_state, ss.load_titles = orig_ss
+
+
 if __name__ == "__main__":
     unittest.main()

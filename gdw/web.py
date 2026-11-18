@@ -306,6 +306,15 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:  # noqa: BLE001
                 log.exception("시간대별 다운로드 계산 실패")
                 return self._send(500, {"success": False, "error": str(e)})
+        if path == "/api/wtm/plan":   # 기다무 하루 계획표 (켜져 있지 않으면 미리 보기)
+            if not mods["wtm"]:
+                return self._send(404, {"success": False, "error": "웹툰 다운로더가 꺼져 있습니다 (WTM_ENABLED)."})
+            from wtm import daily_plan, hourly_stats
+            try:
+                return self._send(200, dict(daily_plan.report(hourly_stats._cfg()), success=True))
+            except Exception as e:  # noqa: BLE001
+                log.exception("기다무 하루 계획 계산 실패")
+                return self._send(500, {"success": False, "error": str(e)})
         if path.startswith("/api/tgup"):
             return self._tgup("GET", path, None, mods)
         if path.startswith("/api/brunch"):
