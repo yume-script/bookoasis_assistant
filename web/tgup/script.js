@@ -558,6 +558,9 @@
                     + (s.last_check ? `마지막 확인 ${new Date(s.last_check * 1000).toLocaleString()}` : '아직 확인 전') }),
                 h('button', { class: 'btn btn-sm', on: { click: async () => { await post('api/tgup/check'); toast('지금 확인합니다.'); setTimeout(() => renderStatus(pane), 2000); } } }, icon('rotate-right'), ' 지금 확인')),
             s.error ? h('p', { class: 'muted error', text: s.error }) : null,
+            ...(s.offline || []).map((o) => h('p', { class: 'muted error', text: `원본 드라이브 ${o.drive}에 닿지 못합니다 (${new Date(o.since * 1000).toLocaleTimeString()}부터, ${o.count}번) - `
+                + 'rclone 마운트·네트워크 드라이브가 연결됐는지 확인하세요. 5분마다 다시 시도하며 실패로 세지 않습니다.'
+                + (/^[A-Z]:$/.test(o.drive) ? ' (Windows: 드라이브를 다른 사용자·관리자 권한으로 붙였으면 이 프로그램에서 안 보일 수 있습니다)' : '') })),
             s.off_hours ? h('p', { class: 'muted', text: `지금은 올리기 시간대(${s.off_hours.replace('-', '시~')}시)가 아니라 쉬는 중 - 쌓아 두었다가 그 시간에 올립니다.` }) : null,
             tabBar, accCards,
             h('div', { class: 'mirror-live-head' }, h('h4', { text: `진행 (${live.length})${statusFilter !== 'all' ? ` - ${accName(statusFilter)}` : ''}` }),

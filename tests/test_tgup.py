@@ -194,6 +194,31 @@ if __name__ == "__main__":
 
 
 @unittest.skipUnless(HAVE_AIOHTTP, "aiohttp 없음")
+class SourceOfflineTest(unittest.TestCase):
+    """원본 드라이브가 끊긴 오류(Windows WinError 1005 등)는 실패로 세지 않는다"""
+
+    @unittest.skipUnless(HAVE_AIOHTTP, "aiohttp 없음")
+    def test_detect(self):
+        import errno as E
+        from tgup import plex_to_tg as m
+        e = OSError(None, "볼륨에 인식된 파일 시스템이 없습니다", "M:\\GDRIVE\\VIDEO\\방송중\\라프텔 애니메이션")
+        e.winerror = 1005
+        self.assertEqual(m.drive_of(m.source_offline(e)), "M:")
+        self.assertEqual(m.source_offline(OSError(E.ENOTCONN, "Transport endpoint is not connected", "/mnt/gdrive/a.mkv")), "/mnt/gdrive/a.mkv")
+        self.assertEqual(m.drive_of("/mnt/gdrive/VIDEO/a.mkv"), "/mnt/gdrive")
+        wrapped = RuntimeError("복사 실패: [WinError 1005] 볼륨에 인식된 파일 시스템이 없습니다: 'M:\\A\\b'")
+        self.assertEqual(m.drive_of(m.source_offline(wrapped)), "M:")
+        try:
+            try:
+                raise e
+            except OSError as inner:
+                raise ValueError("감쌈") from inner
+        except ValueError as outer:
+            self.assertIsNotNone(m.source_offline(outer))
+        self.assertIsNone(m.source_offline(FileNotFoundError(E.ENOENT, "없음", "/x/a.mkv")))   # 파일 하나 없는 건 끊김이 아님
+        self.assertIsNone(m.source_offline(ValueError("ffmpeg 오류")))
+
+
 class ChannelIndexTest(unittest.TestCase):
     """채널 중복 확인: 채널의 영상 메시지를 읽어 두고 같은 파일 이름·같은 회차를 찾는다 (처음엔 전부, 그 뒤엔 새 것만)"""
 
