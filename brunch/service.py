@@ -407,20 +407,27 @@ def epub_state(items):
     return items
 
 
-def bulk_complete():
-    """[완결작 모두 EPUB으로]: 완결 목록을 끝까지 넘겨 보며 아직 받지 않은(또는 덜 받은) 책을 대기열에 넣는다 (뒤에서).
-    _BULK에 진행 {running, pages, seen, queued, skipped, error}"""
+_DAY_NAME = {"MONDAY": "월요일", "TUESDAY": "화요일", "WEDNESDAY": "수요일", "THURSDAY": "목요일", "FRIDAY": "금요일",
+             "SATURDAY": "토요일", "SUNDAY": "일요일", "COMPLETE": "완결작"}
+
+
+def bulk_complete(day="COMPLETE"):
+    """[완결작 모두 EPUB으로] / [이 요일 모두 EPUB으로]: 그 목록(완결 또는 요일 연재)을 끝까지 넘겨 보며 아직 받지 않았거나
+    새 회차가 EPUB에 없는 책을 대기열에 넣는다 (뒤에서). 최신 회차까지 받아 둔 책과 받는 중인 책은 건너뛴다.
+    _BULK에 진행 {running, day, label, pages, seen, queued, skipped, error}"""
+    if day not in _DAY_NAME:
+        raise ApiError(400, "알 수 없는 요일입니다.")
     st = _BULK
     if st.get("running"):
         return st
     st.clear()
-    st.update(running=True, pages=0, seen=0, queued=0, skipped=0, error="", started=time.time())
+    st.update(running=True, day=day, label=_DAY_NAME[day], pages=0, seen=0, queued=0, skipped=0, error="", started=time.time())
 
     def work():
         try:
             c, nxt, books = _client(), None, set()
             while st["pages"] < BULK_MAX_PAGES:
-                res = c.list("COMPLETE", "", nxt)
+                res = c.list(day, "", nxt)
                 st["pages"] += 1
                 for it in epub_state([x for x in res["items"] if x.get("url")]):
                     title = it.get("book_title") or ""
@@ -438,10 +445,10 @@ def bulk_complete():
                     break
         except Exception as e:  # noqa: BLE001
             st["error"] = str(e)[:300]
-            log.warning("브런치 완결작 모두 받기 실패: %s", e)
+            log.warning("브런치 %s 모두 받기 실패: %s", st["label"], e)
         finally:
             st["running"] = False
-            log.info("브런치 완결작 모두 받기: 책 %d권 중 %d권을 대기열에 (이미 받음 %d)", st["seen"], st["queued"], st["skipped"])
+            log.info("브런치 %s 모두 받기: 책 %d권 중 %d권을 대기열에 (이미 받음 %d)", st["label"], st["seen"], st["queued"], st["skipped"])
     threading.Thread(target=work, name="brunch-bulk", daemon=True).start()
     return st
 
@@ -800,8 +807,8 @@ def api_post(path, body):
                 threading.Thread(target=check_now, kwargs={"reason": "수동"}, name="brunch-check", daemon=True).start()
                 time.sleep(0.2)
             return _state()
-        if path == "/api/brunch/bulk-complete":   # [완결작 모두 EPUB으로] - 뒤에서 완결 목록을 넘기며 대기열에
-            return {"success": True, "bulk": dict(bulk_complete())}
+        if path == "/api/brunch/bulk-complete":   # [완결작/이 요일 모두 EPUB으로] - 뒤에서 그 목록을 넘기며 대기열에 ({"day": …})
+            return {"success": True, "bulk": dict(bulk_complete(str((body or {}).get("day") or "COMPLETE").upper()))}
         if path == "/api/brunch/clear-jobs":   # 끝난 작업 줄 지우기
             with _LOCK:
                 keep = [j for j in _JOBS if j["state"] in ("queued", "running")]

@@ -271,6 +271,41 @@ class SearchTest(unittest.TestCase):
             s._client = orig
 
 
+class BulkDayTest(unittest.TestCase):
+    def test_bulk_by_weekday(self):
+        """[수요일 연재 모두 EPUB으로]: 그 요일 목록만 넘기며, 받지 않은 책·새 회차가 빠진 책만 대기열에"""
+        from brunch import service as s
+
+        def it(book, no):
+            return {"book_title": book, "title": "%d화" % no, "author": "갑", "url": "https://brunch.co.kr/@@a/%d" % no,
+                    "user_id": "a", "article_no": no, "publish_time": 1}
+        asked, queued = [], []
+
+        class FakeClient:
+            def list(self, day, sort="", next_url=None):
+                asked.append(day)
+                return {"items": [it("책A", 1), it("책B", 2), it("책A", 3)], "more": False, "next_url": ""}
+        orig = (s._client, s.enqueue, s.epub_state)
+        s._client = lambda: FakeClient()
+        s.enqueue = lambda kind, target, title, **kw: queued.append((kind, target, title))
+        s.epub_state = lambda items: [dict(x, epub="done" if x["book_title"] == "책B" else "old") for x in items]
+        try:
+            with self.assertRaises(s.ApiError):
+                s.bulk_complete("FUNDAY")
+            s._BULK.clear()
+            st = s.bulk_complete("WEDNESDAY")
+            for _ in range(200):
+                if not s._BULK.get("running"):
+                    break
+                time.sleep(0.01)
+            self.assertEqual(asked, ["WEDNESDAY"])
+            self.assertEqual(queued, [("bookof", ("a", 1), "책A")])        # 책B는 최신까지 받음, 책A는 한 번만
+            self.assertEqual((s._BULK["label"], s._BULK["seen"], s._BULK["skipped"]), ("수요일", 2, 1))
+            self.assertTrue(st)
+        finally:
+            s._client, s.enqueue, s.epub_state = orig
+
+
 class AutoCheckTest(unittest.TestCase):
     """새 글 자동 받기: 받은 브런치북에 새 회차가 오르면 다시 받기 대기열에"""
 
