@@ -249,6 +249,14 @@ def _now():
     return datetime.now().strftime("%Y-%m-%d %H:%M")
 
 
+def _pub_day(ms):
+    """브런치 발행 시각(밀리초) -> 'YYYY-MM-DD' (없으면 '')"""
+    try:
+        return datetime.fromtimestamp(int(ms) / 1000).strftime("%Y-%m-%d") if ms else ""
+    except (TypeError, ValueError, OverflowError, OSError):
+        return ""
+
+
 def _check_due(started):
     s = load_settings()
     if not s["auto_check"] or time.time() - started < FIRST_CHECK_DELAY:
@@ -264,7 +272,7 @@ def _public_history():
     for h in load_history():
         item = {k: h.get(k) for k in ("id", "key", "kind", "title", "author", "url", "chapters", "images",
                                       "restricted", "skipped", "at", "size", "status", "file_name", "scan",
-                                      "checked_at", "check_error", "yaml")}
+                                      "checked_at", "check_error", "yaml", "first_published", "last_published")}
         item["auto"] = h.get("kind") == "book" and h.get("auto", True) is not False
         item["watched"] = watched(h)
         item["exists"] = bool(h.get("file")) and os.path.isfile(h["file"])
@@ -554,6 +562,7 @@ def _run(job):
         meta, cover_url = None, ""
     job["total"] = len(eps)
     chapters, skipped, restricted, first_pub = [], [], 0, 0
+    ep_dates = {}   # 회차(글 번호) -> 브런치에 발행된 날 (받은 날이 아니라)
     for ep in eps:
         try:
             art = c.article(ep["user_id"], ep["article_no"])
@@ -568,8 +577,11 @@ def _run(job):
         restricted += art["restricted"]
         if art.get("publish_time") and (not first_pub or art["publish_time"] < first_pub):
             first_pub = art["publish_time"]
+        if art.get("publish_time"):
+            ep_dates[int(ep["article_no"])] = _pub_day(art["publish_time"])
         chapters.append({"num": ep.get("num") or "", "title": art["title"] or ep.get("title") or "",
                          "subtitle": art["subtitle"], "url": art["url"], "restricted": art["restricted"],
+                         "published": _pub_day(art.get("publish_time")),
                          "body": fetch.sanitize(art["html"], on_img)})
         job["done"] += 1
         job["note"] = "%d/%d화 · 그림 %d장" % (job["done"], job["total"], len(images))
@@ -582,7 +594,7 @@ def _run(job):
     os.makedirs(work, exist_ok=True)
     local = os.path.join(work, job["id"] + ".epub")
     ident = "brunch:" + job["key"]
-    epub.build(local, meta, chapters, images, cover=cover, identifier=ident)
+    epub.build(local, dict(meta, published=_pub_day(first_pub)), chapters, images, cover=cover, identifier=ident)
     yaml_ok = False
     if settings["kavita_yaml"]:   # 책 폴더에 메타데이터 먼저 (EPUB이 들어오며 스캔될 때 같이 읽히게)
         try:
@@ -608,7 +620,11 @@ def _run(job):
              "episode_ids": [int(e["article_no"]) for e in eps], "auto": job["kind"] == "book",
              "episode_keys": ["%s/%s" % (e.get("user_id") or "", int(e["article_no"])) for e in eps],
              "published": len(eps), "latest_title": (eps[-1].get("title") or "") if eps else "",
-             "yaml": yaml_ok, "layout": LAYOUT}
+             "yaml": yaml_ok, "layout": LAYOUT,
+             # 브런치에 발행된 날 (at·checked_at은 받은 때·확인한 때)
+             "episode_dates": {str(k): v for k, v in ep_dates.items()},
+             "first_published": min(ep_dates.values()) if ep_dates else "",
+             "last_published": max(ep_dates.values()) if ep_dates else ""}
     _remember(entry)
     job["history_id"] = entry["id"]
     job["note"] = "%d화 · 그림 %d장 · %.1fMB%s" % (len(chapters), len(images), size / 1048576,
