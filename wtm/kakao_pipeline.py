@@ -937,6 +937,7 @@ def spread_waitfree(cfg, log=print, now=None):
     if patches:
         ss.upsert_kakao_title(patches)
         ss.flush_titles()
+        ss.save_job_state({"waitfree_plan": {}})   # 하루 계획표: 충전 시각이 바뀌었으니 다음 확인 때 오늘 계획을 다시 짠다
     hours = max(1, (end_h - start_h) % 24 or 24)
     log("카카오 기다무: 1·2·3일 기다무 %d개를 %02d~%02d시에 고르게(시간당 약 %d개), 하루보다 짧은 기다무 %d개는 "
         "주기 안에서 고르게 - 옮김 %d개" % (long_n, start_h, (end_h - 1) % 24, round(long_n / hours), len(short), moved))

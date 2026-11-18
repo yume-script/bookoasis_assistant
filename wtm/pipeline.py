@@ -310,12 +310,14 @@ def in_new_episode_scope(cfg, t, platform="naver", now=None, tid=None):
     if t.get("last_downloaded_no") is None:
         return True        # 새로 구독한 작품은 요일과 상관없이 바로 첫 다운로드
     now = now or time.time()
+    if plan_enabled(cfg):
+        # 신규 회차 확인 계획이 '확인 범위'·하루 계획표보다 우선 (연재일 오후 시각 + 못 찾으면 12시간 뒤 한 번 더).
+        # 하루 계획표는 같은 시각(12~20시)으로 계획을 짜서 보여 주기만 한다
+        return _plan_due(cfg, t, platform, now)
     if platform == "naver" and tid is not None:
         from . import daily_plan
         if daily_plan.enabled(cfg):   # 하루 계획표: 오늘 계획에 든(연재일) 작품만, 정한 시각에 하루 한 번
             return daily_plan.naver_due(cfg, tid, t, now)
-    if plan_enabled(cfg):
-        return _plan_due(cfg, t, platform, now)   # 신규 회차 확인 계획이 '확인 범위' 설정보다 우선
     if str(cfg.get("NEW_EP_SCOPE") or "today") == "all":
         return True
     if platform == "naver":
