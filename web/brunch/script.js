@@ -120,7 +120,7 @@
         const bulk = (state && state.bulk) || {};
         jobsBox.append(h('div', { class: 'toolbar' }, h('b', { text: '받기 진행' }),
             waiting ? h('span', { class: 'muted', text: `대기 ${waiting}개` }) : null,
-            bulk.running ? h('span', { class: 'muted', text: `완결작 목록 모으는 중: ${bulk.pages}쪽 · 책 ${bulk.seen}권 중 ${bulk.queued}권 대기열에` }) : null,
+            bulk.running ? h('span', { class: 'muted', text: `${bulk.label || '완결작'} 목록 모으는 중: ${bulk.pages}쪽 · 책 ${bulk.seen}권 중 ${bulk.queued}권 대기열에` }) : null,
             doneCount ? h('button', { class: 'btn btn-sm', type: 'button', on: { click: async () => { state = await post('api/brunch/clear-jobs'); paintJobs(); } } },
                 icon('broom'), ' 끝난 줄 지우기') : null), list);
     }
@@ -141,13 +141,17 @@
         const sortSel = h('select', { class: 'select', title: '정렬' }, SORTS.map(([v, t]) => h('option', { value: v, text: t })));
         const grid = h('div', { class: 'br-grid' });
         const moreBtn = h('button', { class: 'btn', type: 'button', hidden: true }, icon('chevron-down'), ' 더 보기');
-        // 완결 탭: 완결된 책 전부를 EPUB으로 (이미 다 받은 책은 빼고)
-        const bulkBtn = h('button', { class: 'btn btn-accent', type: 'button', hidden: true,
-            title: '완결 목록을 끝까지 넘겨 보며 아직 받지 않은 완결 브런치북을 모두 받기 대기열에 넣습니다' }, icon('layer-group'), ' 완결작 모두 EPUB으로');
+        // 지금 고른 탭(요일·완결)의 책 전부를 EPUB으로 (최신 회차까지 받아 둔 책은 빼고, 새 회차가 빠진 책은 다시)
+        const dayName = () => (DAYS.find(([v]) => v === browse.day) || ['', ''])[1];
+        const bulkLabel = () => browse.day === 'COMPLETE' ? '완결작' : `${dayName()}요일 연재`;
+        const bulkText = h('span');
+        const bulkBtn = h('button', { class: 'btn btn-accent', type: 'button',
+            title: '이 목록을 끝까지 넘겨 보며 아직 받지 않았거나 새 회차가 EPUB에 없는 브런치북을 모두 받기 대기열에 넣습니다' }, icon('layer-group'), bulkText);
         bulkBtn.addEventListener('click', () => busy(bulkBtn, async () => {
-            if (!confirm('완결된 브런치북을 모두 EPUB으로 만들까요?\n이미 받은 책은 건너뛰고, 한 권씩 차례로 받습니다 (책이 많으면 오래 걸립니다).')) return;
-            await post('api/brunch/bulk-complete');
-            toast('완결작 목록을 모아 받기 대기열에 넣는 중입니다. 맨 위 [받기 진행]에서 보세요.', 'success', 6000);
+            const label = bulkLabel();
+            if (!confirm(`${label} 브런치북을 모두 EPUB으로 만들까요?\n최신 회차까지 받아 둔 책은 건너뛰고, 새 회차가 빠진 책은 다시 받아 합칩니다. 한 권씩 차례로 받습니다 (책이 많으면 오래 걸립니다).`)) return;
+            await post('api/brunch/bulk-complete', { day: browse.day });
+            toast(`${label} 목록을 모아 받기 대기열에 넣는 중입니다. 맨 위 [받기 진행]에서 보세요.`, 'success', 6000);
             refresh();
         }));
         let next = '';
@@ -233,7 +237,8 @@
             DAYS.forEach(([v, t]) => chips.appendChild(h('button', { type: 'button', class: 'chip' + (browse.day === v ? ' is-on' : ''), text: t,
                 on: { click: () => { browse.day = v; searchBox.value = ''; searchNote.hidden = true; paintChips(); load(false); } } })));
             sortSel.disabled = browse.day === 'COMPLETE';
-            bulkBtn.hidden = browse.day !== 'COMPLETE';
+            bulkBtn.hidden = false;
+            bulkText.textContent = ` ${bulkLabel()} 모두 EPUB으로`;
         };
         sortSel.value = browse.sort;
         sortSel.addEventListener('change', () => { browse.sort = sortSel.value; load(false); });
@@ -241,7 +246,7 @@
         paintChips();
         pane.append(h('div', { class: 'toolbar' }, chips, sortSel, bulkBtn, searchBox), searchNote,
             h('p', { class: 'field-hint', text: '브런치북 오리지널 연재 목록입니다. [EPUB 받기]는 그 글이 든 브런치북의 발행된 회차 전부를 한 권으로 받습니다 (멤버십 글은 공개된 앞부분만). '
-                + '카드 아래 표시: "EPUB 반영됨"은 이 회차까지 EPUB에 들어 있음, "새 회차 미반영"은 받아 둔 EPUB에 이 회차가 아직 없음([다시 받기]). 완결 탭의 [완결작 모두 EPUB으로]는 아직 받지 않은 완결작을 모두 받습니다.' }),
+                + '카드 아래 표시: "EPUB 반영됨"은 이 회차까지 EPUB에 들어 있음, "새 회차 미반영"은 받아 둔 EPUB에 이 회차가 아직 없음([다시 받기]). [○요일 연재·완결작 모두 EPUB으로]는 지금 고른 목록에서 아직 받지 않았거나 새 회차가 빠진 책을 모두 받습니다.' }),
             grid, moreBtn);
         load(false);
     }
