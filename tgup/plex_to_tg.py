@@ -41,7 +41,8 @@
   못 찾거나 실패하면 1시간 -> 6시간 -> 하루 -> 3일 뒤에 다시, 그래도 못 찾으면 "포스터 못 찾음" 목록에 남겨 직접 검색해 고른다.
   예전에 올린 것은 [포스터 복구]로 한꺼번에 찾는다.
 
-- 처리 순서 (항목마다): 1) 새 영상 발견 -> 2) 채널 중복 확인(작품 이름·파일 이름·시즌·회차 - 중복이면 "건너뜀: 중복"으로 기록)
+- 처리 순서 (항목마다): 1) 새 영상 발견 -> 2) 채널 중복 확인(같은 파일(이름+크기) / 같은 작품(TMDB 번호, Plex 규칙) / 파일 이름
+  (나눈 조각 꼬리 _0000·.part1·CD2 무시) / 영화 이름+연도 / 드라마 작품·시즌·회차 - 중복이면 "건너뜀: 중복"으로 기록)
   -> 3) 제외 정규식 확인(설정 exclude - 맞으면 "건너뜀: 제외"로 기록) -> 4) 소프트 자막(파일 안 자막)이 있으면 바로 올림
   -> 5) 자막 파일이 있어야 하면 정한 시간(분)만큼 기다렸다가 -> 6) 놀고 있는 텔레그램 계정이 가져가 올린다.
 - 계정 여럿 (규칙의 tg + tg_alt): 놀고 있는 계정이 진행 목록의 앞에서부터 가져간다. 한 계정에 문제가 생기면(로그아웃·세션 만료·
@@ -516,7 +517,9 @@ def item_fields(m, section_title=""):
         name = f"{title} ({year})" if year else title
     part = (((m.get("Media") or [{}])[0].get("Part") or [{}])[0])
     genres = [g.get("tag", "") for g in m.get("Genre") or [] if g.get("tag")]
+    tmdb = next((str(g.get("id"))[7:] for g in m.get("Guid") or [] if str(g.get("id") or "").startswith("tmdb://")), "")
     return _Blank(name=name, title=title, year=year, show=show, season=s if s is not None else "", episode=e if e is not None else "",
+                  tmdb=f"{kind}:{tmdb}" if tmdb else "",
                   code=code, summary=str(m.get("summary") or "").strip(), library=section_title,
                   filename=os.path.basename(str(part.get("file") or "")), genres=", ".join(genres),
                   tags=" ".join("#" + re.sub(r"\s+", "_", g) for g in genres))
@@ -644,6 +647,7 @@ class Lane:
         self.job_task = None      # 지금 올리는 작업 (취소용)
         self.cur_sig = ""         # 지금 올리는 파일의 이름+크기
         self.cur_ep = None        # 지금 올리는 회차 (작품 키, 시즌, 회차)
+        self.cur_tmdb = ""        # 지금 올리는 항목의 TMDB 번호 ("movie:603", "episode:62085" - Plex 규칙만)
         self.cancel_req = None    # 직접 취소한 (규칙, 키)
         self.subs_label = ""
         self.resume = None        # 나눠 올리다 멈춘 항목을 이어 올릴 때 {n, done, vids} (서버를 다시 켠 뒤 등)
@@ -708,6 +712,7 @@ class Mirror:
     _job_task = _lane_attr("job_task")
     _cur_sig = _lane_attr("cur_sig")
     _cur_ep = _lane_attr("cur_ep")
+    _cur_tmdb = _lane_attr("cur_tmdb")
     _cancel_req = _lane_attr("cancel_req")
     _resume = _lane_attr("resume")
 
@@ -1322,6 +1327,10 @@ class Mirror:
         dup = self._already_sent(rule, self._cur_sig)
         if dup:
             return f"이 채널에 이미 올린 파일 ({dup})"
+        tm = self._cur_tmdb
+        got = ((load_state().get("sent_tmdb") or {}).get(str(rule["channel"])) or {}).get(tm) if tm else ""
+        if got:   # 파일 이름·릴리스가 달라도 같은 작품(TMDB 번호)을 이 채널에 이미 올림
+            return f"같은 작품(TMDB {tm.split(':')[-1]})을 이미 올림 ({got})"
         refresh = getattr(telegram_src, "refresh_channel", None)   # 채널 목록을 먼저 새로 읽는다 (BookOasis Assistant)
         if refresh:
             try:
@@ -1336,6 +1345,14 @@ class Mirror:
                 got = ""
             if got:
                 return f"같은 파일 이름이 이미 채널에 있음 ({got})"
+        movie = getattr(telegram_src, "channel_movie", None)
+        if movie and not episode_key(fields) and fields.get("year"):   # 영화: 작품 이름 + 연도 (파일 이름·캡션 첫 줄)
+            try:
+                got = movie(rule["tg"], int(rule["channel"]), _name_key(fields.get("title") or fields.get("name")), str(fields["year"]))
+            except Exception:  # noqa: BLE001
+                got = ""
+            if got:
+                return f"같은 영화(이름·연도)가 이미 채널에 있음 ({got})"
         return self._already_ep(rule, fields)
 
     def _already_sent(self, rule, sig):
@@ -1494,6 +1511,7 @@ class Mirror:
         while True:   # 텔레그램 요청 제한이면 이 계정만 기다렸다가 같은 것을 처음부터 다시
             lane.current_job, lane.subs_label = {"rule": job["rule"], "key": job["key"], "tg": lane.tg}, ""
             lane.job, lane.cur_sig, lane.cur_ep = job, "", None
+            lane.cur_tmdb = ""
             cancelled = False
             lane.cancel_req = None
             lane.resume = None
@@ -1600,6 +1618,11 @@ class Mirror:
                 ch[lane.cur_sig] = job["title"]
             if not job.get("test"):
                 self._remember_ep(state, rule, job["title"])
+                if lane.cur_tmdb and rule:   # 같은 작품(TMDB)을 다른 파일로 다시 올리지 않게
+                    tch = state.setdefault("sent_tmdb", {}).setdefault(str(rule["channel"]), {})
+                    tch[lane.cur_tmdb] = job["title"]
+                    while len(tch) > KEEP_DONE:
+                        tch.pop(next(iter(tch)))
             rs["done"] = [*rs.get("done", []), job["key"]][-KEEP_DONE:]
             if (rule or {}).get("kind") == "folder":   # 폴더 규칙은 올린 파일 이름을 따로 끝까지 기억 (done은 최근 것만)
                 rs.setdefault("known", []).append(folder_watch.key_hash(job["key"]))
@@ -1944,7 +1967,7 @@ class Mirror:
         if rule.get("kind") == "folder":
             return await self.upload_file(rule, key, max_gb, test)
         cfg, src = self.plex_src(rule["plex"])
-        data = await self.plex_json(cfg, src, f"/library/metadata/{key}")
+        data = await self.plex_json(cfg, src, f"/library/metadata/{key}", {"includeGuids": 1})   # (TMDB 번호로 중복 확인)
         m = ((data.get("MediaContainer") or {}).get("Metadata") or [None])[0]
         if not m:
             raise RuntimeError("Plex에서 항목을 찾지 못했습니다 (지워졌을 수 있음).")
@@ -1953,6 +1976,7 @@ class Mirror:
         if not part.get("key"):
             raise RuntimeError("Plex 항목에 파일 정보가 없습니다.")
         fields = item_fields(m, rule["section_title"])
+        self._cur_tmdb = fields.get("tmdb") or ""
         subs = [x for x in part.get("Stream") or [] if x.get("streamType") == 3]
         local_file = config_store.local_path(str(part.get("file") or ""))
         size = int(part.get("size") or 0)
