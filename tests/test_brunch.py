@@ -215,6 +215,45 @@ class ServiceTest(unittest.TestCase):
 
 
 @unittest.skipUnless(HAVE_REQUESTS, "requests 없음")
+class SearchTest(unittest.TestCase):
+    def test_search_all_days(self):
+        """제목으로 찾기: 모든 요일·완결 목록을 넘겨 모은 뒤 책 제목·회차 제목·작가로 (같은 책은 하나로, 요일 표시)"""
+        from brunch import service as s
+
+        def it(book, title, author, no, t):
+            return {"book_title": book, "title": title, "author": author, "url": f"https://brunch.co.kr/@@a/{no}",
+                    "user_id": "a", "article_no": no, "publish_time": t}
+        pages = {("MONDAY", None): {"items": [it("말들에서 되올리는 것들", "1화", "갑", 1, 10)], "more": True,
+                                    "next_url": "n2"},
+                 ("MONDAY", "n2"): {"items": [it("기억의 편집", "역사는 진보", "을", 2, 5)], "more": False, "next_url": ""},
+                 ("THURSDAY", None): {"items": [it("말들에서 되올리는 것들", "2화", "갑", 3, 20)], "more": False, "next_url": ""},
+                 ("COMPLETE", None): {"items": [it("신학의 기초", "본회퍼", "KEN", 4, 1)], "more": False, "next_url": ""}}
+
+        class FakeClient:
+            def list(self, day, sort="", next_url=None):
+                return pages.get((day, next_url), {"items": [], "more": False, "next_url": ""})
+        orig = s._client
+        s._client = lambda: FakeClient()
+        s._SEARCH.update(items=[], at=0.0, building=False, pages=0, error="")
+        try:
+            first = s.search("말들")
+            for _ in range(100):
+                if not s._SEARCH["building"]:
+                    break
+                time.sleep(0.01)
+            res = s.search("말 들")       # 띄어쓰기 상관없이
+            self.assertEqual(res["total"], 3)
+            self.assertEqual(len(res["items"]), 1)
+            hit = res["items"][0]
+            self.assertEqual((hit["title"], hit["days"]), ("2화", ["월", "목"]))   # 가장 최근 회차, 연재 요일 둘
+            self.assertEqual([x["book_title"] for x in s.search("ken")["items"]], ["신학의 기초"])   # 작가로도
+            self.assertEqual(s.search("진보")["items"][0]["book_title"], "기억의 편집")               # 회차 제목으로도
+            self.assertEqual(s.search("")["items"], [])
+            self.assertIn("building", first)
+        finally:
+            s._client = orig
+
+
 class AutoCheckTest(unittest.TestCase):
     """새 글 자동 받기: 받은 브런치북에 새 회차가 오르면 다시 받기 대기열에"""
 
