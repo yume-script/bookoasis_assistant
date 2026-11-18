@@ -56,6 +56,15 @@ class NaverVideoOnly(Exception):
     """동영상만 있는 회차 - 받을 그림이 없어 받은 것으로 보고 건너뛴다"""
 
 
+# 회차 보기 화면은 제대로 열렸는지 (본문 자리) - 이게 있는데 그림이 없으면 본문 없는 회차(공지·특별 회차 등)로 본다.
+# 이것도 없으면 페이지 구조가 바뀐 것일 수 있어 예전처럼 실패로 남긴다 (받은 것으로 잘못 치지 않게)
+_VIEWER_RE = re.compile(r"wt_viewer|comic_view_area|viewer_img|EpisodeViewer|toon_view", re.I)
+
+
+class NaverEmptyEpisode(Exception):
+    """회차는 열리는데 받을 그림이 하나도 없음 (공지·특별 회차 등) - 받은 것으로 보고 넘어간다"""
+
+
 class NaverAuthExpired(Exception):
     """쿠키(성인/로그인)가 만료되어 인증이 필요한 콘텐츠 접근이 막힌 경우"""
 
@@ -531,6 +540,8 @@ def fetch_episode_images(session, title_id, episode_no, log=None):
             raise NaverPaidEpisode(
                 "titleId=%s no=%s: 유료(코인 결제) 회차로 보여 이미지를 못 가져옴" %
                 (title_id, episode_no))
+        if _VIEWER_RE.search(html):
+            raise NaverEmptyEpisode("titleId=%s no=%s: 본문 없는 회차" % (title_id, episode_no))
         raise ValueError("titleId=%s no=%s: 이미지 목록을 찾지 못함(페이지 구조 변경 가능성)" %
                           (title_id, episode_no))
     return imgs
