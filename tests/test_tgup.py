@@ -219,6 +219,64 @@ class SourceOfflineTest(unittest.TestCase):
         self.assertIsNone(m.source_offline(ValueError("ffmpeg 오류")))
 
 
+class WinFspPathTest(unittest.TestCase):
+    """Windows rclone/WinFsp 드라이브: realpath가 WinError 1005로 실패해도 파일 경로를 만들고, FUSE-rclone은 네트워크 드라이브로"""
+
+    @unittest.skipUnless(HAVE_AIOHTTP, "aiohttp 없음")
+    def test_realpath_fallback_keeps_escape_check(self):
+        from tgup import folder_watch as fw
+        folder = tempfile.mkdtemp(prefix="tgup-winfsp-")
+        orig = os.path.realpath
+
+        def broken(p, *a, **k):
+            e = OSError(None, "볼륨에 인식된 파일 시스템이 없습니다", p)
+            e.winerror = 1005
+            raise e
+        os.path.realpath = broken
+        try:
+            got = fw.local_path(folder, os.path.join("방송중", "라프텔 애니메이션", "a.mp4"))
+            self.assertEqual(got, os.path.join(folder, "방송중", "라프텔 애니메이션", "a.mp4"))
+            for bad in ("../x.mp4", os.path.join("a", "..", "..", "x.mp4"), "/etc/passwd"):
+                with self.assertRaises(fw.FolderError):
+                    fw.local_path(folder, bad)
+            with self.assertRaises(fw.FolderError):   # 이름이 겹치는 옆 폴더 (folder + "x")
+                fw.local_path(folder, "../" + os.path.basename(folder) + "x/a.mp4")
+        finally:
+            os.path.realpath = orig
+            shutil.rmtree(folder, ignore_errors=True)
+
+    @unittest.skipUnless(HAVE_AIOHTTP, "aiohttp 없음")
+    def test_fuse_rclone_is_network(self):
+        import ctypes
+        from tgup import folder_watch as fw
+
+        class K32:
+            def __init__(self, kind, fs):
+                self.kind, self.fs = kind, fs
+
+            def GetDriveTypeW(self, root):
+                return self.kind
+
+            def GetVolumeInformationW(self, root, a, b, c, d, e, buf, n):
+                buf.value = self.fs
+                return 1
+
+        class WinDLL:
+            kernel32 = None
+        had = hasattr(ctypes, "windll")
+        old = getattr(ctypes, "windll", None)
+        try:
+            for kind, fs, want in ((3, "FUSE-rclone", True), (4, "NTFS", True), (3, "NTFS", False)):
+                WinDLL.kernel32 = K32(kind, fs)
+                ctypes.windll = WinDLL
+                self.assertEqual(fw._windows_network("M:\\GDRIVE\\VIDEO\\a.mp4"), want, (kind, fs))
+        finally:
+            if had:
+                ctypes.windll = old
+            else:
+                del ctypes.windll
+
+
 class ChannelIndexTest(unittest.TestCase):
     """채널 중복 확인: 채널의 영상 메시지를 읽어 두고 같은 파일 이름·같은 회차를 찾는다 (처음엔 전부, 그 뒤엔 새 것만)"""
 
