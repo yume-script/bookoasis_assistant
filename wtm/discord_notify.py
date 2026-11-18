@@ -252,6 +252,23 @@ def notify_new_episodes(cfg, platform_label, title, episodes, url=None, thumbnai
                   color=COLOR_DONE, mention_manage_tab=False, url=url, thumbnail=thumbnail)
 
 
+def notify_empty_episodes(cfg, platform_label, title, episodes, url=None):
+    """받을 본문(그림·글)이 없어 받은 것으로 치고 넘어간 회차 알림. episodes: [(회차 번호 또는 "특별 회차" 같은 글, 부제, 까닭), ...]"""
+    if not episodes:
+        return False, "없음"
+    lines = []
+    for no, sub, why in episodes[:15]:
+        sub = (sub or "").strip()
+        label = no if isinstance(no, str) else "%s화" % no
+        lines.append("· %s%s - %s" % (label, (" (%s)" % sub) if sub else "", why))
+    if len(episodes) > 15:
+        lines.append("· 외 %d화" % (len(episodes) - 15))
+    head = "%s %s" % (platform_label, title) if platform_label else title
+    return notify(cfg, "📭 %s - 받을 본문이 없는 회차 %d개" % (head, len(episodes)),
+                  "\n".join(lines) + "\n\n받은 것으로 처리하고 다음 회차로 넘어갔습니다.",
+                  color=COLOR_WARN, mention_manage_tab=False, url=url)
+
+
 def wants_new_episode_notice(cfg, t):
     """이 작품의 새 회차를 알릴지: 카드에서 🔔를 켠 작품, 또는 [공통] '구독 작품 전부 알림'이 켜진 경우."""
     if (t or {}).get("notify_new"):

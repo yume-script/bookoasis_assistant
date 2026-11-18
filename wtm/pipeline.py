@@ -953,6 +953,7 @@ def run_download_cycle(cfg, log=print):
         last_ok_no = t.get("last_downloaded_no")
         prev_last_no = last_ok_no      # 새 회차 알림: 이전에 받은 마지막 회차보다 뒤인 것만 알림
         notice_eps = []
+        empty_eps = []   # 받을 그림이 없어 받은 것으로 친 회차 [(회차, 부제, 까닭)] - 끝나고 알림
         consecutive_fail = 0
         owned_mode = naver_try_owned_paid(cfg)
         # 대여·소장 여부를 보려고 유료 회차를 하나씩 열어 보는 건 작품당 하루 1번만.
@@ -1035,6 +1036,14 @@ def run_download_cycle(cfg, log=print):
                 if skipped:
                     consecutive_fail = 0
                     last_ok_no = ep["no"]
+                    if err and str(err).startswith(downloader.EMPTY_PREFIX):
+                        why = str(err)[len(downloader.EMPTY_PREFIX):]
+                        empty_eps.append((ep["no"], ep.get("subtitle"), why))
+                        ss.append_history({
+                            "type": "skipped_empty", "source": "auto", "title_id": tid,
+                            "title": t.get("title", tid), "episode_no": ep["no"], "subtitle": ep.get("subtitle"),
+                            "error": "%s - 받은 것으로 처리" % why,
+                        })
                 else:
                     with lock:
                         state["downloaded"] += 1
@@ -1119,6 +1128,13 @@ def run_download_cycle(cfg, log=print):
             patch["last_downloaded_no"] = last_ok_no
             patch["last_new_at"] = time.time()   # 확인 계획: 새 회차를 찾았으면 그날 다시 확인하지 않음
         ss.upsert_title({tid: patch})
+        if empty_eps:
+            try:
+                discord_notify.notify_empty_episodes(
+                    cfg, "[네이버웹툰]", t.get("title", tid), empty_eps,
+                    url="https://comic.naver.com/webtoon/list?titleId=%s" % tid)
+            except Exception as e:  # noqa: BLE001
+                log("본문 없는 회차 알림 실패(무시): %s" % e)
         if notice_eps and discord_notify.wants_new_episode_notice(cfg, ss.get_title(tid) or t):
             try:
                 discord_notify.notify_new_episodes(

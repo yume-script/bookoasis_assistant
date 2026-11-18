@@ -15,6 +15,7 @@ from . import naver_api
 
 _SAFE_RE = re.compile(r'[\\/:*?"<>|\x00-\x1f]')   # 윈도우에서 파일 이름에 못 쓰는 문자 + 제어 문자
 _IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".webp", ".gif")
+EMPTY_PREFIX = "본문 없음: "   # download_episode가 (True, True, 0, EMPTY_PREFIX + 까닭)로 돌려주면 받을 것이 없어 받은 것으로 친 회차
 
 
 def lower_thread_priority(nice_level=10):
@@ -552,10 +553,13 @@ def download_episode(session, download_root, temp_root, title, title_id, episode
                 raise
             except naver_api.NaverPaidEpisode:
                 raise
-            except naver_api.NaverVideoOnly as e:   # 동영상만 있는 회차: 받은 것으로 보고 건너뜀 (다음 회차로 이어 감)
+            except (naver_api.NaverVideoOnly, naver_api.NaverEmptyEpisode) as e:
+                # 동영상만 있는 회차·본문 없는 회차: 받은 것으로 보고 건너뜀 (다음 회차로 이어 감).
+                # 네 번째 값에 EMPTY_PREFIX로 까닭을 실어 호출 측이 알림을 보낼 수 있게 한다
+                why = "동영상만 있는 회차" if isinstance(e, naver_api.NaverVideoOnly) else "본문 없는 회차"
                 if log:
                     log("%s - 받을 그림이 없어 받은 것으로 보고 건너뜀" % e)
-                return True, True, 0, None
+                return True, True, 0, EMPTY_PREFIX + why
             except Exception as e:  # noqa: BLE001
                 return False, False, 0, str(e)
 

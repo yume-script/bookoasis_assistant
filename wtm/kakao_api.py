@@ -75,6 +75,12 @@ class KakaoUnsupported(Exception):
     """이미지 웹툰이 아닌 회차(웹소설 텍스트 뷰어 등)"""
 
 
+class KakaoNoBody(KakaoNotPurchased):
+    """회차는 열리는데 받을 그림·글이 하나도 없음 (공지·특별 회차 등).
+    유료 회차에서도 같은 모양으로 오므로 KakaoNotPurchased로도 잡힌다 - 무료·대여·소장 회차면
+    호출 측이 받은 것으로 보고 넘어간다 (예전엔 '볼 수 없는 회차'로 남아 매번 다시 시도했다)"""
+
+
 class KakaoVideoOnly(KakaoSkip):
     """동영상만 있는 회차(영상 트레일러·영상툰 등) - 받을 그림·글이 없어 받은 것으로 보고 건너뛴다"""
 
@@ -601,7 +607,7 @@ def fetch_episode_images(session, series_id, product_id):
         raise KakaoUnsupported("웹소설(텍스트) 회차라 이미지로 받을 수 없음")
     urls = _image_files(vd)
     if not urls:
-        raise KakaoNotPurchased("이미지 목록이 비어 있음(구매/대여가 필요한 회차로 보임)")
+        raise KakaoNoBody("이미지 목록이 비어 있음 (받을 그림이 없는 회차이거나 구매/대여가 필요한 회차)")
     return urls
 
 
@@ -689,7 +695,7 @@ def fetch_novel_episode(session, series_id, product_id, log=None):
         scans = _image_files(vd)
         if scans:   # 스캔본 웹소설: 글 대신 페이지 그림만 있다 - 그림을 페이지로 담아 EPUB으로
             return _novel_from_scans(session, scans, log=log)
-        raise KakaoUnsupported("웹소설 본문이 없음(웹툰 회차이거나 구매가 필요한 회차)")
+        raise KakaoNoBody("웹소설 본문이 없음 (받을 글이 없는 회차이거나 구매가 필요한 회차)")
     images, css_parts, sections, seen_css = {}, [], [], set()
     img_counter = {"n": 0}
 

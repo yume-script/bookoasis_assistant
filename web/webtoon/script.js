@@ -441,6 +441,9 @@
       } else if (h.type === 'skipped_paid') {
         text = '<b>' + title + '</b> - ' + historyEpLabel(h) + ': 유료라 건너뜀' +
           (h.error ? ' (' + escapeHtml(h.error) + ')' : '');
+      } else if (h.type === 'skipped_empty') {
+        text = '<b>' + title + '</b> - ' + historyEpLabel(h) + ': 받을 본문이 없어 받은 것으로 처리' +
+          (h.subtitle ? ' (' + escapeHtml(h.subtitle) + ')' : '');
       } else if (isFail) {
         text = '<b>' + title + '</b> - ' + historyEpLabel(h) + ' 실패: ' + escapeHtml(h.error || '');
       } else {

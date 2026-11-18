@@ -1538,6 +1538,24 @@ def download_series(cfg, session, sid, log=print, full=False, cancel_check=None,
     # 자동 실행은 작품당 1회 실행에 받는 회차 수를 네이버와 같은 설정으로 제한
     cap = 0 if full else _num(cfg, "MAX_NEW_EPISODES_PER_TITLE", 10)
 
+    empty_eps = []   # 받을 본문이 없어 받은 것으로 친 회차 [(회차 번호, 부제, 까닭)] - 끝나고 알림
+
+    def _mark_empty(ep, no, why, err):
+        nonlocal max_checked, last_ok
+        log("%s %s(%s): %s라 받을 것이 없음 - 받은 것으로 보고 다음 회차로 (%s)" % (
+            title, _ep_label(no), ep.get("subtitle", ""), why, err))
+        res["skipped"] = res.get("skipped", 0) + 1
+        skip_pids.add(ep["product_id"])
+        video_nos = sorted(set((ss.get_kakao_title(sid) or t).get("video_nos") or []) | {no})
+        ss.upsert_kakao_title({sid: {"skip_pids": sorted(skip_pids), "video_nos": video_nos}})
+        max_checked = max(max_checked, ep.get("order", no))
+        if no < kakao_api.SPECIAL_EP_BASE and (last_ok is None or no > last_ok):
+            last_ok = no
+        empty_eps.append(("특별 회차" if no >= kakao_api.SPECIAL_EP_BASE else no, ep.get("subtitle"), why))
+        ss.append_history({"type": "skipped_empty", "source": "manual" if (full or only_nos) else "auto",
+                           "platform": yaml_platform(t), "title_id": sid, "title": title, "episode_no": no,
+                           "subtitle": ep.get("subtitle"), "error": "%s - 받은 것으로 처리" % why})
+
     for i, ep in enumerate(targets):
         if cancel_check and cancel_check():
             res["cancelled"] = True
@@ -1622,30 +1640,20 @@ def download_series(cfg, session, sid, log=print, full=False, cancel_check=None,
             res["adult_blocked"] = True
             res["adult_reason"] = reason
             break
-        except kakao_api.KakaoVideoOnly as e:
-            # 동영상만 있는 회차: 받을 그림·글이 없다 - 받은 것으로 보고(마지막 받은 회차를 넘김) 다음부터 시도 안 함
-            log("%s %s(%s): 동영상만 있는 회차라 받은 것으로 보고 건너뜀 - %s" % (title, _ep_label(no), ep.get("subtitle", ""), e))
-            res["skipped"] = res.get("skipped", 0) + 1
-            skip_pids.add(ep["product_id"])
-            video_nos = sorted(set((ss.get_kakao_title(sid) or t).get("video_nos") or []) | {no})
-            ss.upsert_kakao_title({sid: {"skip_pids": sorted(skip_pids), "video_nos": video_nos}})
-            max_checked = max(max_checked, ep.get("order", no))
-            if no < kakao_api.SPECIAL_EP_BASE and (last_ok is None or no > last_ok):
-                last_ok = no
-            continue
         except kakao_api.KakaoSkip as e:
-            log("%s %s(%s): 받을 수 없는 회차(동영상 트레일러 등)라 건너뜀, 다음부터 시도 안 함 - %s" % (
-                title, _ep_label(no), ep.get("subtitle", ""), e))
-            res["skipped"] = res.get("skipped", 0) + 1
-            skip_pids.add(ep["product_id"])
-            ss.upsert_kakao_title({sid: {"skip_pids": sorted(skip_pids)}})
-            max_checked = max(max_checked, ep.get("order", no))
+            # 받을 그림·글이 없는 회차(동영상만 있음, 서버가 '볼 수 없음' 코드로 답하는 트레일러 등):
+            # 받은 것으로 보고(마지막 받은 회차를 넘김) 다음부터 시도 안 함 + 알림
+            _mark_empty(ep, no, "동영상만 있는 회차" if isinstance(e, kakao_api.KakaoVideoOnly) else "받을 수 없는 회차", e)
             continue
         except kakao_api.KakaoUnsupported as e:
             log("%s: %s - 이 작품은 중단" % (title, e))
             res["failures"].append({"title": title, "title_id": sid, "episode_no": no, "error": str(e)})
             break
-        except kakao_api.KakaoNotPurchased:
+        except kakao_api.KakaoNotPurchased as e:
+            if isinstance(e, kakao_api.KakaoNoBody) and (ep.get("free") or ep.get("rented") or opened):
+                # 무료·대여·소장 회차인데 그림·글이 없음 (공지·특별 회차 등) - 구매 문제가 아니다
+                _mark_empty(ep, no, "본문 없는 회차", e)
+                continue
             res["locked"] += 1
             locked_run += 1
             max_checked = max(max_checked, ep.get("order", no))
@@ -1750,6 +1758,12 @@ def download_series(cfg, session, sid, log=print, full=False, cancel_check=None,
     ss.upsert_kakao_title({sid: done_patch})
 
     _update_yaml()   # 작품 정보(완결 등)만 바뀐 경우도 반영
+    if empty_eps:
+        try:
+            discord_notify.notify_empty_episodes(cfg, platform_label(t), title, empty_eps,
+                                                 url="https://page.kakao.com/content/%s" % sid)
+        except Exception as e:  # noqa: BLE001
+            log("본문 없는 회차 알림 실패(무시): %s" % e)
     if notice_eps and discord_notify.wants_new_episode_notice(cfg, ss.get_kakao_title(sid) or t):
         try:
             discord_notify.notify_new_episodes(

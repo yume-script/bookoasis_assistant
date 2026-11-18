@@ -84,5 +84,57 @@ class VideoAndScanTest(unittest.TestCase):
         self.assertFalse(naver_api._VIDEO_RE.search('<img src="a.jpg">'))
 
 
+class EmptyEpisodeTest(unittest.TestCase):
+    def test_kakao_no_body(self):
+        from wtm import kakao_api as k
+        orig = k._fetch_viewer
+        self.addCleanup(setattr, k, "_fetch_viewer", orig)
+        self.assertTrue(issubclass(k.KakaoNoBody, k.KakaoNotPurchased))   # 유료 회차면 예전처럼 '볼 수 없는 회차'
+        k._fetch_viewer = lambda *a: {"type": "Image"}
+        with self.assertRaises(k.KakaoNoBody):
+            k.fetch_episode_images(None, "1", "2")
+        with self.assertRaises(k.KakaoNoBody):   # 예전엔 KakaoUnsupported로 작품 전체를 멈췄다
+            k.fetch_novel_episode(None, "1", "2")
+
+    def test_naver_empty_episode(self):
+        from wtm import downloader, naver_api
+        orig = naver_api._get
+        self.addCleanup(setattr, naver_api, "_get", orig)
+
+        class Resp:
+            url = "https://comic.naver.com/webtoon/detail?titleId=1&no=2"
+
+        def page(html):
+            r = Resp()
+            r.text = html
+            return lambda *a, **kw: r
+        naver_api._get = page('<div class="wt_viewer"><p>휴재 안내</p></div>')
+        with self.assertRaises(naver_api.NaverEmptyEpisode):
+            naver_api.fetch_episode_images(None, 1, 2)
+        naver_api._get = page("<html><body>다른 모양</body></html>")   # 본문 자리도 없음 - 예전처럼 실패
+        with self.assertRaises(ValueError):
+            naver_api.fetch_episode_images(None, 1, 2)
+        import tempfile
+        d = tempfile.mkdtemp()
+        naver_api._get = page('<div class="wt_viewer"></div>')
+        ok, skipped, cnt, err = downloader.download_episode(None, d, d, "작품", 1, 2)
+        self.assertEqual((ok, skipped, cnt), (True, True, 0))
+        self.assertTrue(err.startswith(downloader.EMPTY_PREFIX) and "본문 없는" in err)
+
+    def test_notify_text(self):
+        from wtm import discord_notify
+        sent = []
+        orig = discord_notify.notify
+        self.addCleanup(setattr, discord_notify, "notify", orig)
+        discord_notify.notify = lambda cfg, title, desc, **kw: sent.append((title, desc)) or (True, "ok")
+        discord_notify.notify_empty_episodes({}, "[카카오웹툰]", "작품", [(3, "공지", "본문 없는 회차"),
+                                                                     ("특별 회차", "작가 후기", "본문 없는 회차")])
+        title, desc = sent[0]
+        self.assertIn("받을 본문이 없는 회차 2개", title)
+        self.assertIn("· 3화 (공지) - 본문 없는 회차", desc)
+        self.assertIn("· 특별 회차 (작가 후기)", desc)
+        self.assertIn("받은 것으로 처리", desc)
+
+
 if __name__ == "__main__":
     unittest.main()
