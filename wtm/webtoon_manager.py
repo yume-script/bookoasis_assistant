@@ -109,6 +109,8 @@ DEFAULTS = {
     "WAITFREE_SPREAD_START": 1,
     "WAITFREE_SPREAD_END": 11,
     "WAITFREE_NIGHT_ENABLE": False,
+    "WAITFREE_DAILY_PLAN": False,
+    "WAITFREE_PLAN_HOUR": 0,
     "WAITFREE_NIGHT_START": 1,
     "NEW_EP_SCOPE": "today",
     "NAVER_TRY_OWNED_PAID": True,
@@ -324,6 +326,12 @@ class WebtoonManagerMetadataProvider(BaseMetadataProvider):
                  "충전되는 것은 다음 시작 시각까지 기다려서, 켠 다음 날부터는 매일 같은 새벽 시간에 받게 됩니다(옮기는 첫날만 "
                  "작품마다 최대 하루 늦어짐). 계정이 여럿이면 모두 충전됐을 때 같이 씁니다. 직접 누른 다운로드는 시각과 상관없이 씁니다."},
         {"key": "WAITFREE_NIGHT_START", "label": "1일 이상 기다무 사용 시작 시각(0~23시)", "type": "number", "default": 1},
+        {"key": "WAITFREE_DAILY_PLAN", "label": "기다무 하루 계획표 (매일 계획 시각에 24시간 계획을 짜서 그대로)", "type": "checkbox", "default": False,
+         "hint": "매일 아래 시각(기본 0시)에 앞으로 24시간 동안 대여권을 쓸 작품과 시각을 정합니다. 1·2·3·6·12시간 기다무는 그 "
+                 "주기마다, 1일 기다무는 하루 한 번, 2일·3일·7일 기다무는 충전되는 날만 넣고, 그날 계획에 없는 작품은 그날 쓰지 "
+                 "않습니다(다음 충전 날 계획에 들어감). 시각은 충전 시각을 따르고, 지난 충전을 못 쓴 작품은 계획 시작에 넣습니다. "
+                 "계획은 [시간대별 다운로드] 탭에서 봅니다."},
+        {"key": "WAITFREE_PLAN_HOUR", "label": "하루 계획을 짜는 시각(0~23시)", "type": "number", "default": 0},
         {"key": "KAKAO_USE_OWNED_TICKETS", "label": "보유 대여권 자동 사용", "type": "checkbox", "default": False,
          "hint": "이벤트/선물/쿠폰으로 받은 대여권. 실제로 소모됩니다(웹툰·웹소설 공통)."},
         {"key": "KAKAO_USE_PAID_TICKETS", "label": "구매한 대여권도 사용", "type": "checkbox", "default": False,
@@ -1714,7 +1722,7 @@ class WebtoonManagerMetadataProvider(BaseMetadataProvider):
         ("kakao", "다운로드", ("KAKAO_DOWNLOAD_ROOT", "KAKAO_DOWNLOAD_WAITFREE", "KAKAO_SYNC_PURCHASED")),
         ("kakao", "대여권(웹툰·웹소설 공통)", ("KAKAO_USE_WAITFREE", "WAITFREE_CHECK_MINUTES", "WAITFREE_SPREAD_ENABLE", "WAITFREE_SPREAD_START",
                                             "WAITFREE_SPREAD_END", "WAITFREE_NIGHT_ENABLE",
-                                            "WAITFREE_NIGHT_START", "KAKAO_TODAY_GIFT", "KAKAO_USE_OWNED_TICKETS",
+                                            "WAITFREE_NIGHT_START", "WAITFREE_DAILY_PLAN", "WAITFREE_PLAN_HOUR", "KAKAO_TODAY_GIFT", "KAKAO_USE_OWNED_TICKETS",
                                             "KAKAO_USE_PAID_TICKETS")),
         ("kakao", "중복 확인", ("COMPARE_FOLDERS_KAKAO", "KAKAO_DOWNLOAD_OWNED")),
 
@@ -1740,6 +1748,7 @@ class WebtoonManagerMetadataProvider(BaseMetadataProvider):
         "WAITFREE_CHECK_MINUTES": "KAKAO_USE_WAITFREE", "WAITFREE_SPREAD_ENABLE": "KAKAO_USE_WAITFREE",
         "WAITFREE_SPREAD_START": "WAITFREE_SPREAD_ENABLE", "WAITFREE_SPREAD_END": "WAITFREE_SPREAD_ENABLE",
         "WAITFREE_NIGHT_ENABLE": "KAKAO_USE_WAITFREE", "WAITFREE_NIGHT_START": "WAITFREE_NIGHT_ENABLE",
+        "WAITFREE_DAILY_PLAN": "KAKAO_USE_WAITFREE", "WAITFREE_PLAN_HOUR": "WAITFREE_DAILY_PLAN",
         "KAKAO_USE_PAID_TICKETS": "KAKAO_USE_OWNED_TICKETS",
         "KAKAO_NOVEL_DOWNLOAD_ROOT": "KAKAO_NOVEL_ENABLE", "KAKAO_NOVEL_DOWNLOAD_WAITFREE": "KAKAO_NOVEL_ENABLE",
         "COMPARE_FOLDERS_NOVEL": "KAKAO_NOVEL_ENABLE", "KAKAO_NOVEL_DOWNLOAD_OWNED": "KAKAO_NOVEL_ENABLE",

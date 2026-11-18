@@ -783,6 +783,8 @@ def waitfree_due_titles(cfg, now=None):
     """기다무 대여권이 (어느 계정이든) 충전돼 지금 쓸 수 있는 작품 {sid: 작품}. 충전 전인 작품은 빠진다."""
     nums, cands = _waitfree_candidates(cfg)
     now = now or time.time()
+    from . import daily_plan
+    cands = daily_plan.allowed(cfg, cands, now)   # 하루 계획표를 켰으면 오늘 계획에 든 작품만
     night = night_info(cfg, now)
     return {sid: t for sid, t in cands.items() if any(ready_at(cfg, t, n, now, night, nums) <= now for n in nums)}
 
@@ -791,6 +793,8 @@ def next_charge_at(cfg, now=None):
     """지금 이후 가장 먼저 충전되는 기다무 대여권 시각 (없으면 None) - 기다무 확인을 그 시각에 맞춰 깨우려고"""
     nums, cands = _waitfree_candidates(cfg)
     now = now or time.time()
+    from . import daily_plan
+    cands = daily_plan.allowed(cfg, cands, now)
     best = None
     night = night_info(cfg, now)
     for t in cands.values():

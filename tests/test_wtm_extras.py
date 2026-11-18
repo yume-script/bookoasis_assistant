@@ -136,5 +136,53 @@ class EmptyEpisodeTest(unittest.TestCase):
         self.assertIn("받은 것으로 처리", desc)
 
 
+class DailyPlanTest(unittest.TestCase):
+    """기다무 하루 계획표: 1시간·3시간은 주기마다, 1일은 한 번, 2일·3일은 오늘 충전되는 날만"""
+
+    def test_build(self):
+        from wtm import daily_plan as dp, kakao_pipeline as kp
+        now = time.mktime((2026, 11, 18, 0, 5, 0, 0, 0, -1))   # 0시 5분 (계획 시각 0시)
+        start = time.mktime((2026, 11, 18, 0, 0, 0, 0, 0, -1))
+        H = 3600
+        titles = {   # sid: (주기 분, 다음 충전 = 하루 시작 + 몇 시간)
+            "h1": (60, 0.5), "h3": (180, 2), "h6": (360, -5), "d1": (1440, 9),
+            "d2_today": (2880, 20), "d2_tomorrow": (2880, 30), "d3_today": (4320, 1)}
+        cands = {sid: {"title": sid, "waitfree_period_min": p} for sid, (p, _h) in titles.items()}
+        saved = {}
+        orig = (kp._waitfree_candidates, kp.ready_at, kp.night_info)
+        kp._waitfree_candidates = lambda cfg: ([1], dict(cands))
+        kp.ready_at = lambda cfg, t, n, now=None, night=None, nums=None: start + titles[t["title"]][1] * H
+        kp.night_info = lambda cfg, now=None: None
+        from wtm import state_store as ss
+        orig_ss = (ss.load_job_state, ss.save_job_state)
+        ss.load_job_state = lambda: dict(saved)
+        ss.save_job_state = lambda patch: saved.update(patch)
+        try:
+            cfg = {"WAITFREE_DAILY_PLAN": True, "WAITFREE_PLAN_HOUR": 0}
+            plan = dp.current(cfg, now)
+            items, skipped = plan["items"], plan["skipped"]
+            self.assertEqual(len(items["h1"]["slots"]), 24)                    # 1시간 기다무: 24번 (00:30부터)
+            self.assertEqual([(x - start) / H for x in items["h3"]["slots"]], [2, 5, 8, 11, 14, 17, 20, 23])
+            self.assertEqual((items["h6"]["slots"][0] - start) / H, 0)        # 지난 충전을 못 씀 -> 계획 시작에
+            self.assertEqual(len(items["h6"]["slots"]), 4)
+            self.assertEqual(len(items["d1"]["slots"]), 1)                     # 1일: 한 번
+            self.assertIn("d2_today", items)
+            self.assertIn("d3_today", items)
+            self.assertIn("d2_tomorrow", skipped)                              # 오늘 충전 안 됨 -> 뺌
+            self.assertNotIn("d2_tomorrow", items)
+            self.assertEqual(set(dp.allowed(cfg, cands, now)), set(cands) - {"d2_tomorrow"})
+            self.assertEqual(set(dp.allowed({}, cands, now)), set(cands))      # 끄면 그대로
+            # 계획을 짠 뒤 새로 생긴 작품은 오늘 계획에 더한다
+            titles["new3"] = (180, 4)
+            cands["new3"] = {"title": "new3", "waitfree_period_min": 180}
+            self.assertIn("new3", dp.current(cfg, now + 600)["items"])
+            # 다음 날 0시가 지나면 새로 짠다
+            self.assertNotEqual(dp.current(cfg, now + 86400)["start"], plan["start"])
+            self.assertIn("오늘 쉼", dp.summary(plan))
+        finally:
+            kp._waitfree_candidates, kp.ready_at, kp.night_info = orig
+            ss.load_job_state, ss.save_job_state = orig_ss
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -991,9 +991,48 @@
       var d = await resp.json();
       if (!d.success) throw new Error(d.error || ('HTTP ' + resp.status));
       renderHourly(d);
+      loadPlan();
     } catch (e) {
       if (body) body.innerHTML = '<div class="wtm-hint">불러오지 못했습니다: ' + escapeHtml(e.message || String(e)) + '</div>';
     }
+  }
+
+  // 기다무 하루 계획표 - GET api/wtm/plan (시간마다 쓸 작품, 오늘 쉬는 2일·3일 기다무)
+  async function loadPlan() {
+    var box = el('[data-el="plan-body"]');
+    if (!box) return;
+    try {
+      var resp = await fetch('api/wtm/plan', { credentials: 'same-origin' });
+      var d = await resp.json();
+      if (!d.success) throw new Error(d.error || ('HTTP ' + resp.status));
+      renderPlan(box, d);
+    } catch (e) {
+      box.innerHTML = '<div class="wtm-hint">계획을 불러오지 못했습니다: ' + escapeHtml(e.message || String(e)) + '</div>';
+    }
+  }
+  function renderPlan(box, d) {
+    var hm = function (ts) { var t = new Date(ts * 1000); return ('0' + t.getHours()).slice(-2) + ':' + ('0' + t.getMinutes()).slice(-2); };
+    var md = function (ts) { var t = new Date(ts * 1000); return (t.getMonth() + 1) + '/' + t.getDate() + ' ' + hm(ts); };
+    var now = Date.now() / 1000;
+    var head = '<div class="wtm-hint">' + (d.enabled
+      ? ('켜짐 · 매일 ' + d.hour + '시에 짭니다 · ' + md(d.start) + '부터 24시간 · 짠 때 ' + md(d.made_at))
+      : '꺼져 있어 미리 보기만 합니다 ([설정] > 카카오웹툰 > 대여권의 "기다무 하루 계획표"를 켜면 이대로 씁니다)') +
+      '<br><b>' + escapeHtml(d.summary) + '</b></div>';
+    var rows = d.hours.map(function (h) {
+      var cur = now >= h.at && now < h.at + 3600;
+      var names = h.titles.map(function (x) {
+        return '<span class="wtm-badge' + (x.done ? ' up' : '') + '" title="' + escapeHtml(x.label + ' · ' + hm(x.at)) + '">' +
+          hm(x.at) + ' ' + escapeHtml(x.title) + (x.done ? ' ✓' : '') + '</span>';
+      }).join(' ');
+      return '<details' + (cur ? ' open' : '') + '><summary>' + (cur ? '▶ ' : '') + hm(h.at) + ' · ' + h.count + '번' +
+        (h.done ? ' (쓴 것 ' + h.done + ')' : '') + '</summary><div style="display:flex;flex-wrap:wrap;gap:4px;margin:4px 0 8px">' +
+        (names || '<span class="wtm-hint">없음</span>') + '</div></details>';
+    }).join('');
+    var skip = d.skipped.length ? '<details><summary>오늘 계획에서 뺀 작품 ' + d.skipped.length + '개 (오늘 충전되지 않음)</summary>' +
+      '<div style="display:flex;flex-wrap:wrap;gap:4px;margin:4px 0">' + d.skipped.map(function (x) {
+        return '<span class="wtm-badge">' + escapeHtml(x.title) + ' · ' + escapeHtml(x.label) + ' · 다음 ' + md(x.next) + '</span>';
+      }).join(' ') + '</div></details>' : '';
+    box.innerHTML = head + rows + skip;
   }
 
   function renderHourly(d) {
