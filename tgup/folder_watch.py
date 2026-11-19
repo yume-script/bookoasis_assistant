@@ -28,6 +28,56 @@ STABLE_SEC = 300          # 수정 시각이 이만큼 지났거나, 지난 확�
 MAX_FILES = 200000
 _REMOTE_RE = re.compile(r"[A-Za-z0-9_.][A-Za-z0-9_. -]*:.*")
 TEXT_SUBS = {"subrip": "srt", "srt": "srt", "ass": "ass", "ssa": "ass", "mov_text": "srt", "webvtt": "srt", "text": "srt"}
+# 그림 자막 (블루레이 PGS·DVD VobSub 등) - 글자가 아니라 텔레그램용 자막 파일로 옮길 수 없다
+IMAGE_SUBS = {"hdmv_pgs_subtitle", "pgssub", "pgs", "dvd_subtitle", "vobsub", "dvb_subtitle", "dvbsub", "xsub"}
+_KO_LANGS = {"kor", "ko", "kr", "korean", "ko-kr", "kor-kr"}
+_KO_TITLE = re.compile(r"한국|한글|korean|\bkor\b|\bko\b", re.I)
+_FORCED_TITLE = re.compile(r"forced|signs?(?:\s*[&/]\s*songs?)?\b|songs?\b|강제|간판|노래", re.I)
+_LANG_NAMES = {"eng": "영어", "en": "영어", "jpn": "일본어", "ja": "일본어", "chi": "중국어", "zho": "중국어", "zh": "중국어",
+               "chs": "중국어", "cht": "중국어", "spa": "스페인어", "fre": "프랑스어", "fra": "프랑스어", "ger": "독일어", "deu": "독일어",
+               "rus": "러시아어", "por": "포르투갈어", "ita": "이탈리아어", "tha": "태국어", "vie": "베트남어", "ind": "인도네시아어", "ara": "아랍어"}
+
+
+def classify_subs(tracks):
+    """파일 안의 자막 트랙 [{codec, lang, title, forced}] -> {"usable", "korean", "unknown", "other": [언어], "image", "forced", "why"}.
+    텔레그램에 소프트 자막으로 쓸 수 있는 것(usable): 글자 자막이면서 한국어이거나 언어 표시가 없는 것 (자막 팀 MKV는 표시가 없는 일이 많다).
+    영어·일본어 등 다른 언어만 있거나, 그림 자막(PGS)만 있거나, 간판·노래만 옮긴 강제(forced) 트랙만 있으면 쓸 수 없다 -> 자막 파일을 기다린다."""
+    out = {"usable": False, "korean": 0, "unknown": 0, "other": [], "image": 0, "forced": 0, "why": ""}
+    for t in tracks or []:
+        codec = str(t.get("codec") or "").lower()
+        lang = str(t.get("lang") or "").strip().lower()
+        title = str(t.get("title") or "")
+        if codec in IMAGE_SUBS:
+            out["image"] += 1
+            continue
+        if t.get("forced") or _FORCED_TITLE.search(title):
+            out["forced"] += 1
+            continue
+        if lang in _KO_LANGS or _KO_TITLE.search(title):
+            out["korean"] += 1
+        elif lang in ("", "und", "unk", "mis", "zxx"):
+            out["unknown"] += 1
+        else:
+            name = _LANG_NAMES.get(lang, lang)
+            if name not in out["other"]:
+                out["other"].append(name)
+    out["usable"] = bool(out["korean"] or out["unknown"])
+    if not out["usable"]:
+        bits = []
+        if out["other"]:
+            bits.append(f"{'·'.join(out['other'])} 자막만")
+        if out["image"]:
+            bits.append("그림 자막(PGS)만" if not bits else "그림 자막")
+        if out["forced"] and not bits:
+            bits.append("간판·노래 자막만")
+        out["why"] = ", ".join(bits) if bits else ""
+    return out
+
+
+def stream_tracks(info):
+    """ffprobe 결과 -> classify_subs가 받는 모양 [{codec, lang, title, forced}]"""
+    return [{"codec": s.get("codec_name", ""), "lang": (s.get("tags") or {}).get("language", ""), "title": (s.get("tags") or {}).get("title", ""),
+             "forced": bool((s.get("disposition") or {}).get("forced"))} for s in streams(info, "subtitle")]
 
 
 class FolderError(Exception):
@@ -362,6 +412,16 @@ def match_subs(video_name, names):
     return []
 
 
+async def remote_size(folder, key):
+    """rclone 원격 파일 하나의 크기 (모르면 0)"""
+    d, base = os.path.split(key)
+    try:
+        rows = await _lsjson(_join_remote(folder, d) if d else folder, recursive=False)
+    except FolderError:
+        return 0
+    return next((int(r.get("Size") or 0) for r in rows if str(r.get("Name") or r.get("Path") or "") == base), 0)
+
+
 async def remote_subs(folder, key):
     """rclone 원격에서 영상 옆의 자막 파일 [(상대 경로, 언어 꼬리, 확장자)]"""
     d, base = os.path.split(key)
@@ -393,8 +453,9 @@ async def fetch(folder, key, dest, progress=None):
         raise FolderError(f"rclone으로 받지 못했습니다: {err.decode('utf-8', 'replace').strip()[-300:]}")
 
 
-async def fetch_head(folder, key, dest, count=32 * 1024 * 1024):
-    """원격 파일의 앞부분만 (안에 든 자막 트랙을 ffprobe로 보려고 - mkv는 트랙 정보가 앞에 있다)"""
+async def fetch_head(folder, key, dest, count=32 * 1024 * 1024, size=0):
+    """원격 파일의 앞부분만 (안에 든 자막 트랙을 ffprobe로 보려고 - mkv는 트랙 정보가 앞에 있다).
+    size(파일 크기)를 알면 끝부분도 받아 원래 자리에 둔 빈칸 많은(sparse) 파일로 - 트랙 정보(moov)가 끝에 있는 mp4도 읽힌다"""
     rc = rclone_path()
     if not rc:
         return False
@@ -406,6 +467,16 @@ async def fetch_head(folder, key, dest, count=32 * 1024 * 1024):
         return False
     with open(dest, "wb") as f:
         f.write(out)
+        if size and size > count * 2:
+            try:
+                code, tail, _err = await _run(*rclone_cmd("cat", "--offset", str(size - count), "--count", str(count), "--",
+                                                          _join_remote(folder, key)), timeout=600)
+            except FolderError:
+                code, tail = 1, b""
+            if code == 0 and tail:
+                f.seek(size - len(tail))
+                f.write(tail)
+                f.truncate(size)
     return True
 
 

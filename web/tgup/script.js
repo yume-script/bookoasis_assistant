@@ -511,7 +511,8 @@
             if (shown.has(k)) continue;
             const ruleTg = ((d.settings.rules || []).find((x) => x.id === w.rule) || {});
             if (!show([ruleTg.tg, ...(ruleTg.tg_alt || [])])) continue;
-            const r = row(w.title, chip('wait', '자막 기다림'), subsTag('없음'), `${when(w.since)}부터 · ${fmtDur(now - w.since)} 기다림${ruleTg.wait_min ? ` (최대 ${fmtDur(ruleTg.wait_min * 60)})` : ''}`);
+            // 자막 칸: 왜 기다리는지 ("영어 자막만", "그림 자막(PGS)만" - 파일 안의 자막이 한국어가 아니면 자막 파일을 기다린다)
+            const r = row(w.title, chip('wait', '자막 기다림'), w.why ? h('span', { class: 'subs-tag subs-none', title: '파일 안에 한국어(또는 언어 표시 없는) 글자 자막이 없어 자막 파일을 기다림', text: w.why }) : subsTag('없음'), `${when(w.since)}부터 · ${fmtDur(now - w.since)} 기다림${ruleTg.wait_min ? ` (최대 ${fmtDur(ruleTg.wait_min * 60)})` : ''}`);
             const shotUrl = `api/tgup/shot?${new URLSearchParams({ rule: w.rule, key: w.key, v: w.shot || 0 })}`;
             const shot = w.shot ? h('img', { class: 'mirror-shot', src: shotUrl, alt: '', loading: 'lazy', title: '10분 지점 장면 (누르면 크게)',
                 on: { error: (e) => e.target.classList.add('failed'),
