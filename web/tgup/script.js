@@ -424,11 +424,24 @@
         const when = (t) => (t ? new Date(t * 1000).toLocaleString([], { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '');
         const chip = (cls, text) => h('span', { class: `mirror-chip ${cls}`, text });
         const row = (title, status, subs, note, extra = null) => h('div', { class: 'mirror-row', role: 'row' },
-            h('span', { class: 'mirror-title', title, text: title }), h('span', {}, status, extra), h('span', { class: 'mirror-subs', text: subs }),
+            h('span', { class: 'mirror-title', title, text: title }), h('span', {}, status, extra), h('span', { class: 'mirror-subs' }, subs),
             h('span', { class: 'mirror-note muted', title: note, text: note }));
         const head = () => h('div', { class: 'mirror-row mirror-head', role: 'row' },
             h('span', { text: '제목' }), h('span', { text: '상태' }), h('span', { text: '자막' }), h('span', { text: '비고' }));
         const waitKeys = new Map((s.waiting || []).map((w) => [`${w.rule}/${w.key}`, w]));
+        // 자막 칸: 자막 파일 없음 / 소프트 자막(영상 안) / 자막 파일 있음 / 화면에 입힘 (서버 값 "없음"·"파일 N개"·"소프트 자막"·"화면에 입힘"·"옮기지 못함")
+        const subsTag = (raw) => {
+            const v = String(raw || '');
+            if (!v || v === '-') return v;
+            const m = v.match(/^파일 (\d+)개$/);
+            const [cls, text, tip] = m ? ['file', `자막 파일 ${m[1]}개`, '자막 파일 있음 - 영상과 함께 올림']
+                : v === '없음' ? ['none', '자막 파일 없음', '자막 파일도, 영상 안의 자막(소프트 자막)도 없음']
+                    : v === '소프트 자막' ? ['soft', '소프트 자막', '영상 파일 안에 자막 트랙이 들어 있음']
+                        : v === '화면에 입힘' ? ['burn', '화면에 입힘', '자막을 영상에 입혀 인코딩함']
+                            : v === '옮기지 못함' ? ['lost', '자막 옮기지 못함', '영상 안의 자막(소프트 자막)을 텔레그램용으로 옮기지 못함']
+                                : ['other', v, ''];
+            return h('span', { class: `subs-tag subs-${cls}`, title: tip, text });
+        };
         const act = (w, action, label, ask, extra = {}) => h('button', { class: `btn btn-sm${action === 'cancel' ? ' danger' : ''}`, title: extra.title, on: { click: async (e) => {
             if (ask && !confirm(ask)) return;
             e.currentTarget.disabled = true;
@@ -469,7 +482,7 @@
             if (!show([l.tg])) continue;
             const pct = c.total ? Math.min(100, (c.done / c.total) * 100) : 0;
             const flood = l.flood_until && /요청 제한/.test(c.phase || '');
-            const r = row(c.title, chip(flood ? 'wait' : 'run', flood ? '계정 대기' : '올리는 중'), '',
+            const r = row(c.title, chip(flood ? 'wait' : 'run', flood ? '계정 대기' : '올리는 중'), c.subs ? subsTag(c.subs) : '확인 중',
                 [many ? `[${accName(l.tg)}]` : '', `${c.phase}${c.speed && /인코딩/.test(c.phase) ? ` · ${c.speed}` : ''}${c.total && /올리는|받는|복사/.test(c.phase) ? ` · ${fmtB(c.done)} / ${fmtB(c.total)}` : ''}`,
                     c.elapsed ? `시작 ${when(c.started)} · ${fmtDur(c.elapsed)} 지남` : '', fmtTimes(c.times)].filter(Boolean).join(' · '),
                 h('div', { class: 'cache-bar mirror-bar' }, h('div', { style: { width: `${pct}%` } })));
@@ -498,7 +511,7 @@
             if (shown.has(k)) continue;
             const ruleTg = ((d.settings.rules || []).find((x) => x.id === w.rule) || {});
             if (!show([ruleTg.tg, ...(ruleTg.tg_alt || [])])) continue;
-            const r = row(w.title, chip('wait', '자막 기다림'), '없음', `${when(w.since)}부터 · ${fmtDur(now - w.since)} 기다림${ruleTg.wait_min ? ` (최대 ${fmtDur(ruleTg.wait_min * 60)})` : ''}`);
+            const r = row(w.title, chip('wait', '자막 기다림'), subsTag('없음'), `${when(w.since)}부터 · ${fmtDur(now - w.since)} 기다림${ruleTg.wait_min ? ` (최대 ${fmtDur(ruleTg.wait_min * 60)})` : ''}`);
             const shotUrl = `api/tgup/shot?${new URLSearchParams({ rule: w.rule, key: w.key, v: w.shot || 0 })}`;
             const shot = w.shot ? h('img', { class: 'mirror-shot', src: shotUrl, alt: '', loading: 'lazy', title: '10분 지점 장면 (누르면 크게)',
                 on: { error: (e) => e.target.classList.add('failed'),
@@ -522,7 +535,7 @@
         const hist = s.history.filter((x) => show([x.tg])).map((x) => {
             const sk = skipKind(String(x.note || ''));
             const st = x.ok ? chip('ok', '완료') : x.handed ? chip('wait', '계정 넘김') : sk ? chip(sk[0], sk[1]) : chip('fail', '실패');
-            return row(x.title, st, x.subs || (x.ok ? '' : '-'),
+            return row(x.title, st, x.subs ? subsTag(x.subs) : (x.ok ? '' : '-'),
                 [when(x.at), x.elapsed ? `걸린 시간 ${fmtDur(x.elapsed)}` : '', many && x.tg ? accName(x.tg) : '', x.channel ? `→ ${x.channel}` : '',
                     x.again ? '다시 올림' : '', x.handover && x.handover.length ? `${x.handover.map(accName).join(', ')}에서 넘겨받음` : '', fmtTimes(x.times),
                     x.queued_at && x.started && x.started - x.queued_at >= 60 ? `줄에서 ${fmtDur(x.started - x.queued_at)} 기다림` : '',
