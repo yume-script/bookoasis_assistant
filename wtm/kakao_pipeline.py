@@ -1311,7 +1311,7 @@ def download_series(cfg, session, sid, log=print, full=False, cancel_check=None,
     # 자동 실행에서는 '긴 주기 기다무는 새벽에'도 지킨다 (직접 누른 다운로드는 시간대와 상관없이 씀).
     # charge_ref: 작품 처리를 시작할 때의 기록 - '1일 이상 기다무는 계정들이 모두 충전되면 같이 쓴다'를 계정 1이 방금 쓴
     # 기록으로 다시 계산하면 계정 2는 늘 '충전 전'(계정 1의 다음 충전까지)이 되어 대여권을 버렸다
-    charge_at = (ready_at(cfg, charge_ref or t, account, nums=[n for n, _c in accounts(cfg)]) if not (full or only is not None) else
+    charge_at = (ready_at(cfg, charge_ref or t, account) if not (full or only is not None) else
                  (_ticket_at(t, account) + waitfree_period(t) if _ticket_at(t, account) else 0))
     if manual and use_waitfree and has_cookie and charge_at > time.time():
         # 직접 누른 다운로드는 기록된 충전 시각을 믿지 않고 시도한다 - 기록은 이 프로그램이 쓴 시각 기준이라
