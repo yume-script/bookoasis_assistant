@@ -411,3 +411,53 @@ class TmdbFieldsTest(unittest.TestCase):
         m = {"type": "movie", "title": "Inception", "year": 2010, "Guid": [{"id": "imdb://tt1375666"}, {"id": "tmdb://27205"}]}
         self.assertEqual(plex_to_tg.item_fields(m)["tmdb"], "movie:27205")
         self.assertEqual(plex_to_tg.item_fields({"type": "movie", "title": "X"})["tmdb"], "")
+
+
+class SoftSubsTest(unittest.TestCase):
+    def test_classify(self):
+        from tgup import folder_watch as fw
+        c = fw.classify_subs
+        self.assertTrue(c([{"codec": "ass", "lang": "kor"}])["usable"])
+        self.assertTrue(c([{"codec": "subrip", "lang": ""}])["usable"])              # 언어 표시 없는 글자 자막 (자막 팀 MKV)
+        self.assertTrue(c([{"codec": "ass", "lang": "und", "title": "한국어"}])["usable"])
+        self.assertTrue(c([{"codec": "ass", "lang": "eng", "title": "Korean"}])["usable"])   # 제목에 한국어
+        r = c([{"codec": "subrip", "lang": "eng"}, {"codec": "ass", "lang": "jpn"}])
+        self.assertFalse(r["usable"])
+        self.assertEqual(r["why"], "영어·일본어 자막만")
+        r = c([{"codec": "hdmv_pgs_subtitle", "lang": "kor"}])
+        self.assertFalse(r["usable"])
+        self.assertEqual(r["why"], "그림 자막(PGS)만")                              # 그림 자막은 텔레그램 자막 파일로 못 옮김
+        r = c([{"codec": "ass", "lang": "kor", "forced": True}, {"codec": "ass", "lang": "", "title": "Signs & Songs"}])
+        self.assertFalse(r["usable"])
+        self.assertEqual(r["why"], "간판·노래 자막만")
+        self.assertEqual(c([])["why"], "")
+        info = {"streams": [{"codec_type": "video"}, {"codec_type": "subtitle", "codec_name": "ass", "tags": {"language": "kor"},
+                                                      "disposition": {"forced": 0}}]}
+        self.assertTrue(c(fw.stream_tracks(info))["usable"])
+
+    def test_fetch_head_sparse_with_tail(self):
+        """원격 파일 앞부분 + 끝부분을 원래 자리에 (트랙 정보가 끝에 있는 mp4도 ffprobe가 읽게)"""
+        import asyncio
+        from tgup import folder_watch as fw
+        data = bytes(range(256)) * 400   # 102400바이트
+        calls = []
+
+        async def run(*args, timeout=0):
+            calls.append(args)
+            a = list(args)
+            off = int(a[a.index("--offset") + 1]) if "--offset" in a else 0
+            cnt = int(a[a.index("--count") + 1])
+            return 0, data[off:off + cnt], b""
+        orig_run, orig_rc = fw._run, fw.rclone_path
+        fw._run, fw.rclone_path = run, (lambda: "/usr/bin/rclone")
+        try:
+            dest = os.path.join(tempfile.mkdtemp(), "h.mp4")
+            self.assertTrue(asyncio.run(fw.fetch_head("r:", "a/b.mp4", dest, count=1000, size=len(data))))
+            with open(dest, "rb") as f:
+                got = f.read()
+            self.assertEqual(len(got), len(data))
+            self.assertEqual(got[:1000], data[:1000])
+            self.assertEqual(got[-1000:], data[-1000:])
+            self.assertEqual(got[5000:6000], b"\0" * 1000)   # 가운데는 비움
+        finally:
+            fw._run, fw.rclone_path = orig_run, orig_rc

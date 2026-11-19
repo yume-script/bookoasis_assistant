@@ -195,7 +195,7 @@ def drop_shot(rule_id, key):
 
 
 class Waiting(Exception):
-    """자막이 아직 없음 - 나중에 다시"""
+    """자막이 아직 없음 - 나중에 다시 (str: 기다리는 까닭 - "영어 자막만" 등, 진행 상태의 자막 칸)"""
 _lock = threading.Lock()
 
 
@@ -852,7 +852,7 @@ class Mirror:
                 "offline": [{"drive": d, "path": x.get("path", ""), "since": int(x.get("since", 0)), "count": x.get("count", 0)}
                             for d, x in self.offline.items()], "off_hours": self.off_hours, "history": trim_history(st["history"]),
                 "rules": {rid: {"baseline": r.get("baseline", 0), "count": len(r.get("done", []))} for rid, r in st["rules"].items()},
-                "waiting": [{"title": w.get("title", k), "since": w.get("since", 0), "rule": rid, "key": k,
+                "waiting": [{"title": w.get("title", k), "since": w.get("since", 0), "rule": rid, "key": k, "why": w.get("why", ""),
                              "shot": self._shot_mtime(rid, k), "shot_error": (self._shot_fail.get((rid, k)) or (0, ""))[1]}
                             for rid, r in st["rules"].items() for k, w in (r.get("waiting") or {}).items()],
                 "retry": [{"title": x.get("title", k), "at": x.get("at", 0), "tries": r.get("fails", {}).get(k, 0), "rule": rid, "key": k}
@@ -1317,11 +1317,11 @@ class Mirror:
         self.wake()
         return {"queued": added, "excluded": excluded}
 
-    def _wait_subs(self, rule, key):
+    def _wait_subs(self, rule, key, why=""):
         """자막이 없을 때: 기다린 지 wait_min분이 안 됐으면 Waiting (0분이면 생길 때까지 계속)"""
         w = (load_state()["rules"].get(rule["id"], {}).get("waiting") or {}).get(key)
         if not rule["wait_min"] or not w or time.time() - w.get("since", time.time()) < rule["wait_min"] * 60:
-            raise Waiting()
+            raise Waiting(why)
 
     async def _duplicate(self, rule, fields, file_name):
         """채널 중복이면 그 까닭 (아니면 ""): 같은 파일(이름+크기) -> 채널에 같은 파일 이름 -> 같은 작품·시즌·회차"""
@@ -1506,6 +1506,7 @@ class Mirror:
 
     async def _run_job(self, lane, job, rule, st):
         ok, note, waiting, offline = False, "", False, None
+        wait_why = ""
         lane.begin()
         if rule and lane.tg and lane.tg != rule["tg"]:   # 다른 계정이 이어 올림 - 그 계정으로 (채널은 같음)
             rule = {**rule, "tg": lane.tg}
@@ -1537,8 +1538,8 @@ class Mirror:
                         lane.job_task.cancel()
                     raise
                 cancelled = True
-            except Waiting:
-                waiting = True
+            except Waiting as wt:
+                waiting, wait_why = True, str(wt)
             except Exception as e:
                 problem = account_problem(e)
                 if problem and self._hand_over(lane, job, rule, problem):   # 다른 계정이 이어 올린다
@@ -1598,7 +1599,7 @@ class Mirror:
             lane.cur_ep = None
             return
         if waiting:   # 자막이 생길 때까지 (기록에는 남기지 않고 상태의 "자막 기다리는 중"에)
-            rs.setdefault("waiting", {}).setdefault(job["key"], {"title": job["title"], "since": int(time.time())})
+            rs.setdefault("waiting", {}).setdefault(job["key"], {"title": job["title"], "since": int(time.time())})["why"] = wait_why
             save_state(state)
             lane.cur_ep = None
             return
@@ -1998,10 +1999,14 @@ class Mirror:
         soft = await self._probe_subs(local_file if local_ok else f"{src['url']}{part['key']}",
                                       None if local_ok else src.get("token"))
         if soft is None:   # ffprobe가 없거나 못 열었으면 Plex 정보로
-            soft = [x for x in subs if not x.get("key")]
-        # 4) 자막 파일을 기다린다 (정한 분만큼 - 0이면 생길 때까지)
-        if rule["wait_subs"] and not subs and not side and not soft and not test:
-            self._wait_subs(rule, key)
+            soft = [{"codec": x.get("codec", ""), "lang": x.get("languageCode") or x.get("languageTag") or "",
+                     "title": x.get("title") or x.get("displayTitle") or "", "forced": bool(x.get("forced"))} for x in subs if not x.get("key")]
+        # 4) 자막 파일을 기다린다 (정한 분만큼 - 0이면 생길 때까지). 파일 안의 자막은 한국어(또는 언어 표시 없음) 글자 자막만 친다
+        #    - 영어만·그림 자막(PGS)만·간판/노래(forced)만이면 한국어 자막 파일을 기다린다
+        soft_kind = folder_watch.classify_subs(soft)
+        ext_subs = [x for x in subs if x.get("key")]   # Plex가 아는 바깥 자막 파일
+        if rule["wait_subs"] and not ext_subs and not side and not soft_kind["usable"] and not test:
+            self._wait_subs(rule, key, soft_kind["why"])
         tg = self.tg_for(rule["tg"])
         client = await tg.authorized_client()
         max_gb = max_gb or await self._account_gb(rule["tg"], client)   # 자동: 그 계정이 프리미엄이면 4GB, 아니면 2GB
@@ -2177,18 +2182,21 @@ class Mirror:
                 info = self._head_info.get((folder, key))
                 if info is None:   # 자막을 기다리는 동안 확인할 때마다 다시 받지 않게 기억 (파일 안의 트랙은 바뀌지 않는다)
                     head = os.path.join(tmp, "head" + ext)
-                    info = await folder_watch.probe(head) if await folder_watch.fetch_head(folder, key, head) else {}
-                    self._head_info = {**dict(list(self._head_info.items())[-200:]), (folder, key): info}
+                    size = await folder_watch.remote_size(folder, key)   # (끝부분도 받아 트랙 정보가 끝에 있는 mp4도 읽게)
+                    info = await folder_watch.probe(head) if await folder_watch.fetch_head(folder, key, head, size=size) else {}
+                    if folder_watch.streams(info, "video"):   # 못 읽었으면(영상 트랙도 없음) 기억하지 않고 다음에 다시
+                        self._head_info = {**dict(list(self._head_info.items())[-200:]), (folder, key): info}
             else:
                 local = folder_watch.local_path(folder, key)
                 if not os.path.isfile(local):
                     raise RuntimeError("파일이 없습니다 (지워졌거나 옮겨짐).")
                 side = sidecar_subs(local)
                 info = await folder_watch.probe(local)
-            any_inside = bool(folder_watch.streams(info, "subtitle"))
-            # 3) 소프트 자막이 있으면 바로, 4) 없으면 자막 파일을 정한 분만큼 기다린다
+            soft_kind = folder_watch.classify_subs(folder_watch.stream_tracks(info))
+            any_inside = soft_kind["usable"]
+            # 3) 쓸 수 있는 소프트 자막(한국어·언어 표시 없음 글자 자막)이 있으면 바로, 4) 없으면 자막 파일을 정한 분만큼 기다린다
             if rule["wait_subs"] and not side and not any_inside and not test:
-                self._wait_subs(rule, key)
+                self._wait_subs(rule, key, soft_kind["why"] or ("파일을 읽지 못해 자막 확인 못 함" if remote and not info else ""))
             tg = self.tg_for(rule["tg"])
             client = await tg.authorized_client()
             max_gb = max_gb or await self._account_gb(rule["tg"], client)
@@ -2272,7 +2280,7 @@ class Mirror:
         if sent_subs:
             notes.append(f"자막 파일 {sent_subs}개 첨부")
         if not side and not any_inside:
-            notes.append("자막 없음")
+            notes.append(f"자막 없음 ({soft_kind['why']})" if soft_kind["why"] else "자막 없음")
         if poster:
             notes.append(poster)
         return ", ".join(notes)
@@ -2364,7 +2372,8 @@ class Mirror:
         fp = transcode.ffprobe_path()
         if not fp or not target:
             return None
-        args = [fp, "-v", "error", "-select_streams", "s", "-show_entries", "stream=index,codec_name:stream_tags=language", "-of", "json"]
+        args = [fp, "-v", "error", "-select_streams", "s", "-show_entries",
+                "stream=index,codec_name:stream_tags=language,title:stream_disposition=forced", "-of", "json"]
         if token:   # Plex에서 바로 (파일 머리만 읽는다)
             args += ["-headers", f"X-Plex-Token: {token}\r\n"]
         try:
@@ -2382,7 +2391,8 @@ class Mirror:
             streams = json.loads(out.decode("utf-8", "replace") or "{}").get("streams") or []
         except ValueError:
             return None
-        return [{"codec": x.get("codec_name", ""), "lang": (x.get("tags") or {}).get("language", "")} for x in streams]
+        return [{"codec": x.get("codec_name", ""), "lang": (x.get("tags") or {}).get("language", ""), "title": (x.get("tags") or {}).get("title", ""),
+                 "forced": bool((x.get("disposition") or {}).get("forced"))} for x in streams]
 
     async def _bring_local(self, src_path, subs, tmp, title):
         """네트워크 드라이브(rclone mount 등)의 원본과 옆 자막 파일을 이 서버(tmp)로 복사한다.
