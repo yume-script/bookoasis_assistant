@@ -1,0 +1,200 @@
+{
+  "_comment": "설정 > Thanks to 탭에 보여 줄 내용 (shell.js thanksPane). 새 PR을 머지하면 changelog 맨 위에 한 줄 더한다 (pr, version = VERSION의 version, date, title).",
+  "repo": "https://github.com/yume-script/bookoasis_assistant",
+  "people": [
+    {
+      "name": "CRARES 님",
+      "role": "북오아시스(BookOasis) 제작자",
+      "note": "수많은 플러그인이 편하게 안주할 수 있는 터전, 북오아시스를 만들어 주셔서 고맙습니다. BookOasis Assistant도 북오아시스 곁에서 웹툰·드라이브·텔레그램·브런치 일을 거드는 도우미로 출발했습니다."
+    }
+  ],
+  "sources": [
+    {
+      "name": "murianwind/webtoon-manager",
+      "url": "https://github.com/murianwind/webtoon-manager",
+      "note": "네이버웹툰 무료 회차 자동 구독·다운로드 웹앱. 웹툰 다운로더가 이 프로젝트를 북오아시스 플러그인(webtoon_manager)으로 옮긴 데서 출발했습니다."
+    },
+    {
+      "name": "webtoon_manager (북오아시스 플러그인)",
+      "url": "https://github.com/yume-script/webtoon_manager",
+      "note": "웹툰 다운로더 모듈의 원본 (v1.39.3에서 옮겨 옴)."
+    },
+    {
+      "name": "gdrive_watch (북오아시스 플러그인)",
+      "url": "https://github.com/yume-script/gdrive_watch",
+      "note": "드라이브 변경 감시 모듈의 원본 (v1.18.8에서 옮겨 옴)."
+    },
+    {
+      "name": "BookOasis Mate",
+      "url": "",
+      "note": "Google Drive 변경 감지(Changes/Activity), 체크포인트, file_id→경로 상태 설계를 참고해 다시 작성했습니다 (원본 AGPL-3.0)."
+    },
+    {
+      "name": "YMPlayer",
+      "url": "https://github.com/yume-script/ym_player",
+      "note": "텔레그램 자동 올리기와 브런치 EPUB 받기의 원본, 화면 틀(사이드바·테마·로고)도 YMPlayer와 같은 구성입니다."
+    },
+    {
+      "name": "ym_mini_game",
+      "url": "https://github.com/yume-script/ym_mini_game",
+      "note": "미니게임 모듈의 원본 (v2.0.2)."
+    }
+  ],
+  "libraries": [
+    {
+      "name": "Requests",
+      "url": "https://github.com/psf/requests",
+      "note": "웹툰·웹소설·브런치 받기"
+    },
+    {
+      "name": "PyMySQL",
+      "url": "https://github.com/PyMySQL/PyMySQL",
+      "note": "BookOasis DB(MariaDB/MySQL) 읽기"
+    },
+    {
+      "name": "Pillow",
+      "url": "https://github.com/python-pillow/Pillow",
+      "note": "kavita.yaml 표지 줄이기"
+    },
+    {
+      "name": "Telethon",
+      "url": "https://github.com/LonamiWebs/Telethon",
+      "note": "텔레그램 접속 (자동 올리기)"
+    },
+    {
+      "name": "cryptg",
+      "url": "https://github.com/cher-nov/cryptg",
+      "note": "텔레그램 데이터 암호화 가속"
+    },
+    {
+      "name": "aiohttp",
+      "url": "https://github.com/aio-libs/aiohttp",
+      "note": "텔레그램 자동 올리기의 Plex·TMDB 요청"
+    },
+    {
+      "name": "rclone",
+      "url": "https://github.com/rclone/rclone",
+      "note": "드라이브 마운트·VFS 새로고침 (드라이브 변경 감시)"
+    },
+    {
+      "name": "FFmpeg",
+      "url": "https://github.com/FFmpeg/FFmpeg",
+      "note": "자동 올리기 인코딩·나누기(ffmpeg)와 형식 확인(ffprobe)"
+    },
+    {
+      "name": "Noto Sans KR",
+      "url": "https://github.com/notofonts/noto-cjk",
+      "note": "글꼴 (Google Fonts)"
+    }
+  ],
+  "changelog": [
+    {
+      "pr": 18,
+      "version": "2.65.4",
+      "date": "2026-11-19",
+      "title": "텔레그램 자동 올리기 진행 상태: 자막 칸을 자막 파일 없음 / 소프트 자막 / 자막 파일 N개 / 화면에 입힘으로 구별"
+    },
+    {
+      "pr": 17,
+      "version": "2.65.3",
+      "date": "2026-11-19",
+      "title": "설정 > Thanks to: 고마운 분·참고한 저장소·쓰는 오픈소스와 변경 이력 (사이드바 아래 하트 버튼으로 누구나)"
+    },
+    {
+      "pr": 16,
+      "version": "2.65.2",
+      "date": "2026-11-18",
+      "title": "자동 올리기 중복 확인 보강(TMDB·영화 이름+연도·나눈 조각) + 테스트 실패 고침"
+    },
+    {
+      "pr": 15,
+      "version": "2.65.1",
+      "date": "2026-11-18",
+      "title": "작업 파일 정리 + 쓰고 난 메모리 OS에 돌려주기"
+    },
+    {
+      "pr": 14,
+      "version": "2.65.0",
+      "date": "2026-11-18",
+      "title": "브런치 연재 목록: 요일마다 [○요일 연재 모두 EPUB으로]"
+    },
+    {
+      "pr": 13,
+      "version": "2.64.1",
+      "date": "2026-11-18",
+      "title": "브런치 연재 목록 카드: 받아 둔 EPUB이 몇 화·언제 발행분까지인지"
+    },
+    {
+      "pr": 12,
+      "version": "2.64.0",
+      "date": "2026-11-18",
+      "title": "웹툰 다운로더: 하루 계획표 + 시간 설정 정리"
+    },
+    {
+      "pr": 11,
+      "version": "2.63.4",
+      "date": "2026-11-18",
+      "title": "텔레그램 자동 올리기: 나눠 올리다 다시 켜면 다 올린 조각 다음부터 이어 올리기"
+    },
+    {
+      "pr": 10,
+      "version": "2.63.3",
+      "date": "2026-11-18",
+      "title": "텔레그램 자동 올리기: Windows rclone/WinFsp 드라이브 realpath 실패(WinError 1005) 고침"
+    },
+    {
+      "pr": 9,
+      "version": "2.63.2",
+      "date": "2026-11-18",
+      "title": "텔레그램 자동 올리기: 원본 드라이브가 끊기면 실패로 세지 않고 5분마다 다시"
+    },
+    {
+      "pr": 8,
+      "version": "2.63.1",
+      "date": "2026-11-18",
+      "title": "브런치: 회차가 브런치에 발행된 날을 기록"
+    },
+    {
+      "pr": 7,
+      "version": "2.63.0",
+      "date": "2026-11-18",
+      "title": "브런치 연재 목록: 제목·작가로 찾기"
+    },
+    {
+      "pr": 6,
+      "version": "2.62.0",
+      "date": "2026-11-18",
+      "title": "웹툰·웹소설: 받을 본문이 없는 회차는 알리고 받은 것으로 처리"
+    },
+    {
+      "pr": 5,
+      "version": "2.61.1",
+      "date": "2026-11-17",
+      "title": "브런치 받은 목록에 EPUB 상태 표시"
+    },
+    {
+      "pr": 4,
+      "version": "2.61.0",
+      "date": "2026-11-17",
+      "title": "웹툰 다운로더 설정 화면 다시 만들기"
+    },
+    {
+      "pr": 3,
+      "version": "2.60.0",
+      "date": "2026-11-17",
+      "title": "브런치: 완결작 모두 EPUB으로 · 연재 목록에 EPUB 반영 여부 표시"
+    },
+    {
+      "pr": 2,
+      "version": "2.59.1",
+      "date": "2026-11-17",
+      "title": "텔레그램 자동 올리기: 제외 정규식이 경로도 봄"
+    },
+    {
+      "pr": 1,
+      "version": "2.59.0",
+      "date": "2026-11-17",
+      "title": "텔레그램 자동 올리기 계정별 진행·계정 넘기기, 웹툰 crontab·동영상/스캔본 회차, 브런치 재업로드"
+    }
+  ]
+}

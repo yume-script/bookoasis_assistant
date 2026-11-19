@@ -36,7 +36,8 @@ STATIC = {"/watch": "index.html", "/style.css": "style.css", "/script.js": "scri
           "/webtoon/style.css": "webtoon/style.css", "/webtoon/script.js": "webtoon/script.js",
           "/login": "login.html", "/login.js": "login.js",
           "/tgup": "tgup/index.html", "/tgup/style.css": "tgup/style.css", "/tgup/script.js": "tgup/script.js",
-          "/brunch": "brunch/index.html", "/brunch/style.css": "brunch/style.css", "/brunch/script.js": "brunch/script.js"}
+          "/brunch": "brunch/index.html", "/brunch/style.css": "brunch/style.css", "/brunch/script.js": "brunch/script.js",
+          "/credits.json": "credits.json"}   # 설정 > Thanks to (shell.js)
 PUBLIC = {"/login", "/login.js", "/theme.css", "/shell.js", "/healthz", "/api/auth/state", "/api/auth/login", "/api/auth/setup"}
 PAGES = {"/", "/index.html", "/watch", "/webtoon", "/webtoon/", "/games", "/games/", "/library3d", "/tgup", "/brunch"}  # 로그인 안 했으면 로그인 화면으로 보낼 주소
 OFF_PAGE = """<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
