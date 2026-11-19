@@ -46,6 +46,8 @@
     'chevron-up': '<path d="m18 15-6-6-6 6"/>',
     'book-down': '<path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"/><path d="M12 7v7"/><path d="m9 11 3 3 3-3"/>',
     'link': '<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>',
+    'heart': '<path d="M19 14c1.5-1.5 3-3.2 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.8 0-3 .5-4.5 2-1.5-1.5-2.7-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4 3 5.5l7 7z"/>',
+    'cubes': '<path d="M12 2 3 7v10l9 5 9-5V7z"/><path d="m3 7 9 5 9-5"/><path d="M12 12v10"/>',
     'palette': '<circle cx="13.5" cy="6.5" r="1.2" fill="currentColor"/><circle cx="17.5" cy="10.5" r="1.2" fill="currentColor"/><circle cx="8.5" cy="7.5" r="1.2" fill="currentColor"/><circle cx="6.5" cy="12.5" r="1.2" fill="currentColor"/><path d="M12 2a10 10 0 0 0 0 20 2 2 0 0 0 2-2c0-.5-.2-1-.5-1.3-.3-.4-.5-.8-.5-1.3a2 2 0 0 1 2-2h2.4A5.6 5.6 0 0 0 22 9.8C22 5.5 17.5 2 12 2z"/>'
   };
   var MENU = [
@@ -294,6 +296,7 @@
       '메뉴': navPane,
       '사용자': usersPane,
       'MCP': mcpPane,
+      'Thanks to': thanksPane,
       '정보': function () {
         var list = h('div', { class: 'about-list' });
         var names = { wtm: '웹툰 다운로더', gdw: '드라이브 변경 감시', tgup: '텔레그램 자동 올리기', brunch: '브런치 EPUB', mini: '미니게임' };
@@ -329,6 +332,48 @@
     show('화면');
   }
   var info = {};
+
+  /** 설정 > Thanks to (YMPlayer와 같은 구성): 고마운 분, 참고한 저장소, 쓰는 오픈소스, 변경 이력(날짜별, 새것이 위). 내용은 web/credits.json */
+  function thanksPane() {
+    var box = h('div', { class: 'thanks' }, [h('p', { class: 'muted', text: '불러오는 중...' })]);
+    function link(it) {
+      return h('li', { class: 'thanks-item' }, [
+        h('div', { class: 'thanks-name' }, [it.url ? h('a', { href: it.url, target: '_blank', rel: 'noopener', text: it.name }) : h('b', { text: it.name }),
+          it.url ? h('span', { class: 'thanks-url', text: it.url.replace(/^https?:\/\//, '') }) : null]),
+        h('p', { class: 'thanks-note', text: it.note || '' })]);
+    }
+    function section(ic, title, kids) { return h('div', { class: 'thanks-card' }, [h('h4', {}, [icon(ic), document.createTextNode(' ' + title)])].concat(kids)); }
+    api('credits.json').then(function (c) {
+      while (box.firstChild) box.removeChild(box.firstChild);
+      var repo = c.repo || '', byDate = [];
+      (c.changelog || []).forEach(function (e) {
+        var last = byDate[byDate.length - 1];
+        if (last && last.date === e.date) last.items.push(e); else byDate.push({ date: e.date, items: [e] });
+      });
+      box.appendChild(section('heart', '특별히 고마운 분', (c.people || []).map(function (p) {
+        return h('div', { class: 'thanks-item' }, [h('div', { class: 'thanks-name' }, [h('b', { text: p.name }), h('span', { class: 'thanks-url', text: p.role || '' })]),
+          h('p', { class: 'thanks-note', text: p.note || '' })]);
+      })));
+      box.appendChild(section('link', '참고한 저장소', [h('p', { class: 'muted', text: 'BookOasis Assistant는 아래 프로젝트에서 출발했거나 아이디어를 얻었습니다. 고맙습니다.' }),
+        h('ul', { class: 'thanks-list' }, (c.sources || []).map(link))]));
+      box.appendChild(section('cubes', '쓰고 있는 오픈소스', [h('ul', { class: 'thanks-list' }, (c.libraries || []).map(link))]));
+      box.appendChild(section('clock-rotate-left', '변경 이력', [
+        repo ? h('p', { class: 'muted' }, [document.createTextNode('저장소: '), h('a', { href: repo, target: '_blank', rel: 'noopener', text: repo.replace(/^https?:\/\//, '') })]) : null
+      ].concat(byDate.map(function (g) {
+        return h('section', { class: 'changelog-day' }, [h('h5', { text: g.date }), h('ul', { class: 'changelog' }, g.items.map(function (e) {
+          return h('li', {}, [repo ? h('a', { class: 'changelog-pr', href: repo + '/pull/' + e.pr, target: '_blank', rel: 'noopener', text: '#' + e.pr }) : null,
+            h('span', {}, [e.version ? h('span', { class: 'changelog-ver', text: 'v' + e.version }) : null, document.createTextNode(e.title)])]);
+        }))]);
+      }))));
+    }).catch(function (e) {
+      while (box.firstChild) box.removeChild(box.firstChild);
+      box.appendChild(h('p', { class: 'muted', text: '불러오지 못했습니다: ' + e.message }));
+    });
+    return box;
+  }
+  function openThanks() {   // 사이드바 아래 하트 버튼 - 설정 창을 못 여는 사용자도 볼 수 있게
+    var m = modal('Thanks to', thanksPane(), [h('button', { type: 'button', class: 'btn btn-accent', text: '닫기', onclick: function () { m.close(); } })]);
+  }
 
   /** 설정 > 메뉴: 사이드 메뉴의 모듈 순서와 각 모듈 안 메뉴 순서 (모든 브라우저 공통, ui_prefs.json) */
   function navPane() {
@@ -620,6 +665,8 @@
   nav.appendChild(h('div', { class: 'nav-footer' }, [
     h('a', { class: 'nav-link', href: '#', onclick: function (ev) { ev.preventDefault(); openSettings(); } },
       [icon('gear'), h('span', { text: '설정' })]),
+    h('a', { class: 'nav-link nav-thanks', href: '#', 'aria-label': 'Thanks to', onclick: function (ev) { ev.preventDefault(); openThanks(); } },
+      [icon('heart'), h('span', { text: 'Thanks to · 변경 이력' })]),
     h('div', { class: 'nav-account' }, [avatar, who,
       h('button', { type: 'button', class: 'icon-btn', title: '테마', 'aria-label': '테마', onclick: openThemeDialog }, [icon('palette')]),
       h('button', { type: 'button', class: 'icon-btn', title: '비밀번호 변경', 'aria-label': '비밀번호 변경', onclick: changePassword }, [icon('key')]),

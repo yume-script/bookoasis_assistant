@@ -79,3 +79,20 @@ class MemtrimTest(unittest.TestCase):
         ev.set()
         t.join(1)
         self.assertFalse(t.is_alive())
+
+
+class CreditsTest(unittest.TestCase):
+    def test_credits_json(self):
+        """설정 > Thanks to (web/credits.json): 정적 주소로 나가고, 변경 이력은 PR 번호 내림차순·VERSION과 같은 최신 버전"""
+        import json
+        from gdw import web
+        self.assertEqual(web.STATIC.get("/credits.json"), "credits.json")
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        with open(os.path.join(root, "web", "credits.json"), encoding="utf-8") as f:
+            c = json.load(f)
+        with open(os.path.join(root, "VERSION"), encoding="utf-8") as f:
+            ver = json.load(f)["version"]
+        prs = [e["pr"] for e in c["changelog"]]
+        self.assertEqual(prs, sorted(prs, reverse=True))
+        self.assertEqual(c["changelog"][0]["version"], ver)
+        self.assertTrue(c["people"] and c["sources"] and c["libraries"])
