@@ -227,8 +227,12 @@
 
         const addRule = (r = {}) => {
             const enabledIn = h('input', { type: 'checkbox', checked: r.enabled !== false });
+            const isMusic = r.media === 'music';
             const kindSel = h('select', { class: 'select' }, opt('plex', 'Plex 라이브러리', r.kind !== 'folder' && !!opts.plex.length),
-                opt('folder', 'rclone 드라이브 · 폴더', r.kind === 'folder' || !opts.plex.length));
+                opt('folder', 'rclone 드라이브 · 폴더', (r.kind === 'folder' && !isMusic) || (!opts.plex.length && !isMusic)),
+                opt('music', '음악 (rclone 드라이브 · 폴더)', isMusic));
+            // 음악 규칙: 처음 켤 때 폴더에 이미 있는 곡도 올릴지
+            const existIn = h('input', { type: 'checkbox', checked: !!r.upload_existing });
             const folderIn = h('input', { class: 'input', placeholder: '/mnt/gdrive/영화 또는 gdrive:영화', value: r.folder || '' });
             const pickBtn = h('button', { class: 'btn', type: 'button', on: { click: () => pickFolder(folderIn) } }, icon('folder-open'), ' 고르기');
             const heightSel = h('select', { class: 'select' }, [[720, '720p'], [480, '480p'], [1080, '1080p'], [0, '원본 그대로']].map(([v, t]) =>
@@ -287,8 +291,18 @@
                 + (opts.rclone_note ? ` (${opts.rclone_note})` : ''));
             const encText = h('span', { class: 'muted' });
             const burnText = h('span', {});
+            const musicNote = h('p', { class: 'muted', text: '음악 파일(mp3·flac·m4a·ogg·opus 등)을 그대로 올립니다 (인코딩 없음). 캡션은 파일 안의 태그'
+                + '(없으면 "아티스트/앨범 (연도)/01 곡" 폴더 이름)로 곡 제목·아티스트·앨범·트랙·디스크·장르·작곡·작사·편곡·앨범ID를 "이름: 값" 줄로 적고 '
+                + '(YMPlayer 텔레그램 음악 채널이 읽음), 텔레그램 오디오 정보와 앨범 아트(파일 안 그림 또는 cover.jpg)도 붙입니다. '
+                + '같은 이름의 가사(.lrc)가 있으면 곡 뒤에 파일로 올리고, 앨범 폴더별·파일 이름 순서(트랙 순)로 올립니다.' });
+            const existRow = h('label', { class: 'check' }, existIn, ' 처음 켤 때 폴더에 이미 있는 곡도 올리기 (끄면 켠 뒤 새로 생긴 곡만)');
+            const videoOnly = [];
             const syncKind = () => {
-                const folder = kindSel.value === 'folder';
+                const music = kindSel.value === 'music';
+                const folder = kindSel.value === 'folder' || music;
+                videoOnly.forEach((el) => el.classList.toggle('hidden', music));
+                musicNote.classList.toggle('hidden', !music);
+                existRow.classList.toggle('hidden', !music);
                 plexField.classList.toggle('hidden', folder);
                 folderField.classList.toggle('hidden', !folder);
                 encText.textContent = folder ? '보다 높은 영상은 용량과 상관없이 줄여서, 텔레그램에서 바로 재생되는 H.264/AAC mp4로 올림 (이미 그 모양이면 그대로)'
@@ -297,16 +311,19 @@
                     : ' 영상 안에 자막이 없으면 외부 자막을 화면에 입혀 다시 인코딩 (텔레그램 앱에서도 자막이 보임)';
             };
             kindSel.addEventListener('change', syncKind);
+            const heightRow = h('div', { class: 'mirror-wait' }, h('span', { class: 'muted', text: '화질:' }), heightSel, encText);
+            const waitRow = h('div', { class: 'mirror-wait' }, h('label', { class: 'check' }, waitIn, ' 자막이 생길 때까지 기다렸다가 올리기'),
+                h('span', { class: 'muted', text: ' 최대' }), minIn, h('span', { class: 'muted', text: '분 (0이면 계속 기다림. 파일 안에 자막(소프트 자막)이 있으면 기다리지 않고 바로. 하드섭은 진행 상태에서 [지금 올리기])' }));
+            const burnRow = h('label', { class: 'check', title: '다시 인코딩하느라 시간이 걸립니다.' }, burnIn, burnText);
+            const capRow = field('캡션', capIn, '{name} 제목(영화 "제목 (연도)", 에피소드 "작품 S01E02 - 제목") · {summary} 줄거리 · {title} {year} {show} {season} {episode} {code} {genres} {tags}(#장르) {library} {filename}');
+            videoOnly.push(heightRow, waitRow, burnRow, capRow);
             const card = h('div', { class: 'mirror-rule' },
                 h('div', { class: 'toolbar' }, h('label', { class: 'check' }, enabledIn, ' 켜기'), kindSel),
                 h('div', { class: 'row-2 mirror-pick' }, plexField, folderField, field('올릴 텔레그램 계정 · 채널', h('div', { class: 'toolbar' }, opts.telegram.length > 1 || (r.tg && r.tg !== 'tg') ? accSel : null, chSel))),
-                h('div', { class: 'mirror-wait' }, h('span', { class: 'muted', text: '화질:' }), heightSel, encText),
+                musicNote, existRow, heightRow,
                 field('같이 올릴 다른 계정', altBox, '고른 계정도 이 채널에 글을 쓸 수 있어야 합니다. 놀고 있는 계정이 진행 목록 앞에서부터 가져가고, '
                     + '한 계정에 문제(로그아웃·세션 만료·채널 권한·요청 제한·연결 끊김)가 생기면 다른 계정이 이어 올립니다.'),
-                h('div', { class: 'mirror-wait' }, h('label', { class: 'check' }, waitIn, ' 자막이 생길 때까지 기다렸다가 올리기'),
-                    h('span', { class: 'muted', text: ' 최대' }), minIn, h('span', { class: 'muted', text: '분 (0이면 계속 기다림. 파일 안에 자막(소프트 자막)이 있으면 기다리지 않고 바로. 하드섭은 진행 상태에서 [지금 올리기])' })),
-                h('label', { class: 'check', title: '다시 인코딩하느라 시간이 걸립니다.' }, burnIn, burnText),
-                field('캡션', capIn, '{name} 제목(영화 "제목 (연도)", 에피소드 "작품 S01E02 - 제목") · {summary} 줄거리 · {title} {year} {show} {season} {episode} {code} {genres} {tags}(#장르) {library} {filename}'),
+                waitRow, burnRow, capRow,
                 h('div', { class: 'toolbar' }, test, del));
             syncKind();
             const row = { id: r.id, get: () => {
@@ -315,7 +332,7 @@
                     height: Number(heightSel.value), plex, section, section_title: ((plexSel.selectedOptions[0] || {}).dataset || {}).name || '',
                     tg: accSel.value || r.tg || 'tg', channel: chSel.value, channel_title: ((chSel.selectedOptions[0] || {}).dataset || {}).name || '', caption: capIn.value,
                     wait_subs: waitIn.checked, wait_min: Math.max(0, Math.round(Number(minIn.value) || 0)), burn_subs: burnIn.checked,
-                    tg_alt: Object.entries(altChecks).filter(([, c]) => c.checked).map(([k]) => k) };
+                    tg_alt: Object.entries(altChecks).filter(([, c]) => c.checked).map(([k]) => k), upload_existing: existIn.checked };
             } };
             rows.push(row);
             rulesBox.appendChild(card);

@@ -72,7 +72,7 @@ import urllib.parse
 
 from aiohttp import ClientTimeout
 
-from . import compat as config_store, compat as transcode, folder_watch, tgaccount as telegram_src
+from . import compat as config_store, compat as transcode, folder_watch, music, tgaccount as telegram_src
 from gdw import memtrim  # noqa: E402 - 큰 작업 뒤 쓰고 난 메모리를 OS에
 
 log = logging.getLogger("ym_player.plex_to_tg")
@@ -227,14 +227,22 @@ def clean_settings(raw):
                 "tg_alt": [],
                 "burn_subs": bool(r.get("burn_subs", True)),
                 # 폴더 규칙 (rclone 드라이브 등): kind "folder", folder = 절대 경로 또는 rclone "원격:경로"
-                "kind": "folder" if r.get("kind") == "folder" else "plex",
+                "kind": "folder" if r.get("kind") in ("folder", "music") else "plex",
                 "folder": str(r.get("folder") or "").strip()[:500],
+                # 음악 규칙 (폴더 규칙의 한 가지): media "music" - mp3·flac 등을 태그 캡션·오디오로 (tgup/music.py)
+                "media": "music" if r.get("kind") == "music" or r.get("media") == "music" else "video",
+                # 음악 규칙: 처음 켤 때 폴더에 이미 있는 곡도 올릴지 (영상 규칙은 늘 새로 생긴 것만)
+                "upload_existing": bool(r.get("upload_existing", False)),
                 # height보다 높은 영상은 용량과 상관없이 height로 줄여 올린다 (0이면 줄이지 않음) - Plex·폴더 규칙 모두
                 "height": num(r.get("height"), 0, 2160, 720)}
         if rule["height"] not in (0, 480, 720, 1080):
             rule["height"] = 720
         alt = r.get("tg_alt") if isinstance(r.get("tg_alt"), list) else []
         rule["tg_alt"] = list(dict.fromkeys(str(a)[:16] for a in alt if a and str(a) != rule["tg"]))[:10]
+        if rule["kind"] != "folder":
+            rule["media"], rule["upload_existing"] = "video", False
+        if rule["media"] == "music":   # (자막 기다리기·입히기는 영상만)
+            rule["wait_subs"], rule["burn_subs"] = False, False
         if rule["kind"] == "folder":
             rule["folder"] = folder_watch.clean_folder(rule["folder"])
             rule["plex"], rule["section"] = "", ""
@@ -558,6 +566,17 @@ def trim_history(hist):
         if seen[k] <= KEEP_HISTORY:
             out.append(h)
     return out
+
+
+def rule_exts(rule):
+    """폴더 규칙이 보는 확장자 (음악 규칙이면 음악 파일)"""
+    return music.AUDIO_EXT if rule.get("media") == "music" else folder_watch.VIDEO_EXT
+
+
+def music_title(key):
+    """진행 목록에 보일 곡 이름 (폴더 이름으로 짐작 - 태그는 올릴 때 읽는다)"""
+    g = music.from_path(key)
+    return " - ".join(x for x in (g.get("artist"), g.get("title")) if x) or os.path.basename(key)
 
 
 def make_caption(template, fields):
@@ -953,7 +972,8 @@ class Mirror:
             if not rule["enabled"]:
                 continue
             try:
-                got[rule["id"]] = await folder_watch.scan(rule["folder"]) if rule["kind"] == "folder" else await self._recent(rule)
+                got[rule["id"]] = (await folder_watch.scan(rule["folder"], rule_exts(rule)) if rule["kind"] == "folder"
+                                   else await self._recent(rule))
             except folder_watch.FolderError as e:   # 이 폴더만 못 봄 - 다른 규칙은 계속
                 errors.append(f"{rule['section_title']}: {e}")
             except Exception as e:
@@ -976,10 +996,14 @@ class Mirror:
                         errors.append(f"{rule['section_title']}: 폴더가 비어 보여 아직 기준을 잡지 않았습니다 (마운트·경로 확인)")
                         continue
                     rs["baseline"] = int(time.time())
-                    rs["known"] = [folder_watch.key_hash(f["key"]) for f in files]
-                    rs["sigs"] = [file_sig(f["key"], f["size"]) for f in files]
-                    rs["sizes"] = {}
-                    continue
+                    if rule.get("upload_existing"):   # 음악 규칙: 지금 있는 곡도 올린다 (줄에는 아래에서)
+                        rs["known"], rs["sigs"] = [], []
+                    else:
+                        rs["known"] = [folder_watch.key_hash(f["key"]) for f in files]
+                        rs["sigs"] = [file_sig(f["key"], f["size"]) for f in files]
+                        rs["sizes"] = {}
+                        continue
+                    rs["sizes"] = {f["key"]: f["size"] for f in files}
             else:
                 items = got[rule["id"]]
                 newest = max((int(m.get("addedAt") or 0) for m in items), default=0)
@@ -1022,7 +1046,9 @@ class Mirror:
         known = set(rs.get("known") or [])
         sigs = set(rs.get("sigs") or [])
         sizes, now, fresh = rs.setdefault("sizes", {}), time.time(), {}
-        for f in sorted(files, key=lambda x: x["mtime"]):
+        music_rule = rule.get("media") == "music"
+        # 음악은 폴더(앨범)별·파일 이름(트랙) 순서로 - 채널에도 트랙 순서대로 올라가게
+        for f in sorted(files, key=(lambda x: music.sort_key(x["key"])) if music_rule else (lambda x: x["mtime"])):
             key = f["key"]
             if folder_watch.key_hash(key) in known or key in done or (rule["id"], key) in queued or key in rs.get("fails", {}):
                 continue
@@ -1033,7 +1059,8 @@ class Mirror:
             if any((j["rule"] == rule["id"] and j.get("sig") == sig) for j in self.queue):   # 같은 파일이 두 경로에 - 하나만
                 continue
             if sizes.get(key) == f["size"] or now - f["mtime"] >= folder_watch.STABLE_SEC:
-                self.queue.append({"rule": rule["id"], "key": key, "title": folder_watch.file_fields(key)["name"], "sig": sig})
+                self.queue.append({"rule": rule["id"], "key": key, "sig": sig,
+                                   "title": music_title(key) if music_rule else folder_watch.file_fields(key)["name"]})
                 queued.add((rule["id"], key))
             else:   # 아직 올라오는 중일 수 있다 - 다음 확인 때 크기가 같으면
                 fresh[key] = f["size"]
@@ -1046,13 +1073,13 @@ class Mirror:
             raise ValueError("없는 규칙입니다. 먼저 저장해 주세요.")
         if rule["kind"] == "folder":
             try:
-                files = await folder_watch.scan(rule["folder"])
+                files = await folder_watch.scan(rule["folder"], rule_exts(rule))
             except folder_watch.FolderError as e:
                 raise ValueError(str(e))
             if not files:
-                raise ValueError("이 폴더에 동영상이 없습니다.")
+                raise ValueError("이 폴더에 음악 파일이 없습니다." if rule.get("media") == "music" else "이 폴더에 동영상이 없습니다.")
             f = max(files, key=lambda x: x["mtime"])
-            title = folder_watch.file_fields(f["key"])["name"]
+            title = music_title(f["key"]) if rule.get("media") == "music" else folder_watch.file_fields(f["key"])["name"]
             self.queue.append({"rule": rule["id"], "key": f["key"], "title": title, "test": True})
             self._queue_changed()
             self.wake()
@@ -1890,7 +1917,7 @@ class Mirror:
         if self._poster_task and not self._poster_task.done():
             return self.poster_job
         chans = sorted({(r["tg"], int(r["channel"])) for r in load_settings()["rules"]
-                        if r["kind"] == "folder" and rule_id in (None, r["id"])})
+                        if r["kind"] == "folder" and r.get("media") != "music" and rule_id in (None, r["id"])})
         if not chans:
             raise ValueError("rclone(폴더) 규칙이 없습니다.")
         self.poster_job = {"running": True, "done": 0, "total": 0, "found": 0, "missing": 0, "error": ""}
@@ -1966,6 +1993,8 @@ class Mirror:
         return gb
 
     async def upload(self, rule, key, max_gb, test=False):
+        if rule.get("kind") == "folder" and rule.get("media") == "music":
+            return await self.upload_music(rule, key, max_gb, test)
         if rule.get("kind") == "folder":
             return await self.upload_file(rule, key, max_gb, test)
         cfg, src = self.plex_src(rule["plex"])
@@ -2283,6 +2312,128 @@ class Mirror:
             notes.append(f"자막 없음 ({soft_kind['why']})" if soft_kind["why"] else "자막 없음")
         if poster:
             notes.append(poster)
+        return ", ".join(notes)
+
+    async def upload_music(self, rule, key, max_gb, test=False):
+        """음악 규칙의 곡 하나: 태그(없으면 폴더 이름)로 캡션('이름: 값' 줄)과 텔레그램 오디오 속성을 만들고, 앨범 아트를 썸네일로,
+        같은 이름의 가사(.lrc)가 있으면 곡 뒤에 파일로. 파일은 바꾸지 않고 그대로 올린다 (tgup/music.py)"""
+        from telethon.tl.types import DocumentAttributeAudio, DocumentAttributeFilename
+        folder = rule["folder"]
+        remote = folder_watch.is_remote(folder)
+        self._cur_sig = (self._job or {}).get("sig") or ""
+        self._cur_tmdb = ""
+        base = os.path.basename(key)
+        title0 = music_title(key)
+        # 1) 중복 (같은 파일 / 채널에 같은 파일 이름) -> 2) 제외 정규식
+        if not test:
+            dup = self._already_sent(rule, self._cur_sig)
+            if dup:
+                return f"건너뜀: 중복 - 이 채널에 이미 올린 파일 ({dup})"
+            same = getattr(telegram_src, "channel_file", None)
+            got = ""
+            if same:
+                try:
+                    got = same(rule["tg"], int(rule["channel"]), base)
+                except Exception:  # noqa: BLE001
+                    got = ""
+            if got:
+                return f"건너뜀: 중복 - 같은 파일 이름이 이미 채널에 있음 ({got})"
+            pat = excluded_by(load_settings()["exclude"], base, title0, key,
+                              folder_watch._join_remote(folder, key) if remote else os.path.join(folder, key))
+            if pat:
+                return f"건너뜀: 제외 - 제외 정규식 '{pat}'에 맞음"
+        self.current = {"title": title0, "phase": "준비 중", "done": 0, "total": 0}
+        tmp = os.path.join(config_store.DATA_DIR, "plex_to_tg_tmp", secrets.token_hex(6))
+        os.makedirs(tmp, exist_ok=True)
+        msgs, notes = [], []
+        try:
+            name = re.sub(r'[\\/:*?"<>|]', "_", base) or "audio"
+            d = os.path.dirname(key)
+            if remote:
+                local = os.path.join(tmp, name)
+                self.current = {"title": title0, "phase": "rclone에서 받는 중", "done": 0, "total": 0}
+
+                def got_bytes(n):
+                    if self.current:
+                        self.current["done"] = n
+                await folder_watch.fetch(folder, key, local, got_bytes)
+                names = await folder_watch.remote_names(folder, key)
+            else:
+                local = folder_watch.local_path(folder, key)
+                if not os.path.isfile(local):
+                    raise RuntimeError("파일이 없습니다 (지워졌거나 옮겨짐).")
+                try:
+                    names = os.listdir(os.path.dirname(local))
+                except OSError:
+                    names = []
+            info = await folder_watch.probe(local)
+            m = music.track_meta(info, key)
+            title = " - ".join(x for x in (m.get("artist"), m.get("title")) if x) or title0
+            tg = self.tg_for(rule["tg"])
+            client = await tg.authorized_client()
+            max_gb = max_gb or await self._account_gb(rule["tg"], client)
+            if os.path.getsize(local) > int(max_gb * PART_LIMIT * 0.97):
+                raise RuntimeError(f"파일이 {max_gb}GB 한도보다 커서 올릴 수 없습니다 (음악은 나누지 않음).")
+            peer = await tg.peer(int(rule["channel"]))
+            if self._resume:   # 지난번에 다 못 올린 곡 - 올려 둔 것을 지우고 처음부터
+                await self._drop_sent(client, peer)
+                self._resume = None
+            # 앨범 아트: 파일 안의 그림 > 폴더의 cover.jpg 등 -> 320px 썸네일
+            thumb, art = os.path.join(tmp, "thumb.jpg"), ""
+            if music.has_picture(info):
+                art = local
+            else:
+                pick = music.cover_pick(names)
+                if pick:
+                    rel = f"{d}/{pick}" if d else pick
+                    if remote:
+                        art = os.path.join(tmp, "cover" + os.path.splitext(pick)[1].lower())
+                        try:
+                            await folder_watch.fetch(folder, rel, art)
+                        except folder_watch.FolderError:
+                            art = ""
+                    else:
+                        art = os.path.join(os.path.dirname(local), pick)
+            ok = False
+            if art and transcode.ffmpeg_path():
+                ok, _err = await self._ffmpeg("-i", art, "-an", "-frames:v", "1", "-vf", "scale='min(320,iw)':-2", "-q:v", "4", thumb)
+            thumb = thumb if ok and os.path.exists(thumb) and os.path.getsize(thumb) <= 200 * 1024 else None
+            cap = music.caption(m)
+            attrs = [DocumentAttributeAudio(duration=int(m.get("duration") or 0), title=(m.get("title") or "")[:256] or None,
+                                            performer=(m.get("artist") or "")[:256] or None),
+                     DocumentAttributeFilename(name)]
+            self.current = {"title": title, "phase": "텔레그램에 올리는 중", "done": 0, "total": os.path.getsize(local)}
+
+            def progress(done, total):
+                if self.current:
+                    self.current.update(done=int(done), total=int(total))
+            sent = await client.send_file(peer, local, caption=cap, thumb=thumb, attributes=attrs, force_document=False,
+                                          progress_callback=progress)
+            msgs.append(getattr(sent, "id", None))
+            self._note_sent(getattr(sent, "id", None))
+            # 가사 (.lrc - 같은 이름): 곡 바로 뒤에 파일로 (YMPlayer가 곡에 붙여 보여 줄 수 있게)
+            stem = os.path.splitext(base)[0].casefold()
+            lrc = next((n for n in names if os.path.splitext(n)[1].lower() == ".lrc" and os.path.splitext(n)[0].casefold() == stem), "")
+            if lrc:
+                rel = f"{d}/{lrc}" if d else lrc
+                lpath = os.path.join(tmp, "lyrics.lrc") if remote else os.path.join(os.path.dirname(local), lrc)
+                try:
+                    if remote:
+                        await folder_watch.fetch(folder, rel, lpath)
+                    lm = await client.send_file(peer, lpath, force_document=True,
+                                                attributes=[DocumentAttributeFilename(os.path.splitext(name)[0] + ".lrc")])
+                    self._note_sent(getattr(lm, "id", None))
+                    notes.append("가사(.lrc) 첨부")
+                except Exception as e:  # noqa: BLE001 - 가사는 못 올려도 곡은 올라감
+                    log.info("자동 올리기(음악): 가사를 올리지 못했습니다 (%s): %s", key, e)
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+            memtrim.release()
+        log.info("자동 올리기(음악): %s -> %s", key, rule["channel_title"] or rule["channel"])
+        known = [label for field, label in music.LABELS if m.get(field) and field != "album_id"]
+        notes.insert(0, "태그: " + (", ".join(known) if known else "없음 (폴더 이름으로)"))
+        if thumb:
+            notes.append("앨범 아트")
         return ", ".join(notes)
 
     async def _send_pieces(self, client, peer, pieces, name, caption, width, height, thumb, sub_files, title, tmp, msgs):
