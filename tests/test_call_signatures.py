@@ -46,3 +46,13 @@ def test_kakao_ready_at_callers():
                 if extra:
                     bad.append("%s:%d %s" % (os.path.basename(path), n.lineno, extra))
     assert not bad, bad
+
+
+def test_hidden_menus(monkeypatch):
+    from gdw import web
+    monkeypatch.delenv("MENU_HIDDEN", raising=False)
+    assert web.hidden_menus() == ["brunch"]
+    monkeypatch.setenv("MENU_HIDDEN", "")
+    assert web.hidden_menus() == []
+    monkeypatch.setenv("MENU_HIDDEN", "brunch, mini")
+    assert web.hidden_menus() == ["brunch", "mini"]
