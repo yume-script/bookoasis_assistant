@@ -809,7 +809,8 @@ class Mirror:
             cur = None
             if ln.current:
                 cur = {**ln.current, **(ln.current_job or {}), "started": int(ln.started), "elapsed": int(now - ln.started) if ln.started else 0,
-                       "phase_since": int(ln.phase_at), "times": {k: int(v) for k, v in ln.times.items() if v >= 1}}
+                       "phase_since": int(ln.phase_at), "times": {k: int(v) for k, v in ln.times.items() if v >= 1},
+                       "subs": ln.subs_label}
             lanes.append({"tg": ln.tg, "current": cur, "flood_until": int(ln.flood_until) if ln.flood_until > now else 0})
         first = next((x["current"] for x in lanes if x["current"]), None)
         # 계정마다: 지금 하는 것, 기다리는 수(그 계정이 가져갈 수 있는 것), 성공·실패 수, 쉬는 중이면 까닭
@@ -2048,6 +2049,8 @@ class Mirror:
                     sub_files.append((path, lang, sext))
             burned, burn_skip, soft_lost = False, "", False
             embedded = bool(soft)
+            # 진행 상태 화면의 자막 칸 (올리는 동안): 다 올리면 실제로 한 것(화면에 입힘·옮기지 못함 등)으로 바뀐다
+            self.subs_label = f"파일 {len(sub_files)}개" if sub_files else "소프트 자막" if embedded else "없음"
             # 정한 높이(기본 720p)보다 큰 영상은 용량과 상관없이 줄인다 - 자막 입히기와 한 번에 인코딩
             info = await folder_watch.probe(local)
             vh = int(((folder_watch.streams(info, "video") or [{}])[0]).get("height") or 0)
@@ -2216,6 +2219,7 @@ class Mirror:
             duration = folder_watch.duration(info)
             # 3) 화면에 입힐 자막: 한국어 먼저 (자막 파일 > 파일 안의 글자 자막 > 다른 언어)
             burn, burn_skip, inside = None, "", folder_watch.text_subs(info)
+            self.subs_label = f"파일 {len(sub_files)}개" if sub_files else "소프트 자막" if inside else "없음"   # (진행 상태 화면, 올리는 동안)
             if rule["burn_subs"] and (sub_files or inside):
                 if not has_korean_font():
                     burn_skip = "한글 글꼴이 없어 자막을 입히지 않고 파일로 올림 (sudo apt install fonts-nanum)"

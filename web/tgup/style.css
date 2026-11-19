@@ -51,7 +51,7 @@ textarea.input { resize: vertical; }
 .mirror-wait { display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; }
 .mirror-wait .mirror-days { width: 5rem; }
 .mirror-table { display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; margin-bottom: 0.5rem; }
-.mirror-row { display: grid; grid-template-columns: minmax(0, 1fr) 7.5rem 5.5rem minmax(0, 0.8fr); gap: 0.75rem; align-items: center;
+.mirror-row { display: grid; grid-template-columns: minmax(0, 1fr) 7.5rem 7.5rem minmax(0, 0.8fr); gap: 0.75rem; align-items: center;
     padding: 0.45rem 0.75rem; border-top: 1px solid var(--border); font-size: 0.88rem; }
 .mirror-row:first-child { border-top: none; }
 .mirror-head { background: var(--bg-elev2); color: var(--muted); font-size: 0.78rem; font-weight: 600; }
@@ -111,3 +111,12 @@ textarea.input { resize: vertical; }
 .mirror-actions .btn-sm { padding: 0.2rem 0.45rem; }
 .select-sm { padding: 0.2rem 0.4rem; font-size: 0.78rem; }
 .mirror-alt { flex-wrap: wrap; gap: 0.75rem; }
+
+/* 진행 상태 > 자막 칸: 자막 파일 없음 / 소프트 자막 / 자막 파일 있음 / 화면에 입힘 */
+.subs-tag { display: inline-block; padding: 0.1rem 0.5rem; border-radius: 999px; font-size: 0.78rem; font-weight: 600; white-space: nowrap;
+    background: var(--bg-elev2); color: var(--muted); }
+.subs-file { background: rgba(34, 197, 94, 0.16); color: #4ade80; }
+.subs-soft { background: rgba(59, 130, 246, 0.16); color: #7cb3ff; }
+.subs-burn { background: rgba(168, 85, 247, 0.16); color: #c99bff; }
+.subs-lost { background: rgba(239, 68, 68, 0.14); color: #f87171; }
+.subs-none { background: var(--bg-elev2); color: var(--muted); }
