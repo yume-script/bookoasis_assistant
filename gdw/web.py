@@ -190,6 +190,12 @@ def modules():
             "lib3d": bool(lib3d_url())}
 
 
+def hidden_menus():
+    """사이드바에서 숨길 메뉴 (MENU_HIDDEN, 쉼표 - 기본 brunch). 기능은 그대로 켜져 있고 주소(/brunch)로 직접 들어가면 쓸 수 있다.
+    다시 보이게 하려면 .env에 MENU_HIDDEN= (빈 값)"""
+    return [x.strip() for x in config.env("MENU_HIDDEN", "brunch").split(",") if x.strip()]
+
+
 def lib3d_url():
     """BookOasis 3D 서재 주소 (따로 설치하는 bookoasis_3d - 사이드바 메뉴가 이 주소로 이어진다, 비우면 메뉴 없음)"""
     url = config.env("LIB3D_URL", "").strip().rstrip("/")
@@ -280,6 +286,7 @@ class Handler(BaseHTTPRequestHandler):
         mods = modules()
         if path == "/api/modules":
             info = dict(mods, version=service._plugin_version(), versions=module_versions(), ui=ui_prefs(), lib3d_url=lib3d_url(),
+                        hidden_menus=hidden_menus(),
                         user=user["username"], role=auth.role_of(user), windows=os.name == "nt", update=update_info())
             if not auth.is_admin(user):   # 관람자에게는 3D 서재만 켜진 것으로
                 info = {k: (v if k == "lib3d" else False) if isinstance(v, bool) else v for k, v in info.items()}

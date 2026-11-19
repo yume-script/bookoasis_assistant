@@ -707,7 +707,8 @@
 
   // 켜진 모듈·버전·로그인 이름 (서버의 /api/modules)
   fetch('api/modules', { credentials: 'same-origin' }).then(function (r) { return r.json(); }).then(function (m) {
-    groups.forEach(function (g) { g.hidden = !m[g.getAttribute('data-module')]; });
+    var hiddenMenus = m.hidden_menus || [];   // 켜져 있어도 사이드바에서만 숨김 (.env MENU_HIDDEN, 기본 brunch)
+    groups.forEach(function (g) { var id = g.getAttribute('data-module'); g.hidden = !m[id] || hiddenMenus.indexOf(id) >= 0; });
     var miniMenu = MENU.filter(function (x) { return x.id === 'mini'; })[0];
     (m.games || []).forEach(function (g) {
       var it = { tab: g.id, label: g.name, fa: g.icon };
