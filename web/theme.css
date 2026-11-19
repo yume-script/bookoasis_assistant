@@ -298,3 +298,19 @@ body.login-body { margin: 0; overflow: auto; min-height: 100vh; display: flex; a
 .nav-order-item { display: flex; justify-content: space-between; align-items: center; padding: 0.2rem 0.5rem 0.2rem 1.4rem;
   border-top: 1px solid var(--border); font-size: 0.9rem; }
 .nav-order .icon-btn[disabled] { opacity: 0.3; cursor: default; }
+
+/* 설정 > Thanks to (YMPlayer와 같은 모양) */
+.thanks { display: flex; flex-direction: column; gap: 1rem; }
+.thanks-card h4 { margin: 0 0 0.5rem; display: flex; align-items: center; gap: 0.4rem; font-size: 0.98rem; }
+.thanks-card .app-icon { width: 1em; height: 1em; color: var(--accent); }
+.thanks-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.5rem; }
+.thanks-item { padding: 0.55rem 0.75rem; border-radius: var(--radius); background: var(--bg-elev2); }
+.thanks-name { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.5rem; }
+.thanks-name a { color: var(--accent); font-weight: 600; text-decoration: none; }
+.thanks-url { color: var(--muted); font-size: 0.78rem; }
+.thanks-note { margin: 0.25rem 0 0; font-size: 0.85rem; color: var(--text-soft, var(--muted)); line-height: 1.5; }
+.changelog-day h5 { margin: 0.8rem 0 0.3rem; font-size: 0.82rem; color: var(--muted); }
+.changelog { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.3rem; font-size: 0.86rem; }
+.changelog li { display: flex; gap: 0.5rem; align-items: baseline; }
+.changelog-pr { color: var(--accent); text-decoration: none; font-variant-numeric: tabular-nums; flex: none; }
+.changelog-ver { display: inline-block; margin-right: 0.4rem; padding: 0 0.35rem; border-radius: 4px; background: var(--bg-elev2); color: var(--muted); font-size: 0.75rem; }
