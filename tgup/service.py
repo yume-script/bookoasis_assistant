@@ -27,7 +27,7 @@ import os
 import threading
 import time
 
-from . import compat, folder_watch, notify, plex_to_tg, tgaccount
+from . import compat, folder_watch, notify, plex_to_tg, tgaccount, youtube
 
 log = logging.getLogger("tgup")
 CALL_TIMEOUT = 120
@@ -209,6 +209,7 @@ def account_title(st):
 
 def _state():
     return {"success": True, "settings": plex_to_tg.load_settings(), "status": RUNNER.run(RUNNER.mirror.status),
+            "ytdlp": youtube.available(),
             "plex": bool(compat.plex_conf()["url"]), "ffmpeg": compat.available(),
             "rclone": bool(folder_watch.rclone_path()), "notify": notify.public(notify.settings())}
 
@@ -278,7 +279,7 @@ async def _folders(path):
 async def _files(rule_id, sub):
     """파일 골라 보내기: 규칙 폴더 아래 sub 폴더의 하위 폴더와 (규칙이 올리는 종류의) 파일. sent = 이 규칙으로 올린 적 있음"""
     rule = next((r for r in plex_to_tg.load_settings()["rules"] if r["id"] == rule_id), None)
-    if not rule or rule["kind"] != "folder":
+    if not rule or rule["kind"] != "folder" or rule.get("media") == "youtube":
         raise ApiError(400, "폴더(rclone 드라이브) 규칙을 골라 주세요.")
     raw, sub = sub, plex_to_tg.clean_key(sub) if sub.strip("/ ") else ""
     if raw.strip("/ ") and not sub:
@@ -369,6 +370,12 @@ def api_post(path, body):
         except ValueError as e:
             raise ApiError(400, str(e))
         return {"success": True, "count": n}
+    if path == "/api/tgup/youtube":   # 유튜브 보내기 {rule, urls(글 또는 목록), again}
+        try:
+            n, dup = RUNNER.call(m.add_youtube(str(body.get("rule") or ""), body.get("urls") or "", bool(body.get("again"))), 180)
+        except (ValueError, RuntimeError) as e:
+            raise ApiError(400, str(e))
+        return {"success": True, "count": n, "already": dup}
     if path == "/api/tgup/requeue":   # 취소·건너뛴 항목 다시 올리기 {days: 7 | 30 | 0(전체)} - 이미 올린 같은 파일·회차는 빼고
         try:
             days = int(body.get("days") or 0)
