@@ -295,7 +295,14 @@ def tgup_status(limit=30):
         "offline_drives": [{"drive": o["drive"], "since_min": ago(o.get("since"))} for o in st.get("offline") or []],
         "off_hours": bool(st.get("off_hours")), "skipped_total": st.get("skipped", 0), "error": st.get("error") or "",
         "accounts": {names.get(k, k): {"queued": a.get("queued", 0), "ok": a.get("ok", 0), "fail": a.get("fail", 0),
-                                       **({"down": True} if a.get("down") else {})} for k, a in (st.get("accounts") or {}).items()},
+                                       **({"down": True} if a.get("down") else {}),
+                                       # 텔레그램 업로드 속도: state ok/slow(느림 의심)/limited(텔레그램이 늦춤), MB/s, 최근 1시간 대기
+                                       **({"upload": {x: (a.get("throttle") or {}).get(x) for x in
+                                                      ("state", "speed", "baseline", "waits_1h", "wait_sec_1h", "premium_limit")}}
+                                          if a.get("throttle") else {})}
+                     for k, a in (st.get("accounts") or {}).items()},
+        "throttle_warnings": [f"{names.get(k, k)}: {(a.get('throttle') or {}).get('note')}" for k, a in (st.get("accounts") or {}).items()
+                              if (a.get("throttle") or {}).get("state") not in (None, "ok")],
         "recent": [{"title": h.get("title", ""), "result": "올림" if h.get("ok") else (h.get("note") or "실패").split(" - ")[0][:30],
                     "note": (h.get("note") or "")[:160], "ago_min": ago(h.get("at")), "subs": h.get("subs") or ""}
                    for h in (st.get("history") or [])[:min(limit, 20)]],

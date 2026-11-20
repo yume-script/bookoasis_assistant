@@ -88,6 +88,8 @@ class _Runner:
                 return await r.json(content_type=None)
 
         self.plex_json = plex_json
+        from . import throttle
+        throttle.install()   # 계정별 Telethon 대기 로그를 잡는다 (업로드 속도 제한 감지)
         self.mirror = plex_to_tg.Mirror(plex_json, plex_src, tg_for, lambda: self.http)
         self._task = asyncio.ensure_future(self.mirror.loop())
         self._notify_task = asyncio.ensure_future(notify.watch(self.http, plex_to_tg.load_state))   # 디스코드 알림

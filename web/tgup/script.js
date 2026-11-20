@@ -648,6 +648,17 @@
                     ...String(x.note || '').split(', ').filter((m) => m && !(x.subs && /^(자막 파일 \d+개 첨부|내장 자막|자막 없음|자막 입혀 인코딩)$/.test(m)))]
                     .filter(Boolean).join(' · '));
         });
+        // 텔레그램 업로드 속도 (tgup/throttle.py): 지금 속도 · 평소 속도 · 최근 1시간 대기, 제한·느림이면 까닭
+        const thrText = (t) => {
+            if (!t) return '';
+            const bits = [t.speed != null ? `지금 ${t.speed}MB/s` : '', t.baseline ? `평소 ${t.baseline}MB/s` : '',
+                t.waits_1h ? `1시간 대기 ${t.waits_1h}번·${t.wait_sec_1h}초` : ''].filter(Boolean);
+            return bits.join(' · ');
+        };
+        const thrChip = (t) => (t && t.state === 'limited' ? h('span', { class: 'mirror-chip fail', text: '텔레그램 속도 제한' })
+            : t && t.state === 'slow' ? h('span', { class: 'mirror-chip wait', text: '느림 의심' }) : null);
+        const thrWarn = Object.entries(s.accounts || {}).filter(([, a]) => a.throttle && a.throttle.state !== 'ok')
+            .map(([id, a]) => h('p', { class: 'muted error', text: `⚠️ ${accName(id)}: ${a.throttle.note}` }));
         // 계정마다 지금 하는 것 · 기다리는 수 · 성공/실패 · 쉬는 중
         const accCards = many ? h('div', { class: 'tgup-accs' }, accIds.filter((id) => statusFilter === 'all' || id === statusFilter).map((id) => {
             const a = (s.accounts || {})[id] || {};
@@ -655,7 +666,9 @@
             return h('div', { class: `tgup-acc${a.down ? ' is-down' : ''}` },
                 h('div', { class: 'tgup-acc-head' }, h('i', { class: 'fa-brands fa-telegram' }), h('b', { text: ` ${accName(id)}` }),
                     info.authorized === false ? h('span', { class: 'mirror-chip fail', text: '로그인 안 됨' }) : null,
-                    a.down ? h('span', { class: 'mirror-chip wait', text: '쉬는 중' }) : a.current ? h('span', { class: 'mirror-chip run', text: '올리는 중' }) : h('span', { class: 'mirror-chip ok', text: '놀고 있음' })),
+                    a.down ? h('span', { class: 'mirror-chip wait', text: '쉬는 중' }) : a.current ? h('span', { class: 'mirror-chip run', text: '올리는 중' }) : h('span', { class: 'mirror-chip ok', text: '놀고 있음' }),
+                    thrChip(a.throttle)),
+                thrText(a.throttle) ? h('div', { class: 'muted', text: `속도: ${thrText(a.throttle)}` }) : null,
                 h('div', { class: 'muted', text: a.current ? `지금: ${a.current.title} - ${a.current.phase} (${fmtDur(a.current.elapsed)})` : '지금 하는 것 없음' }),
                 a.down ? h('div', { class: 'muted error', text: `${a.down} - ${when(a.down_until)}까지 다른 계정이 올림` }) : null,
                 h('div', { class: 'muted', text: `기다리는 것 ${a.queued || 0}개 · 완료 ${a.ok || 0} · 실패 ${a.fail || 0}${a.last ? ` · 마지막: ${a.last.title} (${a.last.ok ? '완료' : '실패/건너뜀'}, ${fmtDur(a.last.elapsed)})` : ''}` }));
@@ -681,7 +694,7 @@
                 + 'rclone 마운트·네트워크 드라이브가 연결됐는지 확인하세요. 5분마다 다시 시도하며 실패로 세지 않습니다.'
                 + (/^[A-Z]:$/.test(o.drive) ? ' (Windows: 드라이브를 다른 사용자·관리자 권한으로 붙였으면 이 프로그램에서 안 보일 수 있습니다)' : '') })),
             s.off_hours ? h('p', { class: 'muted', text: `지금은 올리기 시간대(${s.off_hours.replace('-', '시~')}시)가 아니라 쉬는 중 - 쌓아 두었다가 그 시간에 올립니다.` }) : null,
-            tabBar, accCards,
+            ...thrWarn, tabBar, accCards,
             h('div', { class: 'mirror-live-head' }, h('h4', { text: `진행 (${live.length})${statusFilter !== 'all' ? ` - ${accName(statusFilter)}` : ''}` }),
                 live.length > 1 && statusFilter === 'all' ? h('button', { class: 'btn btn-sm danger', on: { click: async (e) => {
                     if (!confirm(`진행 목록 ${live.length}개를 모두 취소할까요? (지금 올리는 것도 멈추고, 취소한 것은 다시 올리지 않음)`)) return;

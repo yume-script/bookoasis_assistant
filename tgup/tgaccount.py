@@ -19,7 +19,7 @@ import os
 import re
 import time
 
-from . import compat
+from . import compat, throttle
 
 log = logging.getLogger("tgup.telegram")
 KEEP_PLEX_META = False   # plex_to_tg._save_meta: 작품 정보는 YMPlayer 텔레그램 색인에만 쓰여 여기선 남기지 않는다
@@ -144,8 +144,9 @@ class TelegramAccount:
             if self.client is None:
                 os.makedirs(compat.DATA_DIR, exist_ok=True)
                 # 텔레그램에 닿지 않을 때 화면이 오래 멈추지 않게 (기본은 5번 x 10초)
+                # base_logger: 계정별 로거 - Telethon이 혼자 기다린 업로드 제한(flood wait)을 계정마다 센다 (tgup/throttle.py)
                 self.client = TelegramClient(self.session_path, int(conf["api_id"]), conf["api_hash"], receive_updates=False,
-                                             connection_retries=2, timeout=10)
+                                             connection_retries=2, timeout=10, base_logger=throttle.logger_name(self.id))
                 self._key = key
             if not self.client.is_connected():
                 await self.client.connect()

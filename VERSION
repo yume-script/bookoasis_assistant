@@ -1,8 +1,8 @@
 {
-  "version": "2.68.0",
+  "version": "2.69.0",
   "based_on_plugin": "1.18.8",
   "webtoon_manager": "1.56.2",
   "ym_mini_game": "2.0.2",
-  "tgup": "1.6.0",
+  "tgup": "1.7.0",
   "brunch": "1.6.1"
 }
