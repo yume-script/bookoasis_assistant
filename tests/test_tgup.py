@@ -110,6 +110,18 @@ class TgupTest(unittest.TestCase):
             jobs = [j for j in self.service.RUNNER.run(lambda: list(m.queue)) if j.get("rule") == vid["id"]]
             self.assertTrue(jobs and all(j.get("manual") and j.get("force") for j in jobs))   # (텔레그램 계정이 없어 줄에 남음)
             self.assertEqual(api_post("/api/tgup/send", {"rule": vid["id"], "keys": ["영화.mkv"]})["count"], 0)   # 이미 줄에 있음
+            # MCP tgup_status (디스코드봇이 읽는 대기열): 진행 목록에 고른 두 파일, 채널 이름, 전화번호는 안 나옴
+            import json as _json
+            from gdw import mcp
+            names = [t["name"] for t in mcp.handle({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}, {"tgup": True}, None)[1]["result"]["tools"]]
+            self.assertIn("tgup_status", names)
+            code, reply = mcp.handle({"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "tgup_status", "arguments": {}}},
+                                     {"tgup": True}, None)
+            self.assertFalse(reply["result"]["isError"], reply)
+            got = _json.loads(reply["result"]["content"][0]["text"])
+            self.assertEqual(got["queue_total"], 2)
+            self.assertIn("영화", {q["title"] for q in got["queue"]})
+            self.assertEqual({q["channel"] for q in got["queue"]}, {"채널"})
         finally:
             api_post("/api/tgup/item", {"action": "cancel_all"})
             shutil.rmtree(folder, ignore_errors=True)

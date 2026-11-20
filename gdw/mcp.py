@@ -13,6 +13,7 @@ import hmac
 import json
 import logging
 import secrets
+import time
 
 from . import config, service
 
@@ -109,7 +110,63 @@ def _tools(mods, svc):
              _schema({"job": {"type": "string", "enum": ["scan_now", "run_full_cycle_now", "scan_finished_now", "cancel_job"]}},
                      ["job"]), WRITE),
         ]
+    if mods.get("tgup"):
+        tools += [
+            ("tgup_status", "텔레그램 자동 올리기 현황: 계정마다 지금 올리는 것(단계·진행률·걸린 시간), 진행 목록(대기열 - 순서·제목·채널·계정), "
+                            "자막 기다림, 다시 시도 대기, 끊긴 드라이브, 최근 기록(올림·건너뜀·실패와 까닭). "
+                            "'텔레그램 올리기 뭐 하고 있어?', '대기열 몇 개야?', '○○ 올라갔어?' 같은 질문에 쓴다.",
+             _schema({"limit": {"type": "integer", "minimum": 1, "maximum": 200, "default": 30,
+                                "description": "진행 목록·최근 기록을 몇 개까지"}}), READ),
+        ]
     return tools
+
+
+def tgup_status(limit=30):
+    """tgup_status 도구: 자동 올리기 상태(Mirror.status)를 사람이 읽기 좋게 줄인 것"""
+    from tgup import service as tgup_service
+    from tgup import plex_to_tg
+    runner = tgup_service.RUNNER
+    if not runner.loop or not runner.mirror:
+        raise ToolError("텔레그램 자동 올리기가 돌고 있지 않습니다 (aiohttp·telethon 설치, TGUP_ENABLED).")
+    st = runner.run(runner.mirror.status)
+    rules = {r["id"]: r for r in plex_to_tg.load_settings()["rules"]}
+    chan = lambda rid: (rules.get(rid) or {}).get("channel_title") or (rules.get(rid) or {}).get("channel") or ""  # noqa: E731
+    names = {}
+    try:
+        from tgup import tgaccount
+        # (전화번호는 내보내지 않는다 - 붙인 이름, 없으면 "첫 계정"/"계정 N")
+        names = {a["id"]: a.get("name") or ("첫 계정" if a["id"] == tgaccount.ACCOUNT_ID else f"계정 {a['id'][2:]}")
+                 for a in tgaccount.accounts()}
+    except Exception:  # noqa: BLE001 - 계정 이름을 못 읽으면 id로
+        pass
+    now = time.time()
+    ago = lambda t: int((now - t) // 60) if t else None  # noqa: E731
+    running = []
+    for ln in st.get("lanes") or []:
+        cur = ln.get("current")
+        if not cur:
+            continue
+        total, done = int(cur.get("total") or 0), int(cur.get("done") or 0)
+        running.append({"account": names.get(ln["tg"], ln["tg"]), "title": cur.get("title", ""), "phase": cur.get("phase", ""),
+                        "percent": round(done * 100 / total, 1) if total else None, "elapsed_min": round((cur.get("elapsed") or 0) / 60, 1),
+                        "channel": chan(cur.get("rule")), "subs": cur.get("subs") or ""})
+    queue = [q for q in st.get("queue") or [] if not q.get("running")]
+    return {
+        "running": running,
+        "queue_total": len(queue),
+        "queue": [{"pos": n + 1, "title": q["title"], "channel": chan(q["rule"]), "account": names.get(q["tg"], q["tg"]),
+                   **({"pinned": True} if q.get("pin") else {})} for n, q in enumerate(queue[:limit])],
+        "waiting_subs": [{"title": w["title"], "why": w.get("why") or "", "waiting_min": ago(w.get("since"))} for w in st.get("waiting") or []],
+        "retry": [{"title": r["title"], "tries": r.get("tries", 0), "in_min": max(0, int((r.get("at", 0) - now) // 60))}
+                  for r in st.get("retry") or []],
+        "offline_drives": [{"drive": o["drive"], "since_min": ago(o.get("since"))} for o in st.get("offline") or []],
+        "off_hours": bool(st.get("off_hours")), "skipped_total": st.get("skipped", 0), "error": st.get("error") or "",
+        "accounts": {names.get(k, k): {"queued": a.get("queued", 0), "ok": a.get("ok", 0), "fail": a.get("fail", 0),
+                                       **({"down": True} if a.get("down") else {})} for k, a in (st.get("accounts") or {}).items()},
+        "recent": [{"title": h.get("title", ""), "result": "올림" if h.get("ok") else (h.get("note") or "실패").split(" - ")[0][:30],
+                    "note": (h.get("note") or "")[:160], "ago_min": ago(h.get("at")), "subs": h.get("subs") or ""}
+                   for h in (st.get("history") or [])[:min(limit, 20)]],
+    }
 
 
 def _text(data):
@@ -134,6 +191,8 @@ _EVENT_KEYS = ("id", "status", "action", "item_type", "root", "path", "removed_p
 
 
 def _call(name, args, mods, svc):
+    if name == "tgup_status":
+        return tgup_status(min(200, max(1, int(args.get("limit") or 30))))
     if name.startswith("gdw_"):
         if svc is None:
             raise ToolError("드라이브 변경 감시가 꺼져 있습니다 (GDW_ENABLED).")
@@ -262,7 +321,7 @@ def _handle_one(msg, mods, svc, version):
             "capabilities": {"tools": {"listChanged": False}},
             "serverInfo": {"name": "bookoasis_assistant", "title": "BookOasisAssistant", "version": version},
             "instructions": ("BookOasisAssistant(BookOasis 보조 프로그램): Google Drive 변경 감시(BookOasis 부분 스캔)와 웹툰 다운로더. "
-                             "gdw_status로 감시 현황을, wtm_status로 다운로더 현황을 먼저 보세요. 경로는 이 프로그램 기준 절대 경로입니다.")}}
+                             "gdw_status로 감시 현황을, wtm_status로 다운로더 현황을, tgup_status로 텔레그램 자동 올리기를 먼저 보세요. 경로는 이 프로그램 기준 절대 경로입니다.")}}
     if method == "ping":
         return {"jsonrpc": "2.0", "id": rid, "result": {}}
     if method == "tools/list":
@@ -282,7 +341,7 @@ def _handle_one(msg, mods, svc, version):
         except Exception as error:  # 도구 하나의 오류가 서버를 멈추지 않게
             log.exception("MCP 도구 실패: %s", name)
             result, is_error = f"{type(error).__name__}: {error}", True
-        if not is_error and name not in ("gdw_status", "gdw_events", "gdw_log", "gdw_schedules", "wtm_status", "wtm_titles",
+        if not is_error and name not in ("gdw_status", "gdw_events", "gdw_log", "gdw_schedules", "wtm_status", "wtm_titles", "tgup_status",
                                          "wtm_history", "wtm_title_report", "wtm_forecast"):
             log.info("MCP 도구 실행: %s %s", name, json.dumps(args, ensure_ascii=False)[:200])
         return {"jsonrpc": "2.0", "id": rid, "result": {"content": [{"type": "text", "text": _text(result)}], "isError": is_error}}
