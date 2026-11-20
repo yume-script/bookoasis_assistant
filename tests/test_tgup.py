@@ -122,6 +122,19 @@ class TgupTest(unittest.TestCase):
             self.assertEqual(got["queue_total"], 2)
             self.assertIn("영화", {q["title"] for q in got["queue"]})
             self.assertEqual({q["channel"] for q in got["queue"]}, {"채널"})
+            # 설정 도구 (다운로드 에이전트): 공통 칸·규칙 칸 바꾸기, 없는 칸·규칙은 오류, 규칙은 지우지 않음
+            res = mcp.tgup_set_settings({"encode_slots": 2, "hours": "1-7"}, [{"id": vid["id"], "height": 1080, "wait_min": 60}])
+            self.assertEqual(res["changed"]["encode_slots"], {"before": 1, "after": 2})
+            st2 = mcp.tgup_settings()
+            r0 = next(r for r in st2["rules"] if r["id"] == vid["id"])
+            self.assertEqual((st2["hours"], r0["height"], r0["wait_min"], len(st2["rules"])), ("1-7", 1080, 60, 2))
+            self.assertEqual(next(r for r in st2["rules"] if r["id"] == mus["id"])["media"], "music")   # 음악 규칙은 그대로
+            with self.assertRaises(mcp.ToolError):
+                mcp.tgup_set_settings({"rules": []})
+            with self.assertRaises(mcp.ToolError):
+                mcp.tgup_set_settings(None, [{"id": "없음", "enabled": False}])
+            with self.assertRaises(mcp.ToolError):
+                mcp.tgup_set_settings(None, [{"id": vid["id"], "folder": "/etc"}])
         finally:
             api_post("/api/tgup/item", {"action": "cancel_all"})
             shutil.rmtree(folder, ignore_errors=True)

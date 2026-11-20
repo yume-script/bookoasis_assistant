@@ -105,6 +105,13 @@ def _tools(mods, svc):
                      ["titleId", "state"]), WRITE),
             ("wtm_download_title", "구독 중인 작품 하나의 새 회차를 지금 받는다.",
              _schema({"titleId": {"type": "string"}, "platform": platform}, ["titleId"]), WRITE),
+            ("wtm_settings", "웹툰 다운로더 설정 전체 (자동 실행 crontab, 동시 작품 수·이미지 동시 수·회차 간 대기, 고속 모드, 기다무·하루 계획표, "
+                             "카카오·웹소설 켜기 등): 칸마다 key·이름·종류·현재 값·설명과 다음 자동 실행 시각. 비밀값(쿠키)은 값 없이, "
+                             "locked=true인 칸(경로·쿠키·알림)은 wtm_set_settings로 바꿀 수 없다.", _schema(), READ),
+            ("wtm_set_settings", "웹툰 다운로더 설정 바꾸기 (화면의 설정 저장과 같음, 작업 프로세스에 바로 반영). "
+                                 "values는 {key: 값} - wtm_settings의 key, locked가 아닌 칸만. 바뀐 칸의 전·후 값을 돌려준다.",
+             _schema({"values": {"type": "object", "description": "예: {\"SCHEDULE_CRON\": \"0 */2 * * *\", \"PARALLEL_TITLES\": 3}"}},
+                     ["values"]), WRITE),
             ("wtm_run", "웹툰 다운로더 작업 실행·취소: scan_now(요일별 스캔), run_full_cycle_now(전체 실행), "
                         "scan_finished_now(완결 목록 수집), cancel_job(진행 중인 작업 취소).",
              _schema({"job": {"type": "string", "enum": ["scan_now", "run_full_cycle_now", "scan_finished_now", "cancel_job"]}},
@@ -112,6 +119,16 @@ def _tools(mods, svc):
         ]
     if mods.get("tgup"):
         tools += [
+            ("tgup_settings", "텔레그램 자동 올리기 설정: 확인 주기(interval 분)·올리는 시간대(hours \"1-7\", 비우면 언제나)·동시 인코딩 수"
+                              "(encode_slots)·한도(max_gb)·인코더·제외 정규식, 규칙들(id·켜짐·종류·폴더/Plex·채널·화질·자막 기다리기 분·"
+                              "자막 입히기·같이 올릴 계정·음악 규칙의 이미 있는 곡 올리기).", _schema(), READ),
+            ("tgup_set_settings", "텔레그램 자동 올리기 설정 바꾸기 (화면의 규칙 저장과 같음). settings: 바꿀 공통 칸 "
+                                  "{interval, hours, encode_slots, max_gb, encoder, cpu_preset, exclude}, rules: [{id, 바꿀 칸…}] "
+                                  "(enabled, height 0/480/720/1080, wait_subs, wait_min, burn_subs, caption, tg_alt, upload_existing), "
+                                  "add_rules: [새 규칙 - kind folder/music/plex, folder 또는 plex+section, tg, channel …]. "
+                                  "규칙을 지우지는 않는다 (끄려면 enabled=false).",
+             _schema({"settings": {"type": "object"}, "rules": {"type": "array", "items": {"type": "object"}},
+                      "add_rules": {"type": "array", "items": {"type": "object"}}}), WRITE),
             ("tgup_status", "텔레그램 자동 올리기 현황: 계정마다 지금 올리는 것(단계·진행률·걸린 시간), 진행 목록(대기열 - 순서·제목·채널·계정), "
                             "자막 기다림, 다시 시도 대기, 끊긴 드라이브, 최근 기록(올림·건너뜀·실패와 까닭). "
                             "'텔레그램 올리기 뭐 하고 있어?', '대기열 몇 개야?', '○○ 올라갔어?' 같은 질문에 쓴다.",
@@ -119,6 +136,122 @@ def _tools(mods, svc):
                                 "description": "진행 목록·최근 기록을 몇 개까지"}}), READ),
         ]
     return tools
+
+
+# 에이전트(MCP)로 바꾸지 않는 웹툰 다운로더 칸: 경로·쿠키·알림·업로드 대상 (사람이 화면에서)
+_WTM_LOCKED_RE = __import__("re").compile(r"ROOT|COOKIE|COMPARE_|NOTIFY|DISCORD_|TELEGRAM_UPLOAD_|_LIBRARY_|WEBHOOK|TOKEN")
+
+
+def _wtm_locked(key, ftype):
+    return ftype in ("password", "library", "hidden") or bool(_WTM_LOCKED_RE.search(key))
+
+
+def wtm_settings():
+    from wtm import service as wtm_service
+    res = _check(wtm_service.action("get_settings", {}))
+    data = json.loads(res.get("message") or "{}")
+    values = data.get("values") or {}
+    fields = []
+    for g in data.get("groups") or []:
+        for f in g.get("fields") or []:
+            if f.get("type") == "heading":
+                continue
+            locked = _wtm_locked(f["key"], f.get("type"))
+            row = {"key": f["key"], "label": f.get("label") or "", "type": f.get("type") or "text", "section": g.get("title") or g.get("label") or ""}
+            if f.get("type") == "password":
+                row["set"] = bool((data.get("secret_set") or {}).get(f["key"]))
+            else:
+                row["value"] = values.get(f["key"])
+            if f.get("options"):
+                row["options"] = [o[0] if isinstance(o, (list, tuple)) else o for o in f["options"]]
+            if f.get("hint"):
+                row["hint"] = str(f["hint"])[:220]
+            if f.get("requires"):
+                row["requires"] = f["requires"]   # 이 체크 칸이 켜져 있어야 쓰이는 칸
+            if locked:
+                row["locked"] = True
+            fields.append(row)
+    return {"next_runs": data.get("next_runs"), "fields": fields}
+
+
+def wtm_set_settings(values):
+    from wtm import service as wtm_service
+    if not isinstance(values, dict) or not values:
+        raise ToolError("values({key: 값})가 필요합니다.")
+    cur = {f["key"]: f for f in wtm_settings()["fields"]}
+    bad = [k for k in values if k not in cur]
+    if bad:
+        raise ToolError("없는 설정: " + ", ".join(bad))
+    locked = [k for k in values if cur[k].get("locked")]
+    if locked:
+        raise ToolError("이 칸은 화면에서 사람이 바꿉니다 (경로·쿠키·알림): " + ", ".join(locked))
+    res = wtm_service.action("save_settings", {"values": values})
+    if not res.get("success"):
+        raise ToolError(res.get("error") or res.get("message") or "저장 실패")
+    after = {f["key"]: f.get("value") for f in wtm_settings()["fields"]}
+    return {"message": res.get("message") or "저장했습니다.",
+            "changed": {k: {"before": cur[k].get("value"), "after": after.get(k)} for k in values if cur[k].get("value") != after.get(k)}}
+
+
+_TGUP_GLOBAL = ("interval", "hours", "encode_slots", "max_gb", "encoder", "cpu_preset", "exclude")
+_TGUP_RULE = ("enabled", "height", "wait_subs", "wait_min", "burn_subs", "caption", "tg_alt", "upload_existing")
+
+
+def tgup_settings():
+    from tgup import plex_to_tg
+    return plex_to_tg.load_settings()
+
+
+def tgup_set_settings(settings=None, rules=None, add_rules=None):
+    from tgup import compat, plex_to_tg
+    from tgup import service as tgup_service
+    st = plex_to_tg.load_settings()
+    before = json.loads(json.dumps(st))
+    for k, v in (settings or {}).items():
+        if k not in _TGUP_GLOBAL:
+            raise ToolError(f"바꿀 수 없는 공통 칸: {k} (가능: {', '.join(_TGUP_GLOBAL)})")
+        st[k] = v
+    if "max_gb" in (settings or {}):
+        st["max_gb_v"] = 1
+    by_id = {r["id"]: r for r in st["rules"]}
+    for patch in rules or []:
+        r = by_id.get(str((patch or {}).get("id") or ""))
+        if not r:
+            raise ToolError(f"없는 규칙: {(patch or {}).get('id')}")
+        for k, v in patch.items():
+            if k == "id":
+                continue
+            if k not in _TGUP_RULE:
+                raise ToolError(f"규칙에서 바꿀 수 없는 칸: {k} (가능: {', '.join(_TGUP_RULE)})")
+            r[k] = v
+    for new in add_rules or []:
+        if not isinstance(new, dict):
+            raise ToolError("add_rules의 항목은 객체여야 합니다.")
+        st["rules"].append({k: v for k, v in new.items() if k != "id"})
+    for r in st["rules"]:   # (clean_settings는 화면 형식 - 음악 규칙은 kind music으로)
+        if r.get("media") == "music":
+            r["kind"] = "music"
+    try:
+        clean = plex_to_tg.clean_settings(st)
+    except ValueError as e:
+        raise ToolError(str(e))
+    data = compat.load()
+    data["plex_to_tg"] = clean
+    compat.save(data)
+    runner = tgup_service.RUNNER
+    if runner.loop and runner.mirror:
+        runner.run(runner.mirror.wake)
+    changed = {k: {"before": before.get(k), "after": clean.get(k)} for k in _TGUP_GLOBAL if before.get(k) != clean.get(k)}
+    old_rules = {r["id"]: r for r in before["rules"]}
+    for r in clean["rules"]:
+        o = old_rules.get(r["id"])
+        if o is None:
+            changed[f"rule {r['id']}"] = {"added": {k: r.get(k) for k in ("kind", "media", "folder", "section_title", "channel_title")}}
+            continue
+        diff = {k: {"before": o.get(k), "after": r.get(k)} for k in _TGUP_RULE if o.get(k) != r.get(k)}
+        if diff:
+            changed[f"rule {r['id']} ({r.get('section_title') or r.get('folder')})"] = diff
+    return {"message": "저장했습니다.", "changed": changed}
 
 
 def tgup_status(limit=30):
@@ -193,6 +326,14 @@ _EVENT_KEYS = ("id", "status", "action", "item_type", "root", "path", "removed_p
 def _call(name, args, mods, svc):
     if name == "tgup_status":
         return tgup_status(min(200, max(1, int(args.get("limit") or 30))))
+    if name == "tgup_settings":
+        return tgup_settings()
+    if name == "tgup_set_settings":
+        return tgup_set_settings(args.get("settings"), args.get("rules"), args.get("add_rules"))
+    if name == "wtm_settings":
+        return wtm_settings()
+    if name == "wtm_set_settings":
+        return wtm_set_settings(args.get("values"))
     if name.startswith("gdw_"):
         if svc is None:
             raise ToolError("드라이브 변경 감시가 꺼져 있습니다 (GDW_ENABLED).")
@@ -342,6 +483,7 @@ def _handle_one(msg, mods, svc, version):
             log.exception("MCP 도구 실패: %s", name)
             result, is_error = f"{type(error).__name__}: {error}", True
         if not is_error and name not in ("gdw_status", "gdw_events", "gdw_log", "gdw_schedules", "wtm_status", "wtm_titles", "tgup_status",
+                                         "tgup_settings", "wtm_settings",
                                          "wtm_history", "wtm_title_report", "wtm_forecast"):
             log.info("MCP 도구 실행: %s %s", name, json.dumps(args, ensure_ascii=False)[:200])
         return {"jsonrpc": "2.0", "id": rid, "result": {"content": [{"type": "text", "text": _text(result)}], "isError": is_error}}
