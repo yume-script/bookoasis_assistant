@@ -11,6 +11,7 @@
   'use strict';
   var ICONS = {
     'cloud-arrow-down': '<path d="M12 13v8"/><path d="m8 17 4 4 4-4"/><path d="M20.9 18.1A5 5 0 0 0 18 9h-1.3A8 8 0 1 0 3 16.3"/>',
+    'hand-pointer': '<path d="M22 14a8 8 0 0 1-8 8"/><path d="M18 11v-1a2 2 0 0 0-4 0"/><path d="M14 10V9a2 2 0 0 0-4 0v1"/><path d="M10 9.5V4a2 2 0 0 0-4 0v10"/><path d="M18 11a2 2 0 1 1 4 0v3a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-6-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"/>',
     'list-check': '<path d="m3 17 2 2 4-4"/><path d="m3 7 2 2 4-4"/><path d="M13 6h8"/><path d="M13 12h8"/><path d="M13 18h8"/>',
     'sliders': '<path d="M21 4h-7"/><path d="M10 4H3"/><path d="M21 12h-9"/><path d="M8 12H3"/><path d="M21 20h-5"/><path d="M12 20H3"/><path d="M14 2v4"/><path d="M8 10v4"/><path d="M16 18v4"/>',
     'calendar-days': '<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4"/><path d="M8 2v4"/><path d="M3 10h18"/>',
@@ -77,6 +78,7 @@
     { id: 'tgup', title: '텔레그램 자동 올리기', icon: 'cloud-arrow-up', href: 'tgup', tabsSel: '.tgup-tabs',
       items: [
         { tab: 'status', label: '진행 상태', icon: 'list-check' },
+        { tab: 'send', label: '파일 골라 보내기', icon: 'hand-pointer' },
         { tab: 'rules', label: '규칙', icon: 'sliders' },
         { tab: 'account', label: '텔레그램 계정', icon: 'paper-plane' }
       ] },

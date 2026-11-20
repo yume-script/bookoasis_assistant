@@ -10,6 +10,8 @@
   GET  /api/tgup/channels?account=  그 계정이 들어가 있는 채널·그룹 (비우면 첫 계정)
   GET  /api/tgup/folders?path= 폴더 고르기 (비우면 rclone mount 폴더·원격 목록)
   GET  /api/tgup/shot?rule=&key=  자막 기다리는 항목의 10분 지점 장면 (JPEG)
+  GET  /api/tgup/files?rule=&sub= 파일 골라 보내기: 폴더 규칙의 sub 폴더 안 하위 폴더·파일 (규칙이 올리는 종류만)
+  POST /api/tgup/send         {rule, keys: [폴더 규칙 기준 상대 경로], again} 고른 파일을 진행 목록에
   POST /api/tgup/settings     설정 저장 (규칙들)
   POST /api/tgup/check        지금 확인
   POST /api/tgup/test         {rule} 가장 최근 것 하나 올려 보기
@@ -21,6 +23,7 @@
 """
 import asyncio
 import logging
+import os
 import threading
 import time
 
@@ -226,6 +229,8 @@ def api_get(path, query):
             raise ApiError(400, str(e))
     if path == "/api/tgup/folders":
         return RUNNER.call(_folders(query.get("path", "").strip()), 60)
+    if path == "/api/tgup/files":
+        return RUNNER.call(_files(query.get("rule", ""), query.get("sub", "")), 120)
     if path == "/api/tgup/shot":
         shot = RUNNER.mirror.shot_file(query.get("rule", ""), query.get("key", ""))
         if not shot:
@@ -268,6 +273,51 @@ async def _folders(path):
     return {"success": True, "path": path, "dirs": dirs}
 
 
+async def _files(rule_id, sub):
+    """파일 골라 보내기: 규칙 폴더 아래 sub 폴더의 하위 폴더와 (규칙이 올리는 종류의) 파일. sent = 이 규칙으로 올린 적 있음"""
+    rule = next((r for r in plex_to_tg.load_settings()["rules"] if r["id"] == rule_id), None)
+    if not rule or rule["kind"] != "folder":
+        raise ApiError(400, "폴더(rclone 드라이브) 규칙을 골라 주세요.")
+    raw, sub = sub, plex_to_tg.clean_key(sub) if sub.strip("/ ") else ""
+    if raw.strip("/ ") and not sub:
+        raise ApiError(400, "규칙 폴더 밖은 볼 수 없습니다.")
+    folder = rule["folder"]
+    remote = folder_watch.is_remote(folder)
+    target = (folder_watch._join_remote(folder, sub) if remote else os.path.join(folder, sub)) if sub else folder
+    exts = plex_to_tg.rule_exts(rule)
+    try:
+        dirs = await folder_watch.list_dirs(target)
+        if remote:
+            rows = await folder_watch._lsjson(target, recursive=False)
+            files = [{"name": str(r.get("Name") or r.get("Path") or ""), "size": int(r.get("Size") or 0),
+                      "mtime": folder_watch._parse_time(r.get("ModTime"))} for r in rows]
+        else:
+            def scan():
+                out = []
+                with os.scandir(target) as it:
+                    for e in it:
+                        if e.is_file():
+                            st = e.stat()
+                            out.append({"name": e.name, "size": st.st_size, "mtime": int(st.st_mtime)})
+                return out
+            files = await asyncio.to_thread(scan)
+    except OSError as e:
+        raise ApiError(400, f"폴더를 열 수 없습니다: {e.strerror or e}")
+    except folder_watch.FolderError as e:
+        raise ApiError(400, str(e))
+    st = plex_to_tg.load_state()["rules"].get(rule_id) or {}
+    done = set(st.get("done") or [])
+    queued = {j["key"] for j in RUNNER.mirror.queue if j["rule"] == rule_id}
+    out = []
+    for f in sorted(files, key=lambda x: x["name"].casefold()):
+        if f["name"].startswith(".") or os.path.splitext(f["name"])[1].lower() not in exts:
+            continue
+        key = f"{sub}/{f['name']}" if sub else f["name"]
+        out.append({**f, "key": key, "sent": key in done, "queued": key in queued})
+    return {"success": True, "rule": rule_id, "folder": folder, "sub": sub, "dirs": dirs, "files": out[:2000],
+            "music": rule.get("media") == "music"}
+
+
 def api_post(path, body):
     if not RUNNER.loop:
         raise ApiError(503, "자동 올리기가 꺼져 있습니다 (aiohttp·telethon 설치 후 다시 시작).")
@@ -306,6 +356,17 @@ def api_post(path, body):
             return {"success": True, "title": RUNNER.call(m.test_latest(str(body.get("rule") or "")))}
         except Exception as e:  # noqa: BLE001
             raise ApiError(400, str(e))
+    if path == "/api/tgup/send":   # 파일 골라 보내기 {rule, keys, again}
+        keys = body.get("keys") if isinstance(body.get("keys"), list) else []
+        if not keys:
+            raise ApiError(400, "보낼 파일을 골라 주세요.")
+        if len(keys) > 500:
+            raise ApiError(400, "한 번에 500개까지 보낼 수 있습니다.")
+        try:
+            n = RUNNER.run(m.send_files, str(body.get("rule") or ""), [str(k) for k in keys], bool(body.get("again")))
+        except ValueError as e:
+            raise ApiError(400, str(e))
+        return {"success": True, "count": n}
     if path == "/api/tgup/requeue":   # 취소·건너뛴 항목 다시 올리기 {days: 7 | 30 | 0(전체)} - 이미 올린 같은 파일·회차는 빼고
         try:
             days = int(body.get("days") or 0)
