@@ -72,7 +72,7 @@ import urllib.parse
 
 from aiohttp import ClientTimeout
 
-from . import compat as config_store, compat as transcode, folder_watch, music, tgaccount as telegram_src
+from . import compat as config_store, compat as transcode, folder_watch, music, throttle, tgaccount as telegram_src
 from gdw import memtrim  # noqa: E402 - 큰 작업 뒤 쓰고 난 메모리를 OS에
 
 log = logging.getLogger("ym_player.plex_to_tg")
@@ -858,12 +858,14 @@ class Mirror:
         for r in settings["rules"]:
             for tg in [r["tg"], *r.get("tg_alt", [])]:
                 accounts.setdefault(tg, {"queued": 0})
+        thr = throttle.all_status(list(accounts))   # 텔레그램 속도 제한 (계정마다)
         for tg, a in accounts.items():
             ln = self.lanes.get(tg)
             a["current"] = ({"title": ln.current.get("title", ""), "phase": ln.current.get("phase", ""),
                              "elapsed": int(now - ln.started) if ln.started else 0} if ln and ln.current else None)
             a["down"] = self._is_down(tg)
             a["down_until"] = int(self._down[tg][0]) if a["down"] else 0
+            a["throttle"] = thr.get(tg) or throttle.status(tg)
             a["last"] = ln.last_done if ln else None
         now_t = time.time()
         for d in [d for d, x in self.offline.items() if now_t - x.get("last", 0) > 2 * SOURCE_RETRY_SEC + 60]:
@@ -1542,8 +1544,21 @@ class Mirror:
         return out
 
     def _next_job(self, tg, rules):
-        """이 계정이 가져갈 다음 항목 - 진행 목록의 앞에서부터 (그 계정이 올릴 수 있는 것 중)"""
-        return next((j for j in self.queue if id(j) not in self._taken and tg in self._accounts_for(rules.get(j["rule"]), j)), None)
+        """이 계정이 가져갈 다음 항목 - 진행 목록의 앞에서부터 (그 계정이 올릴 수 있는 것 중).
+        이 계정이 텔레그램 속도 제한에 걸려 있으면(tgup/throttle.py) 같이 올릴 수 있는 다른 계정 중 놀고 있고 제한 없는 계정에게 양보한다"""
+        mine_slow = throttle.throttled(tg)
+        for j in self.queue:
+            if id(j) in self._taken:
+                continue
+            cands = self._accounts_for(rules.get(j["rule"]), j)
+            if tg not in cands:
+                continue
+            if mine_slow and not j.get("pin") and any(
+                    a != tg and not self._is_down(a) and not throttle.throttled(a)
+                    and not (self.lanes.get(a) and self.lanes[a].current) for a in cands):
+                continue   # 다른 계정이 가져가게 (그 계정 줄이 깨어 있으면 바로 가져간다)
+            return j
+        return None
 
     async def _run_lane(self, tg, st):
         lane = self.lanes.setdefault(tg, Lane(tg))
@@ -1559,6 +1574,7 @@ class Mirror:
                     await self._run_job(lane, job, rules.get(job["rule"]), st)
                 finally:
                     self._taken.discard(id(job))
+                    throttle.stopped(tg)
         finally:
             lane.current = lane.current_job = lane.job = None
             lane.cur_ep = None
@@ -2018,6 +2034,7 @@ class Mirror:
         try:
             me = await client.get_me()
             gb = 4 if getattr(me, "premium", False) else 2
+            throttle.set_premium(tg_id, bool(getattr(me, "premium", False)))
         except Exception as e:   # 모르면 일반 계정 한도로 (작게 나누는 쪽이 안전)
             log.info("텔레그램 계정 종류를 알 수 없어 2GB 한도로 나눕니다: %s", e)
             gb = 2
@@ -2437,11 +2454,16 @@ class Mirror:
                      DocumentAttributeFilename(name)]
             self.current = {"title": title, "phase": "텔레그램에 올리는 중", "done": 0, "total": os.path.getsize(local)}
 
+            tg_now = (_LANE.get() or self._main).tg
+
             def progress(done, total):
                 if self.current:
                     self.current.update(done=int(done), total=int(total))
+                throttle.progress(tg_now, done)
+            t_send = time.time()
             sent = await client.send_file(peer, local, caption=cap, thumb=thumb, attributes=attrs, force_document=False,
                                           progress_callback=progress)
+            throttle.done(tg_now, os.path.getsize(local), time.time() - t_send)
             msgs.append(getattr(sent, "id", None))
             self._note_sent(getattr(sent, "id", None))
             # 가사 (.lrc - 같은 이름): 곡 바로 뒤에 파일로 (YMPlayer가 곡에 붙여 보여 줄 수 있게)
@@ -2504,11 +2526,16 @@ class Mirror:
             self.current = {"title": title + (f" ({i}/{len(pieces)})" if many else ""),
                             "phase": "텔레그램에 올리는 중", "done": 0, "total": os.path.getsize(path)}
 
+            tg_now = (_LANE.get() or self._main).tg
+
             def progress(done, total):
                 if self.current:
                     self.current.update(done=int(done), total=int(total))
+                throttle.progress(tg_now, done)   # (텔레그램 속도 제한 감지 - 지금 속도)
+            t_send = time.time()
             sent = await client.send_file(peer, path, caption=cap[:1024], thumb=thumb, attributes=attrs,
                                           supports_streaming=stream, force_document=False, progress_callback=progress)
+            throttle.done(tg_now, os.path.getsize(path), time.time() - t_send)
             msgs.append(getattr(sent, "id", None))
             self._note_sent(getattr(sent, "id", None))
             for spath, lang, sext in sub_files:   # 그 조각의 자막 (나눴으면 조각 시간만큼 잘라서)
