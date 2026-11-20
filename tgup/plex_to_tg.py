@@ -568,6 +568,14 @@ def trim_history(hist):
     return out
 
 
+def clean_key(key):
+    """폴더 규칙 안의 상대 경로 (앞뒤 /, 역슬래시 정리). 폴더 밖(..)이나 절대 경로면 "" """
+    parts = [p for p in str(key or "").replace("\\", "/").split("/") if p not in ("", ".")]
+    if not parts or any(p == ".." for p in parts) or ":" in parts[0]:
+        return ""
+    return "/".join(parts)
+
+
 def rule_exts(rule):
     """폴더 규칙이 보는 확장자 (음악 규칙이면 음악 파일)"""
     return music.AUDIO_EXT if rule.get("media") == "music" else folder_watch.VIDEO_EXT
@@ -1138,6 +1146,30 @@ class Mirror:
             raise ValueError(f"장면을 뽑지 못했습니다: {err.strip()[-200:]}")
         os.replace(path + ".tmp.jpg", path)
         return path
+
+    def send_files(self, rule_id, keys, again=False):
+        """[파일 골라 보내기] 폴더 규칙의 파일들을 직접 골라 진행 목록 끝에 넣는다 (제외 정규식·자막 기다리기는 건너뜀 - 고른 것이니).
+        again: 이 채널에 이미 올린 파일(같은 파일·파일 이름·회차)도 다시 올린다. 돌려주는 값: 넣은 수"""
+        rule = next((r for r in load_settings()["rules"] if r["id"] == rule_id), None)
+        if not rule or rule["kind"] != "folder":
+            raise ValueError("폴더(rclone 드라이브) 규칙을 골라 주세요.")
+        exts = rule_exts(rule)
+        queued = {(j["rule"], j["key"]) for j in self.queue}
+        n = 0
+        for key in keys or []:
+            key = clean_key(key)
+            if not key or os.path.splitext(key)[1].lower() not in exts:
+                raise ValueError(f"올릴 수 없는 파일입니다: {key or '(빈 이름)'}")
+            if (rule_id, key) in queued:
+                continue
+            title = music_title(key) if rule.get("media") == "music" else folder_watch.file_fields(key)["name"]
+            self.queue.append({"rule": rule_id, "key": key, "title": title, "manual": True, **({"force": True} if again else {})})
+            queued.add((rule_id, key))
+            n += 1
+        if n:
+            self._queue_changed()
+            self.wake()
+        return n
 
     def force_item(self, rule_id, key):
         """자막 기다리는 항목을 기다리지 않고 지금 올린다 (자막을 영상에 입힌 하드섭처럼 자동으로 알 수 없는 경우)"""
@@ -2191,7 +2223,8 @@ class Mirror:
         if dup:
             return f"건너뜀: 중복 - {dup}"
         # (파일 이름·제목·폴더 안 경로·전체 경로 - 경로로 "Featurettes 폴더 아래" 같은 것도 뺄 수 있게)
-        pat = "" if test else excluded_by(load_settings()["exclude"], os.path.basename(key), fields["name"], key,
+        manual = bool((self._job or {}).get("manual"))   # 파일 골라 보내기: 제외 정규식·자막 기다리기는 건너뜀
+        pat = "" if test or manual else excluded_by(load_settings()["exclude"], os.path.basename(key), fields["name"], key,
                                           folder_watch._join_remote(folder, key) if folder_watch.is_remote(folder)
                                           else os.path.join(folder, key))
         if pat:
@@ -2224,7 +2257,7 @@ class Mirror:
             soft_kind = folder_watch.classify_subs(folder_watch.stream_tracks(info))
             any_inside = soft_kind["usable"]
             # 3) 쓸 수 있는 소프트 자막(한국어·언어 표시 없음 글자 자막)이 있으면 바로, 4) 없으면 자막 파일을 정한 분만큼 기다린다
-            if rule["wait_subs"] and not side and not any_inside and not test:
+            if rule["wait_subs"] and not side and not any_inside and not test and not manual:
                 self._wait_subs(rule, key, soft_kind["why"] or ("파일을 읽지 못해 자막 확인 못 함" if remote and not info else ""))
             tg = self.tg_for(rule["tg"])
             client = await tg.authorized_client()
@@ -2338,8 +2371,8 @@ class Mirror:
                     got = ""
             if got:
                 return f"건너뜀: 중복 - 같은 파일 이름이 이미 채널에 있음 ({got})"
-            pat = excluded_by(load_settings()["exclude"], base, title0, key,
-                              folder_watch._join_remote(folder, key) if remote else os.path.join(folder, key))
+            pat = "" if (self._job or {}).get("manual") else excluded_by(
+                load_settings()["exclude"], base, title0, key, folder_watch._join_remote(folder, key) if remote else os.path.join(folder, key))
             if pat:
                 return f"건너뜀: 제외 - 제외 정규식 '{pat}'에 맞음"
         self.current = {"title": title0, "phase": "준비 중", "done": 0, "total": 0}

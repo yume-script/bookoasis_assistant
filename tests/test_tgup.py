@@ -73,6 +73,47 @@ class TgupTest(unittest.TestCase):
         finally:
             shutil.rmtree(folder, ignore_errors=True)
 
+    def test_send_files(self):
+        """파일 골라 보내기: 규칙 폴더 안을 보고(동영상만, 하위 폴더), 고른 파일을 진행 목록에 (폴더 밖은 막음)"""
+        api_post, api_get, ApiError = self.service.api_post, self.service.api_get, self.service.ApiError
+        from tgup import plex_to_tg
+        self.assertEqual(plex_to_tg.clean_key("/a//b/./c.mkv"), "a/b/c.mkv")
+        self.assertEqual(plex_to_tg.clean_key("a/../../etc/passwd"), "")
+        self.assertEqual(plex_to_tg.clean_key("gdrive:x.mkv"), "")
+        data = self.compat.load()
+        data.pop("telegram", None)
+        self.compat.save(data)
+        folder = tempfile.mkdtemp(prefix="tgup-send-")
+        try:
+            os.makedirs(os.path.join(folder, "시즌1"))
+            for rel in ("영화.mkv", "메모.txt", "시즌1/E01.mp4", ".숨김.mkv"):
+                with open(os.path.join(folder, rel), "wb") as f:
+                    f.write(b"x" * 10)
+            res = api_post("/api/tgup/settings", {"rules": [
+                {"kind": "folder", "folder": folder, "tg": "tg", "channel": "-100123", "channel_title": "채널"},
+                {"kind": "music", "folder": folder, "tg": "tg", "channel": "-100124"}]})
+            vid, mus = res["settings"]["rules"]
+            top = api_get("/api/tgup/files", {"rule": vid["id"], "sub": ""})
+            self.assertEqual((top["dirs"], [f["name"] for f in top["files"]]), (["시즌1"], ["영화.mkv"]))
+            inner = api_get("/api/tgup/files", {"rule": vid["id"], "sub": "시즌1"})
+            self.assertEqual([f["key"] for f in inner["files"]], ["시즌1/E01.mp4"])
+            self.assertEqual(api_get("/api/tgup/files", {"rule": mus["id"], "sub": ""})["files"], [])   # 음악 규칙은 음악 파일만
+            with self.assertRaises(ApiError):
+                api_get("/api/tgup/files", {"rule": vid["id"], "sub": "../.."})
+            with self.assertRaises(ApiError):
+                api_post("/api/tgup/send", {"rule": vid["id"], "keys": ["메모.txt"]})   # 규칙이 올리지 않는 종류
+            with self.assertRaises(ApiError):
+                api_post("/api/tgup/send", {"rule": vid["id"], "keys": []})
+            r = api_post("/api/tgup/send", {"rule": vid["id"], "keys": ["영화.mkv", "시즌1/E01.mp4"], "again": True})
+            self.assertEqual(r["count"], 2)
+            m = self.service.RUNNER.mirror
+            jobs = [j for j in self.service.RUNNER.run(lambda: list(m.queue)) if j.get("rule") == vid["id"]]
+            self.assertTrue(jobs and all(j.get("manual") and j.get("force") for j in jobs))   # (텔레그램 계정이 없어 줄에 남음)
+            self.assertEqual(api_post("/api/tgup/send", {"rule": vid["id"], "keys": ["영화.mkv"]})["count"], 0)   # 이미 줄에 있음
+        finally:
+            api_post("/api/tgup/item", {"action": "cancel_all"})
+            shutil.rmtree(folder, ignore_errors=True)
+
     def test_account_api_values(self):
         api_post, ApiError = self.service.api_post, self.service.ApiError
         with self.assertRaises(ApiError):

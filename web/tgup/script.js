@@ -76,6 +76,7 @@
         Object.entries(panes).forEach(([k, p]) => { p.hidden = k !== name; });
         if (name === 'status') renderStatus(panes.status);
         if (name === 'rules') renderRules(panes.rules);
+        if (name === 'send') renderSend(panes.send);
         if (name === 'account') renderAccount(panes.account);
         try { history.replaceState(null, '', `#${name}`); } catch (e) { /* 무시 */ }
     }
@@ -161,6 +162,93 @@
                 h('div', { class: 'tg-login' }, field('인증 코드', code), pwField, login));
         }
         return box;
+    }
+
+    // ── 파일 골라 보내기 ──
+    // 폴더(rclone 드라이브) 규칙을 고르고 그 폴더 안을 돌아다니며 파일을 골라 진행 목록에 넣는다.
+    // 고른 파일은 제외 정규식·자막 기다리기를 건너뛴다. 이미 올린 파일은 [다시 올리기]를 켜야 다시 올린다
+    const fmtBytes = (n) => (n >= 1e9 ? `${(n / 1e9).toFixed(2)}GB` : n >= 1e6 ? `${(n / 1e6).toFixed(1)}MB` : `${Math.max(1, Math.round(n / 1e3))}KB`);
+    const sendState = { rule: '', sub: '' };
+    async function renderSend(pane) {
+        clear(pane).appendChild(loading());
+        let st;
+        try { st = await api('api/tgup'); } catch (e) { clear(pane).append(h('p', { class: 'muted error', text: e.message })); return; }
+        const rules = (st.settings.rules || []).filter((r) => r.kind === 'folder');
+        clear(pane);
+        if (!rules.length) {
+            pane.append(h('p', { class: 'muted', text: '폴더(rclone 드라이브) 규칙이 없습니다. [규칙] 탭에서 rclone 드라이브 · 폴더(또는 음악) 규칙을 먼저 만들어 주세요.' }));
+            return;
+        }
+        if (!rules.some((r) => r.id === sendState.rule)) { sendState.rule = rules[0].id; sendState.sub = ''; }
+        const ruleSel = h('select', { class: 'select' }, rules.map((r) => h('option', {
+            value: r.id, selected: r.id === sendState.rule,
+            text: `${r.media === 'music' ? '🎵 ' : ''}${r.section_title || r.folder} → ${r.channel_title || r.channel}${r.enabled ? '' : ' (꺼짐)'}`,
+        })));
+        const againIn = h('input', { type: 'checkbox' });
+        const sendBtn = h('button', { class: 'btn btn-accent', disabled: true }, icon('paper-plane'), ' 보내기');
+        const allIn = h('input', { type: 'checkbox', title: '이 폴더의 파일 모두' });
+        const listBox = h('div', { class: 'send-list' });
+        const crumb = h('div', { class: 'toolbar send-crumb' });
+        const picked = new Map();   // key -> 파일 이름 (폴더를 옮겨 다녀도 고른 것은 남는다)
+        const syncBtn = () => {
+            sendBtn.disabled = !picked.size;
+            sendBtn.lastChild.textContent = picked.size ? ` 보내기 (${picked.size}개)` : ' 보내기';
+        };
+        async function show(sub) {
+            sendState.sub = sub;
+            clear(listBox).appendChild(loading());
+            let d;
+            try { d = await api(`api/tgup/files?${new URLSearchParams({ rule: sendState.rule, sub })}`); } catch (e) {
+                clear(listBox).append(h('p', { class: 'muted error', text: e.message }));
+                if (sub) listBox.append(h('button', { class: 'btn btn-sm', on: { click: () => show('') } }, icon('arrow-up'), ' 규칙 폴더로'));
+                return;
+            }
+            // 위치: 규칙 폴더 / 하위 / 폴더
+            const parts = sub ? sub.split('/') : [];
+            clear(crumb).append(h('button', { class: 'btn btn-sm', on: { click: () => show('') } }, icon('folder'), ` ${d.folder}`),
+                ...parts.map((p, i) => [h('span', { class: 'muted', text: '/' }),
+                    h('button', { class: 'btn btn-sm', on: { click: () => show(parts.slice(0, i + 1).join('/')) } }, p)]).flat());
+            clear(listBox);
+            if (sub) listBox.append(h('button', { class: 'send-row send-dir', type: 'button', on: { click: () => show(parts.slice(0, -1).join('/')) } },
+                icon('arrow-up'), h('span', { text: '위로' })));
+            d.dirs.forEach((n) => listBox.append(h('button', { class: 'send-row send-dir', type: 'button', on: { click: () => show(sub ? `${sub}/${n}` : n) } },
+                icon('folder'), h('span', { text: n }))));
+            const boxes = [];
+            d.files.forEach((f) => {
+                const c = h('input', { type: 'checkbox', checked: picked.has(f.key) });
+                c.addEventListener('change', () => { if (c.checked) picked.set(f.key, f.name); else picked.delete(f.key); syncBtn(); });
+                boxes.push([c, f]);
+                listBox.append(h('label', { class: 'send-row send-file' }, c, icon(d.music ? 'music' : 'film'), h('span', { class: 'send-name', text: f.name }),
+                    f.queued ? h('span', { class: 'chip', text: '진행 목록에 있음' }) : f.sent ? h('span', { class: 'chip chip-ok', text: '올림' }) : null,
+                    h('span', { class: 'muted', text: fmtBytes(f.size) })));
+            });
+            allIn.checked = !!boxes.length && boxes.every(([c]) => c.checked);
+            allIn.disabled = !boxes.length;
+            allIn.onchange = () => {
+                boxes.forEach(([c, f]) => { c.checked = allIn.checked; if (allIn.checked) picked.set(f.key, f.name); else picked.delete(f.key); });
+                syncBtn();
+            };
+            if (!d.dirs.length && !d.files.length) listBox.append(h('p', { class: 'muted', text: d.music ? '음악 파일이 없습니다.' : '동영상 파일이 없습니다.' }));
+        }
+        ruleSel.addEventListener('change', () => { sendState.rule = ruleSel.value; picked.clear(); syncBtn(); show(''); });
+        sendBtn.addEventListener('click', async () => {
+            sendBtn.disabled = true;
+            try {
+                const r = await post('api/tgup/send', { rule: sendState.rule, keys: [...picked.keys()], again: againIn.checked });
+                toast(r.count ? `${r.count}개를 진행 목록에 넣었습니다.` : '이미 진행 목록에 있습니다.', 'success');
+                picked.clear();
+                showTab('status');
+            } catch (e) { toast(e.message, 'error', 6000); syncBtn(); }
+        });
+        pane.append(h('div', { class: 'mirror-rule' },
+            field('규칙 (올릴 폴더 → 텔레그램 채널)', ruleSel),
+            crumb,
+            h('div', { class: 'toolbar' }, h('label', { class: 'check' }, allIn, ' 이 폴더의 파일 모두'),
+                h('label', { class: 'check', title: '같은 파일·파일 이름·회차를 이미 올렸어도 다시 올립니다' }, againIn, ' 이미 올린 파일도 다시 올리기'),
+                sendBtn),
+            listBox,
+            h('p', { class: 'field-hint', text: '폴더를 옮겨 다니며 여러 폴더의 파일을 함께 고를 수 있습니다. 고른 파일은 진행 목록 끝에 들어가고, 제외 정규식·자막 기다리기는 건너뜁니다 (나머지 처리 - 인코딩·자막 입히기·나누기, 음악은 태그 캡션 - 는 규칙대로).' })));
+        show(sendState.rule === ruleSel.value ? sendState.sub : '');
     }
 
     // ── 폴더 고르기 ──

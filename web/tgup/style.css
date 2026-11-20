@@ -120,3 +120,15 @@ textarea.input { resize: vertical; }
 .subs-burn { background: rgba(168, 85, 247, 0.16); color: #c99bff; }
 .subs-lost { background: rgba(239, 68, 68, 0.14); color: #f87171; }
 .subs-none { background: var(--bg-elev2); color: var(--muted); }
+
+/* 파일 골라 보내기 */
+.send-crumb { flex-wrap: wrap; gap: 0.25rem; }
+.send-list { display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: var(--radius); max-height: 60vh; overflow: auto; }
+.send-row { display: flex; align-items: center; gap: 0.6rem; padding: 0.45rem 0.7rem; border: 0; border-bottom: 1px solid var(--border); background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.send-row:last-child { border-bottom: 0; }
+.send-row:hover { background: var(--hover, rgba(127, 127, 127, 0.08)); }
+.send-name { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.send-dir i { color: var(--accent); }
+.send-row .chip { display: inline-block; padding: 0.1rem 0.5rem; border-radius: 999px; font-size: 0.78rem; font-weight: 600; white-space: nowrap;
+  background: rgba(127, 127, 127, 0.18); }
+.send-row .chip-ok { background: rgba(46, 160, 67, 0.18); color: #3fb950; }
