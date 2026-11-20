@@ -129,6 +129,10 @@ def _tools(mods, svc):
                                   "규칙을 지우지는 않는다 (끄려면 enabled=false).",
              _schema({"settings": {"type": "object"}, "rules": {"type": "array", "items": {"type": "object"}},
                       "add_rules": {"type": "array", "items": {"type": "object"}}}), WRITE),
+            ("tgup_youtube", "유튜브 영상·재생목록 링크를 받아서 텔레그램 채널에 올리기 (유튜브 규칙의 진행 목록 끝에 넣는다 - 받기·올리기는 뒤에서, "
+                             "진행은 tgup_status). rule: 유튜브 규칙 id 또는 채널 이름 (유튜브 규칙이 하나면 생략). again: 이미 올린 영상도 다시.",
+             _schema({"urls": {"type": "string", "description": "유튜브 주소들 (줄·빈칸으로 여러 개, 재생목록이면 안의 영상 모두)"},
+                      "rule": {"type": "string"}, "again": {"type": "boolean", "default": False}}, ["urls"]), WRITE),
             ("tgup_status", "텔레그램 자동 올리기 현황: 계정마다 지금 올리는 것(단계·진행률·걸린 시간), 진행 목록(대기열 - 순서·제목·채널·계정), "
                             "자막 기다림, 다시 시도 대기, 끊긴 드라이브, 최근 기록(올림·건너뜀·실패와 까닭). "
                             "'텔레그램 올리기 뭐 하고 있어?', '대기열 몇 개야?', '○○ 올라갔어?' 같은 질문에 쓴다.",
@@ -200,6 +204,31 @@ _TGUP_RULE = ("enabled", "height", "wait_subs", "wait_min", "burn_subs", "captio
 def tgup_settings():
     from tgup import plex_to_tg
     return plex_to_tg.load_settings()
+
+
+def tgup_youtube(urls, rule="", again=False):
+    """tgup_youtube 도구: 유튜브 규칙 고르기 (id·채널 이름, 하나면 그것) -> Mirror.add_youtube"""
+    from tgup import plex_to_tg
+    from tgup import service as tgup_service
+    rules = [r for r in plex_to_tg.load_settings()["rules"] if r.get("media") == "youtube"]
+    if not rules:
+        raise ToolError("유튜브 규칙이 없습니다 - BOA 텔레그램 자동 올리기 > 규칙에서 종류 '유튜브 링크'로 채널을 정해 주세요.")
+    want = str(rule or "").strip()
+    if want:
+        pick = [r for r in rules if r["id"] == want] or [r for r in rules if want.casefold() in (r["channel_title"] or "").casefold()]
+    else:
+        pick = rules if len(rules) == 1 else []
+    if len(pick) != 1:
+        raise ToolError("유튜브 규칙을 골라 주세요 (rule): " + ", ".join(f"{r['id']}={r['channel_title'] or r['channel']}" for r in rules))
+    r = pick[0]
+    if not tgup_service.RUNNER.loop:
+        raise ToolError("텔레그램 자동 올리기가 꺼져 있습니다.")
+    try:
+        n, dup = tgup_service.RUNNER.call(tgup_service.RUNNER.mirror.add_youtube(r["id"], str(urls or ""), bool(again)), 180)
+    except (ValueError, RuntimeError) as e:
+        raise ToolError(str(e))
+    return {"queued": n, "already_queued": dup, "rule": r["id"], "channel": r["channel_title"] or r["channel"],
+            "enabled": r["enabled"], "note": "진행 목록 끝에 넣었습니다 - 진행은 tgup_status" + ("" if r["enabled"] else " (이 규칙은 꺼져 있음)")}
 
 
 def tgup_set_settings(settings=None, rules=None, add_rules=None):
@@ -335,6 +364,8 @@ def _call(name, args, mods, svc):
         return tgup_status(min(200, max(1, int(args.get("limit") or 30))))
     if name == "tgup_settings":
         return tgup_settings()
+    if name == "tgup_youtube":
+        return tgup_youtube(args.get("urls"), args.get("rule") or "", bool(args.get("again")))
     if name == "tgup_set_settings":
         return tgup_set_settings(args.get("settings"), args.get("rules"), args.get("add_rules"))
     if name == "wtm_settings":

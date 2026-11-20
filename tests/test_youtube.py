@@ -166,6 +166,24 @@ class MirrorYoutubeTest(DownloadTest):
         self.assertEqual(mir.queue[0]["title"], "고양이 / 영상: 1편")   # 진행 목록·기록에 영상 제목
         self.assertEqual(os.listdir(self.rule["folder"]), [])         # 다 올렸으니 받은 것은 지움
 
+    def test_mcp_tool(self):
+        import types
+        from gdw import mcp
+        from tgup import service as tsvc
+        mir = self.m.Mirror(None, None, lambda *a: None, None)
+        mir.queue, mir.wake = [], lambda: None
+        old = tsvc.RUNNER
+        tsvc.RUNNER = types.SimpleNamespace(loop=True, mirror=mir, call=lambda coro, timeout=0: asyncio.run(coro))
+        self.addCleanup(setattr, tsvc, "RUNNER", old)
+        got = mcp.tgup_youtube("https://youtu.be/AAAAAAAAAAA")   # 유튜브 규칙이 하나면 rule 생략
+        self.assertEqual((got["queued"], got["channel"]), (1, "유튜브"))
+        self.assertEqual(mcp.tgup_youtube("https://youtu.be/AAAAAAAAAAA", "유튜")["already_queued"], 1)
+        with self.assertRaises(mcp.ToolError):
+            mcp.tgup_youtube("https://youtu.be/AAAAAAAAAAA", "없는채널")
+        with self.assertRaises(mcp.ToolError):
+            mcp.tgup_youtube("https://example.com/x")
+        self.assertIn("tgup_youtube", [t[0] for t in mcp._tools({"tgup": True}, None)])
+
     def test_folder_scan_and_send_skip_youtube(self):
         mir = self.m.Mirror(None, None, lambda *a: None, None)
         with self.assertRaises(ValueError):
