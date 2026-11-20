@@ -8,6 +8,8 @@ Pillow>=9.0
 # 텔레그램 자동 올리기 (Plex·rclone 드라이브 -> 텔레그램 채널, TGUP_ENABLED). 없으면 그 모듈만 꺼진다:
 aiohttp>=3.9
 telethon>=1.36
+# 텔레그램 계정별 프록시 (SOCKS5·HTTP - 같은 채널로 두 계정이 같이 올릴 때 두 번째 계정의 경로):
+python-socks[asyncio]>=2.4
 # 텔레그램 암호화를 C로 (없으면 순수 파이썬 - 올리기가 느림):
 cryptg>=0.4; platform_machine == "x86_64" or platform_machine == "AMD64" or platform_machine == "aarch64"
 # 유튜브 규칙 (링크 -> 받아서 텔레그램 채널). 없으면 그 규칙만 못 씀:

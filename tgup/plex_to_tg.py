@@ -31,7 +31,8 @@
   텔레그램에서 바로 재생되는 H.264/AAC mp4로(필요할 때만 인코딩), 큰 파일은 720p로 줄이고, 자막 파일은 화면에 입힌다.
 
 - 텔레그램 계정마다 따로 올린다: 같은 계정의 항목은 차례로, 다른 계정(A·B·C)의 항목은 동시에. 한 계정이 텔레그램 요청 제한
-  (FloodWait)에 걸리면 그 계정만 기다리고 다른 계정은 계속 올린다. 인코딩은 서버 부하를 생각해 동시에 encode_slots개까지
+  (FloodWait)에 걸리면 그 계정만 그 시간 쉬고(항목은 진행 목록 제자리) 다른 계정은 다른 항목·채널을 계속 올린다.
+  같은 채널로는 동시에 올리지 않고 다른 채널의 항목을 먼저 하며, 그래도 같은 채널이면 연결 경로가 다른 계정(직접 하나 + 프록시)만 같이 올린다. 인코딩은 서버 부하를 생각해 동시에 encode_slots개까지
   (기본 1 - 다른 계정 것은 앞 인코딩이 끝날 때까지 "인코딩 차례 기다리는 중"). 기록·성공/실패 수는 계정마다.
 - 드라마 회차 중복 막기: 작품 이름 + 시즌 + 회차가 같으면(ST/SW 같은 태그, mp4/mkv, 해상도와 상관없이) 이미 올린 것으로 보고
   건너뛴다 - 자동 올리기로 올린 것과 그 채널에 이미 있는 영상(텔레그램 색인) 모두. 건너뛴 까닭은 기록에 남는다.
@@ -384,6 +385,9 @@ def drive_of(path):
         return m.group(1).upper()
     parts = [x for x in p.split("/") if x]
     return "/" + "/".join(parts[:2]) if parts else p
+
+
+FLOOD_ERRORS = ("FloodWaitError", "FloodPremiumWaitError", "SlowModeWaitError")
 
 
 def account_problem(e):
@@ -760,6 +764,7 @@ class Mirror:
         self.lanes = {}          # 텔레그램 소스 id -> Lane (지금 도는 줄)
         self._lane_tasks = {}    # 텔레그램 소스 id -> asyncio.Task
         self._taken = set()      # 줄이 잡은 항목 id(job) - 다른 줄이 다시 잡지 않게
+        self._chan_routes = {}   # 채널 -> 지금 그 채널로 올리는 경로들 ["direct", "socks5://…"] (채널별 동시 올리기 규칙)
         self.offline = {}        # 닿지 못한 원본 드라이브 -> {since, path, last, count, logged} (실패로 세지 않고 다시 시도 중)
         self._queue_event = asyncio.Event()
         self._encoding = 0       # 지금 돌고 있는 인코딩 수 (encode_slots까지)
@@ -1547,25 +1552,65 @@ class Mirror:
             if id(j) in self._taken:
                 continue
             for a in self._accounts_for(rules.get(j["rule"]), j):
-                if a not in out and (include_down or not self._is_down(a)):
+                if a not in out and (include_down or not self._is_down(a)) and self._channel_ok(rules.get(j["rule"]), a, True):
                     out.append(a)
         return out
 
+    # ----- 채널별 동시 올리기 규칙 -----
+    # 1) 같은 채널로는 동시에 올리지 않는다. 2) 그 채널이 올리는 중이면 다른 채널에 올릴 것을 먼저 한다.
+    # 4) 그래도 같은 채널로 올려야 하면(다른 채널에 올릴 것이 없음) 연결 경로가 다른 계정만 - 한 계정은 그대로(직접),
+    #    두 번째는 프록시를 거치는 계정 (계정마다 프록시는 텔레그램 계정 탭). 경로(직접 / 프록시 주소)마다 한 채널에 하나씩.
+    @staticmethod
+    def _channel_of(rule):
+        return str((rule or {}).get("channel") or "")
+
+    def _route(self, tg):
+        return telegram_src.route_of(tg) if hasattr(telegram_src, "route_of") else "direct"
+
+    def _channel_ok(self, rule, tg, share=False):
+        """이 계정이 지금 이 규칙의 채널로 올려도 되는지. share=False: 아무도 그 채널로 올리지 않을 때만,
+        share=True: 올리는 중이어도 이 계정의 경로(직접/프록시)가 아직 그 채널에 없으면"""
+        used = self._chan_routes.get(self._channel_of(rule)) or []
+        if not used:
+            return True
+        return share and self._route(tg) not in used
+
+    def _hold_channel(self, rule, tg):
+        ch = self._channel_of(rule)
+        if not ch:
+            return None
+        hold = (ch, self._route(tg))
+        self._chan_routes.setdefault(ch, []).append(hold[1])
+        return hold
+
+    def _release_channel(self, hold):
+        if not hold:
+            return
+        used = self._chan_routes.get(hold[0]) or []
+        if hold[1] in used:
+            used.remove(hold[1])
+        if not used:
+            self._chan_routes.pop(hold[0], None)
+        self._queue_event.set()   # 채널이 비었다 - 기다리던 계정 줄을 다시 띄우게
+
     def _next_job(self, tg, rules):
         """이 계정이 가져갈 다음 항목 - 진행 목록의 앞에서부터 (그 계정이 올릴 수 있는 것 중).
+        먼저 아무도 올리지 않는 채널의 항목, 없으면 이 계정의 경로(직접/프록시)가 아직 쓰이지 않은 채널의 항목 (채널별 동시 올리기 규칙).
         이 계정이 텔레그램 속도 제한에 걸려 있으면(tgup/throttle.py) 같이 올릴 수 있는 다른 계정 중 놀고 있고 제한 없는 계정에게 양보한다"""
         mine_slow = throttle.throttled(tg)
-        for j in self.queue:
-            if id(j) in self._taken:
-                continue
-            cands = self._accounts_for(rules.get(j["rule"]), j)
-            if tg not in cands:
-                continue
-            if mine_slow and not j.get("pin") and any(
-                    a != tg and not self._is_down(a) and not throttle.throttled(a)
-                    and not (self.lanes.get(a) and self.lanes[a].current) for a in cands):
-                continue   # 다른 계정이 가져가게 (그 계정 줄이 깨어 있으면 바로 가져간다)
-            return j
+        for share in (False, True):
+            for j in self.queue:
+                if id(j) in self._taken:
+                    continue
+                rule = rules.get(j["rule"])
+                cands = self._accounts_for(rule, j)
+                if tg not in cands or not self._channel_ok(rule, tg, share):
+                    continue
+                if mine_slow and not j.get("pin") and any(
+                        a != tg and not self._is_down(a) and not throttle.throttled(a)
+                        and not (self.lanes.get(a) and self.lanes[a].current) for a in cands):
+                    continue   # 다른 계정이 가져가게 (그 계정 줄이 깨어 있으면 바로 가져간다)
+                return j
         return None
 
     async def _run_lane(self, tg, st):
@@ -1578,10 +1623,12 @@ class Mirror:
                 if job is None:
                     break
                 self._taken.add(id(job))
+                hold = self._hold_channel(rules.get(job["rule"]), tg)
                 try:
                     await self._run_job(lane, job, rules.get(job["rule"]), st)
                 finally:
                     self._taken.discard(id(job))
+                    self._release_channel(hold)
                     throttle.stopped(tg)
         finally:
             lane.current = lane.current_job = lane.job = None
@@ -1631,17 +1678,21 @@ class Mirror:
                     lane.current = lane.current_job = None
                     lane.cur_ep = None
                     return
-                wait = getattr(e, "seconds", None) if type(e).__name__ == "FloodWaitError" else None
-                if wait:   # 텔레그램이 이 계정에 기다리라고 함 - 이 줄만 쉰다 (다른 계정 줄은 그대로 올린다)
+                wait = getattr(e, "seconds", None) if type(e).__name__ in FLOOD_ERRORS else None
+                if wait:
+                    # 텔레그램이 이 계정에 기다리라고 함(FLOOD_WAIT_X): 이 계정만 그 시간 쉬고, 항목은 진행 목록 제자리에 둔다 -
+                    # 그동안 다른 계정은 (제한 없는) 다른 항목·채널을 먼저 올리고, 쉬는 시간이 끝나면 이 계정이 이어서 가져간다
                     wait = min(int(wait) + 1, 3600)
                     lane.flood_until = time.time() + wait
-                    lane.current = {"title": job["title"], "phase": f"텔레그램 요청 제한 - {wait}초 기다리는 중 (이 계정만)", "done": 0, "total": 0}
-                    log.info("자동 올리기: 텔레그램 요청 제한 %s초 (계정 %s) - 이 계정만 기다립니다", wait, lane.tg)
+                    self._down[lane.tg] = (lane.flood_until, f"텔레그램 요청 제한 FLOOD_WAIT {wait}초")
+                    log.info("자동 올리기: 텔레그램 요청 제한 %s초 (계정 %s) - 이 계정만 쉬고 다른 계정·채널을 먼저 올립니다 (%s)",
+                             wait, lane.tg, job["title"])
                     lane.job_task = None
-                    await asyncio.sleep(wait)
-                    lane.flood_until = 0
                     await self._drop_partial(rule, job["key"])
-                    continue
+                    lane.current = lane.current_job = None
+                    lane.cur_ep = None
+                    self._queue_changed()   # 다른 계정 줄이 바로 다른 항목을 가져가게
+                    return
                 note = str(e) or type(e).__name__
                 where = source_offline(e)
                 if where:   # 원본 드라이브가 끊김 - 실패로 세지 않고 몇 분 뒤 다시 (같은 드라이브 경고는 30분에 한 번)

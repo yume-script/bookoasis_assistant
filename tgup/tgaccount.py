@@ -71,16 +71,74 @@ def accounts():
     for a in data.get("accounts") or []:
         if isinstance(a, dict) and _ID_RE.match(str(a.get("id") or "")) and a["id"] not in seen:
             seen.add(a["id"])
-            out.append({"id": a["id"], "name": str(a.get("name") or "")[:40], "phone": str(a.get("phone") or "")})
+            out.append({"id": a["id"], "name": str(a.get("name") or "")[:40], "phone": str(a.get("phone") or ""),
+                        "proxy": str(a.get("proxy") or "")})
     if ACCOUNT_ID not in seen:
-        out.insert(0, {"id": ACCOUNT_ID, "name": "", "phone": str((data.get("telegram") or {}).get("phone") or "")})
+        out.insert(0, {"id": ACCOUNT_ID, "name": "", "phone": str((data.get("telegram") or {}).get("phone") or ""), "proxy": ""})
     return out
 
 
 def save_accounts(items):
     data = compat.load()
-    data["accounts"] = [{"id": a["id"], "name": a.get("name", ""), "phone": a.get("phone", "")} for a in items]
+    data["accounts"] = [{"id": a["id"], "name": a.get("name", ""), "phone": a.get("phone", ""),
+                         **({"proxy": a["proxy"]} if a.get("proxy") else {})} for a in items]
     compat.save(data)
+
+
+# ---------------------------------------------------------------------------
+# 계정별 프록시 (같은 채널로 두 계정이 같이 올릴 때 두 번째 계정은 다른 연결 경로로 - plex_to_tg 채널별 동시 올리기 규칙)
+#   socks5://[아이디:비밀번호@]호스트:포트 · socks4://호스트:포트 · http://[아이디:비밀번호@]호스트:포트
+#   mtproxy://시크릿@호스트:포트 (텔레그램 MTProto 프록시)
+# ---------------------------------------------------------------------------
+_PROXY_RE = re.compile(r"^(socks5|socks4|http|mtproxy)://(?:([^:@/\s]*)(?::([^@/\s]*))?@)?([A-Za-z0-9.\-\[\]:]+?):(\d{1,5})/?$")
+
+
+def clean_proxy(url):
+    """프록시 주소 확인 -> 정리한 주소 ("" = 프록시 안 씀). 잘못 쓰면 ValueError"""
+    url = str(url or "").strip()
+    if not url:
+        return ""
+    m = _PROXY_RE.match(url)
+    if not m or not (0 < int(m.group(5)) < 65536):
+        raise ValueError("프록시 주소는 socks5://호스트:포트 · socks5://아이디:비밀번호@호스트:포트 · http://호스트:포트 · "
+                         "mtproxy://시크릿@호스트:포트 모양으로 넣어 주세요.")
+    if m.group(1) == "mtproxy" and not m.group(2):
+        raise ValueError("MTProto 프록시는 mtproxy://시크릿@호스트:포트 모양입니다.")
+    return url
+
+
+def proxy_of(acc_id):
+    return next((a.get("proxy") or "" for a in accounts() if a["id"] == acc_id), "")
+
+
+def route_of(acc_id):
+    """이 계정이 텔레그램에 닿는 경로: "direct" 또는 프록시 주소 (같은 경로의 계정끼리는 한 채널에 동시에 올리지 않는다)"""
+    return proxy_of(acc_id) or "direct"
+
+
+def proxy_public(url):
+    """화면에 보일 프록시 (비밀번호·시크릿은 가림)"""
+    m = _PROXY_RE.match(str(url or ""))
+    if not m:
+        return ""
+    who = ("***" if m.group(1) == "mtproxy" else m.group(2) + (":***" if m.group(3) else "")) if m.group(2) else ""
+    return f"{m.group(1)}://{who + '@' if who else ''}{m.group(4)}:{m.group(5)}"
+
+
+def client_proxy_args(url):
+    """TelegramClient에 줄 인자 {proxy=..., connection=...} (프록시 없으면 {})"""
+    m = _PROXY_RE.match(str(url or ""))
+    if not m:
+        return {}
+    kind, user, pw, host, port = m.group(1), m.group(2), m.group(3), m.group(4).strip("[]"), int(m.group(5))
+    if kind == "mtproxy":
+        from telethon import connection
+        return {"connection": connection.ConnectionTcpMTProxyRandomizedIntermediate, "proxy": (host, port, user)}
+    try:
+        import python_socks  # noqa: F401 - Telethon이 SOCKS/HTTP 프록시에 쓴다
+    except ImportError as e:
+        raise TgError("프록시를 쓰려면 python-socks가 필요합니다: pip install -r requirements.txt") from e
+    return {"proxy": {"proxy_type": kind, "addr": host, "port": port, "username": user or None, "password": pw or None, "rdns": True}}
 
 
 def new_account_id():
@@ -137,7 +195,8 @@ class TelegramAccount:
         except ImportError as e:
             raise TgError("telethon이 설치되어 있지 않습니다: pip install -r requirements.txt") from e
         async with self._lock:
-            key = (conf["api_id"], conf["api_hash"])
+            proxy = proxy_of(self.id)
+            key = (conf["api_id"], conf["api_hash"], proxy)
             if self.client is not None and self._key != key:   # API 값을 바꿨으면 새로 연결
                 await self.client.disconnect()
                 self.client = None
@@ -146,7 +205,8 @@ class TelegramAccount:
                 # 텔레그램에 닿지 않을 때 화면이 오래 멈추지 않게 (기본은 5번 x 10초)
                 # base_logger: 계정별 로거 - Telethon이 혼자 기다린 업로드 제한(flood wait)을 계정마다 센다 (tgup/throttle.py)
                 self.client = TelegramClient(self.session_path, int(conf["api_id"]), conf["api_hash"], receive_updates=False,
-                                             connection_retries=2, timeout=10, base_logger=throttle.logger_name(self.id))
+                                             connection_retries=2, timeout=10, base_logger=throttle.logger_name(self.id),
+                                             **client_proxy_args(proxy))
                 self._key = key
             if not self.client.is_connected():
                 await self.client.connect()
