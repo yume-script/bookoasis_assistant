@@ -47,6 +47,28 @@ class ProxyTest(unittest.TestCase):
         self.assertEqual((a["proxy_type"], a["addr"], a["port"], a["username"], a["password"]), ("socks5", "h", 1080, "u", "p"))
 
 
+class OfflineStatusTest(unittest.TestCase):
+    """텔레그램에 잠깐 못 닿을 때 "로그인 안 됨"으로 보이지 않게 - 마지막으로 확인한 로그인 상태 + offline"""
+
+    def test_offline_keeps_last_auth(self):
+        acc = tgaccount.TelegramAccount("tg")
+        st = acc.offline_status({"id": "tg", "authorized": False}, "연결 실패")
+        self.assertEqual((st["authorized"], st["offline"]), (None, True))      # 처음: 모름 (로그인 화면 안 띄움)
+        acc.last_auth = {"name": "포링", "premium": True}
+        st = acc.offline_status({"id": "tg", "authorized": False}, "연결 실패")
+        self.assertEqual((st["authorized"], st["name"], st["offline"]), (True, "포링", True))
+        acc.last_auth = False
+        self.assertFalse(acc.offline_status({"id": "tg", "authorized": False}, "x")["authorized"])
+
+        async def fail():
+            raise ConnectionError("Connection to Telegram failed 2 time(s)")
+        acc.last_auth = {"name": "포링", "premium": False}
+        acc.get_client = fail
+        st = asyncio.run(acc.status())
+        self.assertTrue(st["authorized"] and st["offline"])
+        self.assertIn("Connection to Telegram failed", st["error"])
+
+
 @unittest.skipUnless(HAVE_AIOHTTP, "aiohttp 없음")
 class ChannelRuleTest(unittest.TestCase):
     def setUp(self):

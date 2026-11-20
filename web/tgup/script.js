@@ -139,7 +139,9 @@
             h('div', { class: 'toolbar' }, h('h3', { class: 'pane-title', style: 'flex:1' }, h('i', { class: 'fa-brands fa-telegram' }),
                 ` ${count > 1 ? `계정 ${n + 1}: ` : ''}${title}`), proxyBtn, rename, remove),
             h('p', { class: 'field-hint', text: a.proxy ? `연결: 프록시 ${a.proxy}` : '연결: 직접 (프록시 없음)' }));
+        if (a.offline) box.appendChild(h('p', { class: 'muted error', text: `⚠️ ${a.error || '텔레그램에 연결하지 못했습니다'} - 로그인(세션)은 그대로입니다. 잠시 뒤 다시 확인합니다.` }));
         if (!a.telethon) box.appendChild(h('p', { class: 'muted error', text: '서버에 telethon이 없습니다: pip install -r requirements.txt 후 다시 시작하세요.' }));
+        else if (a.authorized === null) { /* 텔레그램에 못 닿아 로그인 여부를 아직 모름 - 로그인 화면을 띄우지 않는다 */ }
         else if (a.authorized) {
             box.append(h('p', {}, h('span', { class: 'ok', text: `✓ ${a.name || '로그인됨'}` }), h('span', { class: 'muted', text: ` ${a.phone || ''}${a.premium ? ' · 프리미엄 (4GB까지)' : ' · 일반 계정 (2GB까지)'}` })),
                 a.fast_crypto ? null : h('p', { class: 'field-hint', text: 'cryptg가 없어 올리기가 느릴 수 있습니다: pip install cryptg' }),
@@ -730,7 +732,8 @@
             const info = accList.find((x) => x.id === id) || {};
             return h('div', { class: `tgup-acc${a.down ? ' is-down' : ''}` },
                 h('div', { class: 'tgup-acc-head' }, h('i', { class: 'fa-brands fa-telegram' }), h('b', { text: ` ${accName(id)}` }),
-                    info.authorized === false ? h('span', { class: 'mirror-chip fail', text: '로그인 안 됨' }) : null,
+                    info.offline ? h('span', { class: 'mirror-chip wait', text: '연결 확인 안 됨', title: info.error || '' })
+                        : info.authorized === false ? h('span', { class: 'mirror-chip fail', text: '로그인 안 됨' }) : null,
                     a.down ? h('span', { class: 'mirror-chip wait', text: '쉬는 중' }) : a.current ? h('span', { class: 'mirror-chip run', text: '올리는 중' }) : h('span', { class: 'mirror-chip ok', text: '놀고 있음' }),
                     thrChip(a.throttle)),
                 thrText(a.throttle) ? h('div', { class: 'muted', text: `속도: ${thrText(a.throttle)}` }) : null,

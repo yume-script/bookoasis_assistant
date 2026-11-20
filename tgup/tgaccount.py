@@ -157,6 +157,7 @@ class TelegramAccount:
         self._lock = asyncio.Lock()
         self._code_hash = None
         self.phone = ""
+        self.last_auth = None     # 마지막으로 확인한 로그인 상태 (텔레그램에 잠깐 못 닿을 때 "로그인 안 됨"으로 잘못 보이지 않게)
 
     @property
     def _suffix(self):
@@ -202,10 +203,10 @@ class TelegramAccount:
                 self.client = None
             if self.client is None:
                 os.makedirs(compat.DATA_DIR, exist_ok=True)
-                # 텔레그램에 닿지 않을 때 화면이 오래 멈추지 않게 (기본은 5번 x 10초)
+                # 연결 다시 시도: 4번 x 15초 (다른 계정이 올리느라 회선이 바쁠 때 2번 x 10초로는 끊김 - 화면의 상태 확인은 따로 8초까지만)
                 # base_logger: 계정별 로거 - Telethon이 혼자 기다린 업로드 제한(flood wait)을 계정마다 센다 (tgup/throttle.py)
                 self.client = TelegramClient(self.session_path, int(conf["api_id"]), conf["api_hash"], receive_updates=False,
-                                             connection_retries=2, timeout=10, base_logger=throttle.logger_name(self.id),
+                                             connection_retries=4, timeout=15, base_logger=throttle.logger_name(self.id),
                                              **client_proxy_args(proxy))
                 self._key = key
             if not self.client.is_connected():
@@ -235,15 +236,27 @@ class TelegramAccount:
         try:
             client = await self.get_client()
             if not await client.is_user_authorized():
+                self.last_auth = False
                 return base
             me = await client.get_me()
             name = " ".join(x for x in (getattr(me, "first_name", ""), getattr(me, "last_name", "")) if x)
-            return {**base, "authorized": True, "name": name or getattr(me, "username", "") or "",
-                    "premium": bool(getattr(me, "premium", False))}
+            self.last_auth = {"name": name or getattr(me, "username", "") or "", "premium": bool(getattr(me, "premium", False))}
+            return {**base, "authorized": True, **self.last_auth}
         except TgError as e:
             return {**base, "error": str(e)}
-        except Exception as e:  # noqa: BLE001 - 연결 실패 등은 화면에 그대로
-            return {**base, "error": f"텔레그램에 연결하지 못했습니다: {e}"}
+        except Exception as e:  # noqa: BLE001 - 연결 실패 등: 로그인은 그대로일 수 있다 - 마지막으로 확인한 상태 + 연결 안 됨
+            return self.offline_status(base, f"텔레그램에 연결하지 못했습니다: {e}")
+
+    def offline_status(self, base, error):
+        """텔레그램에 못 닿음: 마지막으로 로그인을 확인했으면 로그인된 것으로 두고 offline 표시 (세션 파일은 그대로)"""
+        out = {**base, "offline": True, "error": error}
+        if isinstance(self.last_auth, dict):
+            out.update(authorized=True, **self.last_auth)
+        elif self.last_auth is None:
+            out["authorized"] = None   # 모름 (로그인 화면을 띄우지 않는다)
+        if proxy_of(self.id):
+            out["error"] += f" (프록시 {proxy_public(proxy_of(self.id))} 확인)"
+        return out
 
     async def send_code(self, phone=""):
         phone = re.sub(r"[\s-]", "", phone or self.phone or self._saved_phone())

@@ -187,9 +187,10 @@ async def _account_status(acc_id=tgaccount.ACCOUNT_ID):
         st = await asyncio.wait_for(RUNNER.get_account(acc_id).status(), 8)
     except asyncio.TimeoutError:
         base = tgaccount.api_conf()
-        st = {"id": acc_id, "authorized": False, "api_id": base["api_id"], "has_hash": bool(base["api_hash"]), "from_env": base["from_env"],
-              "phone": base["phone"] if acc_id == tgaccount.ACCOUNT_ID else "", "telethon": tgaccount.available(),
-              "fast_crypto": tgaccount.fast_crypto(), "error": "텔레그램에 연결하지 못했습니다 (시간 초과) - 서버의 인터넷 연결을 확인하세요."}
+        st = RUNNER.get_account(acc_id).offline_status(
+            {"id": acc_id, "authorized": False, "api_id": base["api_id"], "has_hash": bool(base["api_hash"]), "from_env": base["from_env"],
+             "phone": base["phone"] if acc_id == tgaccount.ACCOUNT_ID else "", "telethon": tgaccount.available(),
+             "fast_crypto": tgaccount.fast_crypto()}, "텔레그램 응답이 늦습니다 (8초 넘음 - 올리는 중이면 잠깐 그럴 수 있음)")
         _ACC_FAIL[acc_id] = {"at": time.time(), "status": st}
     return {**st, "label": name, "proxy": tgaccount.proxy_public(tgaccount.proxy_of(acc_id))}
 
