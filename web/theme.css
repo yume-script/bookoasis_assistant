@@ -314,3 +314,8 @@ body.login-body { margin: 0; overflow: auto; min-height: 100vh; display: flex; a
 .changelog li { display: flex; gap: 0.5rem; align-items: baseline; }
 .changelog-pr { color: var(--accent); text-decoration: none; font-variant-numeric: tabular-nums; flex: none; }
 .changelog-ver { display: inline-block; margin-right: 0.4rem; padding: 0 0.35rem; border-radius: 4px; background: var(--bg-elev2); color: var(--muted); font-size: 0.75rem; }
+.update-box h4 { margin: 0.5rem 0; }
+.update-commits { margin: 0 0 0.75rem; padding-left: 1.2rem; max-height: 14rem; overflow: auto; font-size: 0.85rem; }
+.update-commits code { font-size: 0.8rem; opacity: 0.75; }
+.update-log { margin: 0 0 0.75rem; padding: 0.6rem 0.75rem; max-height: 12rem; overflow: auto; background: var(--bg); border: 1px solid var(--border);
+  border-radius: var(--radius); font-size: 0.8rem; white-space: pre-wrap; word-break: break-all; }
