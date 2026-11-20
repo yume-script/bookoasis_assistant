@@ -72,7 +72,7 @@ import urllib.parse
 
 from aiohttp import ClientTimeout
 
-from . import compat as config_store, compat as transcode, folder_watch, music, throttle, tgaccount as telegram_src
+from . import compat as config_store, compat as transcode, folder_watch, mountfix, music, throttle, tgaccount as telegram_src
 from gdw import memtrim  # noqa: E402 - 큰 작업 뒤 쓰고 난 메모리를 OS에
 
 log = logging.getLogger("ym_player.plex_to_tg")
@@ -2102,6 +2102,7 @@ class Mirror:
         tmp = os.path.join(config_store.DATA_DIR, "plex_to_tg_tmp", secrets.token_hex(6))
         os.makedirs(tmp, exist_ok=True)
         msgs = []
+        mount_note, info = "", None
         try:
             local = local_file
             copied = False
@@ -2109,7 +2110,8 @@ class Mirror:
                 local = os.path.join(tmp, name)
                 await self._download(cfg, src, part["key"], local, fields["name"], size)
             elif folder_watch.on_network_drive(local_file):   # rclone mount 등: 서버로 복사해 놓고 인코딩 (자막 파일도)
-                local, side = await self._bring_local(local_file, side, tmp, fields["name"])
+                # (마운트로 못 읽으면 그 파일만 vfs/forget -> 다시 -> 원격에서 직접 받기)
+                local, side, info, mount_note = await self._bring_local_safe(local_file, side, tmp, fields["name"])
                 copied = True
             # 외부 자막 파일 (내장 자막은 영상 안에 그대로 들어 있다)
             sub_files, seen, sub_fail = [], set(), 0
@@ -2135,7 +2137,8 @@ class Mirror:
             # 진행 상태 화면의 자막 칸 (올리는 동안): 다 올리면 실제로 한 것(화면에 입힘·옮기지 못함 등)으로 바뀐다
             self.subs_label = f"파일 {len(sub_files)}개" if sub_files else "소프트 자막" if embedded else "없음"
             # 정한 높이(기본 720p)보다 큰 영상은 용량과 상관없이 줄인다 - 자막 입히기와 한 번에 인코딩
-            info = await folder_watch.probe(local)
+            if info is None:
+                info = await folder_watch.probe(local)
             vh = int(((folder_watch.streams(info, "video") or [{}])[0]).get("height") or 0)
             scale = bool(rule["height"] and vh > rule["height"])
             width, height = int(media.get("width") or 0), int(media.get("height") or 0)
@@ -2225,6 +2228,8 @@ class Mirror:
             notes.append(f"Plex 자막 {sub_fail}개를 받지 못함")
         if not subs and not side and not soft:
             notes.append("자막 없음")
+        if mount_note:
+            notes.insert(0, mount_note)
         return ", ".join(notes)
 
     async def upload_file(self, rule, key, max_gb, test=False):
@@ -2254,6 +2259,7 @@ class Mirror:
         tmp = os.path.join(config_store.DATA_DIR, "plex_to_tg_tmp", secrets.token_hex(6))
         os.makedirs(tmp, exist_ok=True)
         msgs = []
+        mount_note = ""
         try:
             # 1) 자막: 옆 자막 파일, 없으면 파일 안의 자막 트랙 (원격이면 앞부분만 받아 본다)
             if remote:
@@ -2270,7 +2276,8 @@ class Mirror:
                 if not os.path.isfile(local):
                     raise RuntimeError("파일이 없습니다 (지워졌거나 옮겨짐).")
                 side = sidecar_subs(local)
-                info = await folder_watch.probe(local)
+                # (rclone mount에서 못 읽으면 그 파일만 vfs/forget 후 다시 - 받기는 아래 서버로 복사할 때)
+                _p, info, mount_note = await self._probe_safe(local, tmp, fields["name"], "video", fetch=False)
             soft_kind = folder_watch.classify_subs(folder_watch.stream_tracks(info))
             any_inside = soft_kind["usable"]
             # 3) 쓸 수 있는 소프트 자막(한국어·언어 표시 없음 글자 자막)이 있으면 바로, 4) 없으면 자막 파일을 정한 분만큼 기다린다
@@ -2299,7 +2306,9 @@ class Mirror:
             else:
                 sub_files = [(pth, lang, sext) for pth, lang, sext in side]
                 if folder_watch.on_network_drive(local):   # rclone mount 폴더: 서버로 복사해 놓고 인코딩 (자막 파일도)
-                    local, sub_files = await self._bring_local(local, sub_files, tmp, fields["name"])
+                    # (마운트로 못 읽으면 그 파일만 vfs/forget -> 다시 -> 원격에서 직접 받기)
+                    local, sub_files, info, how = await self._bring_local_safe(local, sub_files, tmp, fields["name"])
+                    mount_note = how or mount_note
                     copied = True
             if not info:
                 raise RuntimeError("영상 정보를 읽지 못했습니다 (ffprobe).")
@@ -2362,6 +2371,8 @@ class Mirror:
             notes.append(f"자막 없음 ({soft_kind['why']})" if soft_kind["why"] else "자막 없음")
         if poster:
             notes.append(poster)
+        if mount_note:
+            notes.insert(0, mount_note)
         return ", ".join(notes)
 
     async def upload_music(self, rule, key, max_gb, test=False):
@@ -2416,7 +2427,12 @@ class Mirror:
                     names = os.listdir(os.path.dirname(local))
                 except OSError:
                     names = []
-            info = await folder_watch.probe(local)
+            src_dir = os.path.dirname(local)
+            # (rclone mount에서 못 읽으면 그 파일만 vfs/forget -> 다시 -> 원격에서 직접 받아 그것을 올림)
+            local, info, mount_note = (local, await folder_watch.probe(local), "") if remote else \
+                await self._probe_safe(local, tmp, title0, "audio")
+            if mount_note:
+                notes.append(mount_note)
             m = music.track_meta(info, key)
             title = " - ".join(x for x in (m.get("artist"), m.get("title")) if x) or title0
             tg = self.tg_for(rule["tg"])
@@ -2443,7 +2459,7 @@ class Mirror:
                         except folder_watch.FolderError:
                             art = ""
                     else:
-                        art = os.path.join(os.path.dirname(local), pick)
+                        art = os.path.join(src_dir, pick)
             ok = False
             if art and transcode.ffmpeg_path():
                 ok, _err = await self._ffmpeg("-i", art, "-an", "-frames:v", "1", "-vf", "scale='min(320,iw)':-2", "-q:v", "4", thumb)
@@ -2624,15 +2640,95 @@ class Mirror:
         await asyncio.to_thread(folder_watch.copy_file, src_path, dest, got)
         if os.path.getsize(dest) != size:
             raise RuntimeError("서버로 복사한 파일의 크기가 원본과 다릅니다 (드라이브 연결 확인).")
+        return dest, await self._copy_subs(subs, tmp)
+
+    async def _copy_subs(self, subs, tmp, remote=False):
+        """옆 자막 파일들을 tmp로 (remote: 마운트를 거치지 않고 원격에서, 안 되면 마운트로)"""
         out = []
-        for i, (spath, lang, sext) in enumerate(subs):   # 자막 파일도 같이
+        for i, (spath, lang, sext) in enumerate(subs):
             sdest = os.path.join(tmp, f"srcsub{i}.{sext}")
             try:
-                await asyncio.to_thread(shutil.copyfile, spath, sdest)
+                if remote:
+                    try:
+                        await mountfix.remote_copy(spath, sdest)
+                    except folder_watch.FolderError:
+                        await asyncio.to_thread(shutil.copyfile, spath, sdest)
+                else:
+                    await asyncio.to_thread(shutil.copyfile, spath, sdest)
                 out.append((sdest, lang, sext))
             except OSError as e:
                 log.warning("자동 올리기: 자막 파일을 복사하지 못했습니다 (%s): %s", spath, e)
-        return dest, out
+        return out
+
+    async def _vfs_forget(self, path, why):
+        """rclone mount의 그 파일 캐시를 잊게 한다 (vfs/forget). 했으면 True"""
+        ok, how = await mountfix.forget(path)
+        log.warning("자동 올리기: 마운트로 읽지 못함 (%s) - %s: %s", path, why, how if ok else f"vfs/forget 못 함 ({how})")
+        return ok
+
+    async def _bring_local_safe(self, src_path, subs, tmp, title, kind="video"):
+        """_bring_local + ffprobe. 마운트로 못 읽으면(복사 실패·크기 다름·ffprobe 실패) 그 파일만 vfs/forget 후 다시,
+        그래도 안 되면 원격에서 직접 받는다 (rclone copyto). 돌려주는 값: (경로, 자막들, ffprobe 결과, 메모)"""
+        why = ""
+        for attempt in (0, 1):
+            try:
+                local, out = await self._bring_local(src_path, subs, tmp, title)
+                info = await folder_watch.probe(local)
+                if folder_watch.streams(info, kind):
+                    return local, out, info, ("마운트 캐시 문제 → vfs/forget 후 정상" if attempt else "")
+                why = "영상 정보를 읽지 못함 (ffprobe)"
+            except RuntimeError as e:
+                if "자리가 모자랍니다" in str(e) or self.cancelled():
+                    raise
+                why = str(e)
+            except OSError as e:
+                why = f"읽기 오류: {e}"
+            if attempt or not mountfix.mount_of(src_path) or not await self._vfs_forget(src_path, why):
+                break
+        if not mountfix.mount_of(src_path):
+            raise RuntimeError(why or "영상 정보를 읽지 못했습니다 (ffprobe).")
+        local, out = await self._remote_fetch(src_path, tmp, title, why), await self._copy_subs(subs, tmp, remote=True)
+        info = await folder_watch.probe(local)
+        if not folder_watch.streams(info, kind):
+            raise RuntimeError(f"원격에서 직접 받은 파일도 읽지 못했습니다 (ffprobe) - 원본 파일 확인 ({why})")
+        return local, out, info, "마운트로 못 읽어 원격에서 직접 받음"
+
+    async def _remote_fetch(self, src_path, tmp, title, why=""):
+        """rclone mount의 파일을 마운트를 거치지 않고 원격에서 tmp로 받는다"""
+        dest = os.path.join(tmp, "src" + os.path.splitext(src_path)[1])
+        try:
+            os.remove(dest)   # 마운트로 복사하다 만 것
+        except OSError:
+            pass
+        self.current = {"title": title, "phase": "원격에서 직접 받는 중 (마운트로 못 읽음)", "done": 0, "total": 0}
+
+        def got(n):
+            if self.current:
+                self.current["done"] = n
+        try:
+            await mountfix.remote_copy(src_path, dest, got)
+        except folder_watch.FolderError as e:
+            raise RuntimeError(f"마운트로도 원격으로도 읽지 못했습니다 - {why}; {e}") from None
+        return dest
+
+    async def _probe_safe(self, path, tmp, title, kind, fetch=True):
+        """마운트 파일을 제자리에서 ffprobe (음악·자막 확인). 못 읽으면 vfs/forget 후 다시,
+        fetch면 그래도 안 될 때 원격에서 tmp로 받아 그것을 쓴다. 돌려주는 값: (경로, ffprobe 결과, 메모)"""
+        info = await folder_watch.probe(path)
+        if folder_watch.streams(info, kind) or not mountfix.mount_of(path):
+            return path, info, ""
+        why = "파일 정보를 읽지 못함 (ffprobe)"
+        if await self._vfs_forget(path, why):
+            info = await folder_watch.probe(path)
+            if folder_watch.streams(info, kind):
+                return path, info, "마운트 캐시 문제 → vfs/forget 후 정상"
+        if not fetch:
+            return path, info, ""
+        local = await self._remote_fetch(path, tmp, title, why)
+        info = await folder_watch.probe(local)
+        if not folder_watch.streams(info, kind):
+            raise RuntimeError("원격에서 직접 받은 파일도 읽지 못했습니다 (ffprobe) - 원본 파일 확인")
+        return local, info, "마운트로 못 읽어 원격에서 직접 받음"
 
     async def _burn_source(self, local, sub_files, inside, tmp, title):
         """화면에 입힐 자막 파일 이름 (tmp 안, UTF-8). 한국어를 먼저: 한국어 자막 파일 > 영상 안의 한국어 글자 자막 >
