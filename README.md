@@ -493,7 +493,8 @@ venv\Scripts\python app.py
 - **MCP 서버**: Claude Code·Claude Desktop 같은 MCP 클라이언트가 `POST /mcp`(Streamable HTTP, `Authorization: Bearer <MCP_TOKEN>`)로 붙습니다.
   **설정 > MCP**에서 [켜기]를 누르면 토큰이 `.env`의 `MCP_TOKEN`에 저장되고, 연결 명령(Claude Code)과 설정(Claude Desktop, `mcp-remote`)이 나옵니다.
   도구: `gdw_status`·`gdw_events`·`gdw_log`·`gdw_schedules`(조회), `gdw_request_path`(경로 직접 반영)·`gdw_retry`·`gdw_poll_now`·`gdw_worker`,
-  `wtm_status`·`wtm_titles`·`wtm_history`(조회), `wtm_set_subscription`·`wtm_download_title`·`wtm_run`. 켜진 모듈의 도구만 보입니다.
+  `wtm_status`·`wtm_titles`·`wtm_history`(조회), `wtm_set_subscription`·`wtm_download_title`·`wtm_run`,
+  `tgup_status`(텔레그램 자동 올리기 현황·대기열 - 디스코드봇이 읽음). 켜진 모듈의 도구만 보입니다.
   토큰이 있으면 로그인 없이 이 동작을 할 수 있으니 비밀번호처럼 다루세요. 외부(인터넷)에서 쓰려면 https 리버스 프록시 뒤에 두세요.
 - 화면은 YMPlayer와 같은 틀입니다. 왼쪽 메뉴 맨 아래 **설정**(화면 · 정보)에서 모든 사용자의 **기본 테마·강조색**을 정하고(`DATA_DIR/ui_prefs.json`),
   팔레트 버튼으로 이 브라우저에서만 쓸 테마를 따로 고를 수 있습니다.
