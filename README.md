@@ -123,7 +123,8 @@ docker exec bookoasis_assistant python app.py --check # 설정 점검
 관리 화면: `http://서버주소:5931/`
 
 ### 업데이트
-화면 왼쪽 위 배지가 빨갛게 바뀌면 새 버전이 있다는 뜻입니다. 도커는 `git pull` 후 **이미지를 다시 빌드**해야 반영됩니다.
+화면 왼쪽 위 배지가 빨갛게 바뀌면 새 버전이 있다는 뜻입니다. venv/systemd 설치는 **설정 > 정보 > 지금 업데이트**로 화면에서 업데이트하고
+(점검 실패 시 자동 되돌림, [이전 버전으로] 버튼), 끝나면 스스로 다시 시작합니다. 도커는 `git pull` 후 **이미지를 다시 빌드**해야 반영됩니다.
 ```bash
 cd /opt/bookoasis_assistant && git pull && docker compose up -d --build
 ```

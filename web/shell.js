@@ -312,11 +312,7 @@
         list.appendChild(h('div', { class: 'about-row' }, [h('span', { text: '최신 버전 (GitHub)' }),
           h('b', { text: up.latest ? ('v' + up.latest + (up.available ? ' · 업데이트 있음' : ' · 최신')) :
             (up.error ? '확인 실패' : '확인 중') })]));
-        if (up.available) {
-          list.appendChild(h('p', { class: 'muted', text: '업데이트: 설치 폴더에서 git pull 후 서비스 재시작 ' +
-            '(예: cd /opt/bookoasis_assistant && git pull && systemctl restart bookoasis_assistant)' }));
-        }
-        return h('div', {}, [list, h('p', { class: 'muted', text: '모듈 켜기/끄기와 경로·토큰 같은 실행 환경은 .env에서 바꿉니다 (WTM_ENABLED / GDW_ENABLED / MINI_ENABLED). ' +
+        return h('div', {}, [list, updatePane(), h('p', { class: 'muted', text: '모듈 켜기/끄기와 경로·토큰 같은 실행 환경은 .env에서 바꿉니다 (WTM_ENABLED / GDW_ENABLED / MINI_ENABLED). ' +
           '드라이브 변경 감시는 리눅스 전용이라 윈도우에서는 사용할 수 없습니다.' })]);
       }
     };
@@ -334,6 +330,97 @@
     show('화면');
   }
   var info = {};
+
+  /** 설정 > 정보 > 업데이트: 받을 커밋 보기 · 지금 업데이트 · 이전 버전으로 (gdw/updater.py - git pull + 점검 + 다시 시작) */
+  function updatePane() {
+    var box = h('div', { class: 'update-box' }, [h('h4', { text: '업데이트' }), h('p', { class: 'muted', text: '확인 중...' })]);
+    var timer = null, wasRunning = false;
+    function stop() { if (timer) { clearTimeout(timer); timer = null; } }
+    function btn(text, cls, fn) { return h('button', { type: 'button', class: 'btn' + (cls ? ' ' + cls : ''), text: text, onclick: fn }); }
+    function waitBack(from) {   // 다시 시작하는 동안 서버가 잠깐 끊긴다 - 돌아오면 새로고침
+      var t0 = Date.now(), sawDown = false;
+      if (box.dataset.waiting) return;
+      box.dataset.waiting = '1';
+      (function poll() {
+        if (!document.body.contains(box)) return;
+        fetch('api/modules', { credentials: 'same-origin' }).then(function (r) { return r.ok ? r.json() : null; }).then(function (m) {
+          if (m && m.version && m.version !== from) { toast('v' + m.version + '(으)로 다시 시작했습니다.', 'success'); setTimeout(function () { location.reload(); }, 800); return; }
+          if (m && sawDown) { location.reload(); return; }
+          if (!m) sawDown = true;
+          if (Date.now() - t0 > 240000) { toast('다시 시작을 기다리다 멈췄습니다 - 서비스 상태를 확인하세요.', 'error'); return; }
+          setTimeout(poll, 3000);
+        }, function () { sawDown = true; setTimeout(poll, 3000); });
+      })();
+    }
+    function draw(st) {
+      while (box.firstChild) box.removeChild(box.firstChild);
+      box.appendChild(h('h4', { text: '업데이트' }));
+      if (st.blocked) {
+        box.appendChild(h('p', { class: 'muted', text: st.blocked }));
+        box.appendChild(h('p', { class: 'muted', text: '직접 하려면: cd /opt/bookoasis_assistant && git pull && systemctl restart bookoasis_assistant' }));
+        return;
+      }
+      var list = h('div', { class: 'about-list' });
+      list.appendChild(h('div', { class: 'about-row' }, [h('span', { text: '지금 코드' }), h('b', { text: (st.branch || '') + ' @ ' + (st.current || '') })]));
+      var behind = st.behind || [];
+      list.appendChild(h('div', { class: 'about-row' }, [h('span', { text: '받을 변경' }),
+        h('b', { text: st.fetch_error ? 'GitHub 확인 실패' : behind.length ? behind.length + '개' : '없음 (최신)' })]));
+      if (st.last && st.last.at) {
+        list.appendChild(h('div', { class: 'about-row' }, [h('span', { text: '마지막 화면 업데이트' }),
+          h('b', { text: new Date(st.last.at * 1000).toLocaleString() + ' · ' + (st.last.result === 'ok' ? (st.last.from ? 'v' + st.last.from + ' → v' + st.last.to : '완료') : (st.last.result || '')) })]));
+      }
+      box.appendChild(list);
+      if (st.fetch_error) box.appendChild(h('p', { class: 'muted', text: st.fetch_error }));
+      if (behind.length) {
+        var ul = h('ul', { class: 'update-commits' });
+        behind.slice(0, 15).forEach(function (c) { ul.appendChild(h('li', {}, [h('code', { text: c.sha }), document.createTextNode(' ' + c.title)])); });
+        if (behind.length > 15) ul.appendChild(h('li', { class: 'muted', text: '... 외 ' + (behind.length - 15) + '개' }));
+        box.appendChild(ul);
+      }
+      if (st.dirty && st.dirty.length) box.appendChild(h('p', { class: 'muted', text: '직접 고친 파일이 있어 업데이트할 수 없습니다: ' + st.dirty.join(', ') }));
+      if (st.ahead) box.appendChild(h('p', { class: 'muted', text: 'GitHub에 없는 커밋 ' + st.ahead + '개가 있습니다 - 빨리 감기(ff)가 안 되면 업데이트하지 않습니다.' }));
+      if (st.busy && st.busy.length && !st.running) box.appendChild(h('p', { class: 'muted', text: '지금 하는 일 (업데이트하면 끊었다가 다시 시작 후 이어서 함): ' + st.busy.join(' · ') }));
+      if (st.running || st.restart || (st.log && st.log.length)) {
+        box.appendChild(h('pre', { class: 'update-log', text: (st.log || []).join('\n') || st.phase || '' }));
+      }
+      var actions = h('div', { class: 'user-add' });
+      if (st.running || st.restart) {
+        actions.appendChild(h('span', { class: 'muted', text: st.restart ? '다시 시작하는 중...' : '진행 중...' }));
+      } else {
+        actions.appendChild(btn('새 버전 확인', '', function () { load(true); }));
+        if (behind.length && !(st.dirty && st.dirty.length)) {
+          actions.appendChild(btn('지금 업데이트', 'btn-accent', function () {
+            var msg = '변경 ' + behind.length + '개를 받아 적용하고 프로그램을 다시 시작합니다 (잠깐 화면이 끊김).';
+            if (st.busy && st.busy.length) msg += '\n\n지금 하는 일이 끊깁니다:\n- ' + st.busy.join('\n- ');
+            if (!window.confirm(msg + '\n\n계속할까요?')) return;
+            start('update');
+          }));
+        }
+        if (st.prev) {
+          actions.appendChild(btn('이전 버전으로', '', function () {
+            if (!window.confirm('바로 전 버전(' + (st.prev_title || st.prev.slice(0, 7)) + ')으로 되돌리고 다시 시작할까요?')) return;
+            start('rollback');
+          }));
+        }
+      }
+      box.appendChild(actions);
+      stop();
+      wasRunning = !!(st.running || st.restart);
+      if (st.restart) { waitBack(info.version); return; }
+      if (st.running) timer = setTimeout(function () { load(false); }, 1500);
+    }
+    function start(action) {
+      api('api/update', { action: action }).then(function () { load(false); }, function (e) { toast(e.message, 'error'); });
+    }
+    function load(fetchNew) {
+      api('api/update' + (fetchNew ? '?fetch=1' : '')).then(draw, function (e) {
+        if (wasRunning) { waitBack(info.version); return; }   // 다시 시작하느라 서버가 끊김
+        draw({ blocked: e.message });
+      });
+    }
+    load(true);
+    return box;
+  }
 
   /** 설정 > Thanks to (YMPlayer와 같은 구성): 고마운 분, 참고한 저장소, 쓰는 오픈소스, 변경 이력(날짜별, 새것이 위). 내용은 web/credits.json */
   function thanksPane() {

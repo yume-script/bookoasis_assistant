@@ -13,6 +13,8 @@
   GET  /login            로그인 화면 (사용자가 없으면 '관리자 계정 만들기')
   GET  /api/auth/state   POST /api/auth/login · setup · logout · password
   GET  /api/users        POST /api/users (추가) · /api/users/password (다른 사용자 비밀번호) · /api/users/delete
+  GET  /api/update       화면에서 업데이트: 받을 커밋·진행 상황 (?fetch=1이면 GitHub에서 새로 받아 봄)
+  POST /api/update       {"action": "update" | "rollback"} - 관리자만 (gdw/updater.py)
   POST /mcp              MCP 서버 (gdw/mcp.py, Authorization: Bearer MCP_TOKEN) · GET/POST /api/mcp 설정 > MCP
 
 인증: YMPlayer와 같은 로그인 화면 + 서명한 세션 쿠키 (gdw/auth.py). 로그인 안 했으면 화면은 /login으로, API는 401.
@@ -27,7 +29,7 @@ import time
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import auth, config, mcp, service
+from . import auth, config, mcp, service, updater
 
 log = logging.getLogger("gdw.web")
 WEB_DIR = os.path.join(config.ROOT, "web")
@@ -280,6 +282,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(403, {"success": False, "error": "관람자 계정은 이 화면을 쓸 수 없습니다 (3D 서재는 따로 설치한 프로그램)."})
         if path == "/api/users":
             return self._send(200, {"success": True, "users": [auth.public_user(u) for u in auth.load_users()]})
+        if path == "/api/update":
+            from urllib.parse import parse_qs
+            q = parse_qs(self.path.split("?", 1)[1] if "?" in self.path else "")
+            return self._send(200, updater.status(fetch=(q.get("fetch") or [""])[0] == "1"))
         if path == "/api/mcp":
             return self._send(200, {"success": True, "enabled": mcp.enabled(), "token": mcp.token(),
                                     "overridden": bool(config.overridden(["MCP_TOKEN"]))})
@@ -469,7 +475,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._deny(path)
         if user and not auth.is_admin(user) and path not in VIEWER_POST:
             return self._send(403, {"success": False, "error": "관람자 계정은 할 수 없는 일입니다."})
-        if not path.startswith(("/api/rpc/", "/api/auth/", "/api/users", "/api/tgup/", "/api/brunch/")) and path not in ("/api/wtm/action", "/api/ui-prefs", "/api/mcp"):
+        if not path.startswith(("/api/rpc/", "/api/auth/", "/api/users", "/api/tgup/", "/api/brunch/")) and path not in ("/api/wtm/action", "/api/ui-prefs", "/api/mcp", "/api/update"):
             return self._send(404, {"success": False, "error": "없는 주소입니다."})
         if (self.headers.get("Content-Type") or "").split(";")[0].strip().lower() != "application/json":
             return self._send(415, {"success": False, "error": "Content-Type은 application/json이어야 합니다."})
@@ -491,6 +497,12 @@ class Handler(BaseHTTPRequestHandler):
             return self._tgup("POST", path, context, modules())
         if path.startswith("/api/brunch/"):
             return self._brunch("POST", path, context, modules())
+        if path == "/api/update":   # 설정 > 정보: 지금 업데이트 / 이전 버전으로 (관람자는 위에서 막힘)
+            try:
+                updater.start(str(context.get("action") or "update"))
+            except RuntimeError as e:
+                return self._send(400, {"success": False, "error": str(e)})
+            return self._send(200, {"success": True, "started": True})
         if path == "/api/mcp":  # 설정 > MCP: 토큰 만들기 / 끄기
             if config.overridden(["MCP_TOKEN"]):
                 return self._send(400, {"success": False, "error": "MCP_TOKEN이 실제 환경변수로 지정돼 있어 화면에서 바꿀 수 없습니다."})

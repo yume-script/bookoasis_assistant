@@ -168,6 +168,8 @@ def main():
 
     signal.signal(signal.SIGTERM, on_signal)
     signal.signal(signal.SIGINT, on_signal)
+    from gdw import updater
+    updater.set_restart(lambda: on_signal(signal.SIGTERM, None))   # 화면에서 업데이트한 뒤 정상 종료 -> 새 코드로 다시 시작
     log.info("관리 화면: http://%s:%d/  (데이터: %s, 보관함: %s, 모듈: %s)", host, port, service.DATA_DIR,
              "BookOasis DB" if bookoasis_db.configured() else config.libraries_file(),
              ", ".join(name for name, on in (("웹툰 다운로더", mods["wtm"]), ("드라이브 변경 감시", mods["gdw"]),
@@ -186,6 +188,8 @@ def main():
         server.server_close()
         supervisor.shutdown(gdw=svc is not None, wtm=mods["wtm"])
     log.info("종료")
+    if updater.restart_pending():
+        updater.exec_self()
     return 0
 
 
