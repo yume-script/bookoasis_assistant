@@ -88,6 +88,7 @@
     }
   ],
   "changelog": [
+    {"pr": 27, "version": "2.70.0", "date": "2026-11-20", "title": "텔레그램 자동 올리기: rclone mount에서 파일 하나만 못 읽을 때(캐시가 낡음) 마운트 전체를 다시 붙이지 않고 그 파일만 vfs/forget → 다시 읽기 → 그래도 안 되면 원격에서 직접 받기(rclone copyto)"},
     {"pr": 26, "version": "2.69.0", "date": "2026-11-20", "title": "텔레그램 자동 올리기: 텔레그램 업로드 속도 제한 감지 - Telethon이 혼자 기다린 flood wait(프리미엄 아닌 계정의 FLOOD_PREMIUM_WAIT)와 신호 없는 속도 저하를 계정마다, 제한 걸린 계정은 다른 계정에 양보, 진행 상태·tgup_status에 표시"},
     {"pr": 25, "version": "2.68.0", "date": "2026-11-20", "title": "MCP 설정 도구: wtm_settings·wtm_set_settings(웹툰 다운로더 일정·동시 수 등)와 tgup_settings·tgup_set_settings(텔레그램 자동 올리기 시간대·동시 인코딩·규칙) - 디스코드봇 다운로드 에이전트가 계획을 맡음"},
     {"pr": 24, "version": "2.67.1", "date": "2026-11-20", "title": "MCP 도구 tgup_status: 텔레그램 자동 올리기 현황(지금 올리는 것·대기열·자막 기다림·다시 시도·최근 기록) - 디스코드봇에서 대기열을 같이 봄"},

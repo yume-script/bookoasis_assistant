@@ -184,6 +184,7 @@ venv\Scripts\python app.py
 | `LOG_LEVEL` | `INFO` | 서비스 로그(표준 출력) 수준. 워커 로그는 `DATA_DIR/worker.log` |
 | `RCLONE_PATH` | `rclone` | rclone 실행 파일 |
 | `RCLONE_CONFIG` | (rclone 기본 위치) | rclone.conf 경로 |
+| `RCLONE_RC_MAP` | (없음) | 마운트 위치=RC 주소 (`/mnt/gds2=http://127.0.0.1:5572;/mnt/b=http://user:pass@127.0.0.1:5573`). 자동 올리기가 마운트로 파일을 못 읽을 때 그 파일만 vfs/forget 하는 데 씀. 보관함 RC 주소·`PLEX_RC_URL`·돌고 있는 `rclone mount --rc` 프로세스에서 못 찾을 때만 |
 | `BOOKOASIS_URL` | `http://127.0.0.1:5930` | 스캔 요청(`/api/webhook/scan`)을 보낼 BookOasis 주소 |
 | `WEBHOOK_TOKEN` | (없음) | BookOasis `.env`의 `WEBHOOK_TOKEN`과 같은 값 |
 | `AUTO_START` | `true` | 시작 시 워커 자동 시작 + 죽으면 다시 시작. 화면의 [중지]는 다시 [시작]할 때까지 유지 |
@@ -390,6 +391,8 @@ venv\Scripts\python app.py
    - **Plex 라이브러리**: `.env`의 `PLEX_URL`·`PLEX_TOKEN`(드라이브 감시의 Plex 설정과 같은 값, Plex 스캔을 꺼 둬도 씀)으로 붙어 "추가된 순"으로 새 영화·에피소드를 찾습니다.
      Plex가 보는 파일 경로가 이 컴퓨터에서 보이면(`PLEX_PATH_MAP`으로 바꿈) 그대로 쓰고, 아니면 Plex에서 받아 옵니다.
    - **rclone 드라이브 · 폴더**: rclone mount 폴더(/로 시작) 또는 rclone 원격 `이름:경로`. 하위 폴더까지 봅니다. `RCLONE_PATH`·`RCLONE_CONFIG`를 그대로 씁니다.
+     rclone mount의 캐시가 낡아 파일 하나만 못 읽으면(읽기 오류·크기 다름·ffprobe 실패) 마운트를 다시 붙이지 않고 그 파일만 `vfs/forget` 후 다시 읽고,
+     그래도 안 되면 원격에서 직접 받습니다(`rclone copyto`). RC 주소는 보관함 RC·`PLEX_RC_URL`·`rclone mount --rc` 프로세스·`RCLONE_RC_MAP` 순으로 찾습니다(Plex 규칙·음악도 같음).
    - 규칙을 처음 저장할 때 이미 있던 것은 올리지 않고 그 뒤에 들어온 것부터 올립니다. 같은 파일(이름+크기)은 같은 채널에 한 번만.
    - **음악 (rclone 드라이브 · 폴더)**: mp3·flac·m4a·ogg·opus 등을 인코딩 없이 그대로 올립니다. 파일 안의 태그(없으면 `아티스트/앨범 (연도)/01 곡.flac` 폴더 이름)로
      캡션을 `🎵 곡 제목` + `아티스트:`·`앨범:`·`앨범 아티스트:`·`트랙: 3/10`·`디스크:`·`장르:`·`작곡:`·`작사:`·`편곡:`·`앨범ID:` 줄로 적습니다(YMPlayer 텔레그램 음악 채널이 읽음 -
