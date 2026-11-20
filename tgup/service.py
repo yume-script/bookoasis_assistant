@@ -18,7 +18,7 @@
   POST /api/tgup/item         {rule, key, action: upload|drop|cancel|cancel_all|move|assign, where: up|down|top|bottom, account}
                               move: 진행 목록 순서 바꾸기, assign: 올릴 계정 직접 고르기 (account ""이면 규칙대로 - 놀고 있는 계정)
   POST /api/tgup/notify       {action: save|test, webhook, bot_token, channel_id, ok, fail, skip} 디스코드 알림
-  POST /api/tgup/account      {action: save_api|send_code|sign_in|logout|add|remove|rename, account, api_id, api_hash, phone, code,
+  POST /api/tgup/account      {action: save_api|send_code|sign_in|logout|add|remove|rename|proxy, account, api_id, api_hash, phone, code,
                               password, name} - 텔레그램 계정은 여러 개 (API ID/Hash는 같이 씀)
 """
 import asyncio
@@ -191,7 +191,7 @@ async def _account_status(acc_id=tgaccount.ACCOUNT_ID):
               "phone": base["phone"] if acc_id == tgaccount.ACCOUNT_ID else "", "telethon": tgaccount.available(),
               "fast_crypto": tgaccount.fast_crypto(), "error": "텔레그램에 연결하지 못했습니다 (시간 초과) - 서버의 인터넷 연결을 확인하세요."}
         _ACC_FAIL[acc_id] = {"at": time.time(), "status": st}
-    return {**st, "label": name}
+    return {**st, "label": name, "proxy": tgaccount.proxy_public(tgaccount.proxy_of(acc_id))}
 
 
 async def _accounts_status():
@@ -426,6 +426,25 @@ def _account(body):
                 a["name"] = str(body.get("name") or "").strip()[:40]
         tgaccount.save_accounts(items)
         return {"success": True}
+    if action == "proxy":   # 계정별 프록시 (같은 채널로 두 계정이 같이 올릴 때 두 번째는 다른 경로로) - 비우면 직접
+        try:
+            proxy = tgaccount.clean_proxy(body.get("proxy"))
+        except ValueError as e:
+            raise ApiError(400, str(e))
+        if proxy:
+            try:
+                tgaccount.client_proxy_args(proxy)
+            except tgaccount.TgError as e:
+                raise ApiError(400, str(e))
+        items = tgaccount.accounts()
+        for a in items:
+            if a["id"] == acc_id:
+                a["proxy"] = proxy
+        tgaccount.save_accounts(items)
+        if acc_id in RUNNER.accounts:   # 다음 연결부터 새 경로로
+            RUNNER.call(RUNNER.accounts[acc_id].close(), 15)
+        _ACC_FAIL.pop(acc_id, None)
+        return {"success": True, "proxy": tgaccount.proxy_public(proxy)}
     if action == "remove":   # 계정 빼기: 그 계정을 쓰는 규칙이 있으면 못 뺀다. 로그인돼 있으면 로그아웃까지
         if acc_id == tgaccount.ACCOUNT_ID:
             raise ApiError(400, "첫 계정은 뺄 수 없습니다 (로그아웃은 됩니다).")

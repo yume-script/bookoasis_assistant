@@ -110,7 +110,8 @@
             catch (e) { toast(e.message, 'error'); }
         } } }, icon('plus'), ' 텔레그램 계정 더하기');
         const intro = h('p', { class: 'field-hint', text: '텔레그램 계정을 여러 개 넣을 수 있습니다. 규칙마다 올릴 계정을 고르고, 계정마다 따로 동시에 올립니다 '
-            + '(같은 계정은 차례로, 한 계정이 요청 제한에 걸려도 다른 계정은 계속). 위의 API ID/Hash는 모든 계정이 같이 씁니다.' });
+            + '(같은 계정은 차례로, 한 계정이 요청 제한에 걸려도 다른 계정은 계속). 위의 API ID/Hash는 모든 계정이 같이 씁니다. '
+            + '같은 채널로는 동시에 올리지 않고 다른 채널의 것을 먼저 올립니다 - 그래도 같은 채널이면 연결 경로가 다른 계정(직접 하나 + 프록시를 쓰는 계정)만 같이 올립니다.' });
         clear(pane).append(apiCard, intro, ...cards, h('div', { class: 'toolbar' }, add));
     }
 
@@ -123,13 +124,21 @@
             if (name === null) return;
             try { await say({ action: 'rename', name }); renderAccount(pane); } catch (e) { toast(e.message, 'error'); }
         } } }, icon('pen'));
+        const proxyBtn = h('button', { class: 'btn btn-sm', type: 'button', title: '이 계정의 프록시 (같은 채널로 두 계정이 같이 올릴 때 두 번째 경로)', on: { click: async () => {
+            const v = prompt('이 계정이 텔레그램에 붙을 프록시 (비우면 직접 연결)\n'
+                + 'socks5://호스트:포트 · socks5://아이디:비밀번호@호스트:포트 · http://호스트:포트 · mtproxy://시크릿@호스트:포트', '');
+            if (v === null) return;
+            try { await say({ action: 'proxy', proxy: v.trim() }); toast(v.trim() ? '프록시를 저장했습니다 (다음 연결부터).' : '직접 연결로 바꿨습니다.', 'success'); renderAccount(pane); }
+            catch (e) { toast(e.message, 'error', 6000); }
+        } } }, icon('route'), a.proxy ? ' 프록시' : ' 직접');
         const remove = n === 0 ? null : h('button', { class: 'btn btn-sm danger', type: 'button', title: '이 계정 빼기', on: { click: async () => {
             if (!confirm(`"${title}" 계정을 뺄까요? (로그인돼 있으면 로그아웃하고 세션을 지웁니다. 이 계정으로 올리는 규칙이 있으면 못 뺍니다)`)) return;
             try { await say({ action: 'remove' }); toast('계정을 뺐습니다.', 'success'); renderAccount(pane); } catch (e) { toast(e.message, 'error', 6000); }
         } } }, icon('trash'));
         const box = h('div', { class: 'src-card tg-account' },
             h('div', { class: 'toolbar' }, h('h3', { class: 'pane-title', style: 'flex:1' }, h('i', { class: 'fa-brands fa-telegram' }),
-                ` ${count > 1 ? `계정 ${n + 1}: ` : ''}${title}`), rename, remove));
+                ` ${count > 1 ? `계정 ${n + 1}: ` : ''}${title}`), proxyBtn, rename, remove),
+            h('p', { class: 'field-hint', text: a.proxy ? `연결: 프록시 ${a.proxy}` : '연결: 직접 (프록시 없음)' }));
         if (!a.telethon) box.appendChild(h('p', { class: 'muted error', text: '서버에 telethon이 없습니다: pip install -r requirements.txt 후 다시 시작하세요.' }));
         else if (a.authorized) {
             box.append(h('p', {}, h('span', { class: 'ok', text: `✓ ${a.name || '로그인됨'}` }), h('span', { class: 'muted', text: ` ${a.phone || ''}${a.premium ? ' · 프리미엄 (4GB까지)' : ' · 일반 계정 (2GB까지)'}` })),
