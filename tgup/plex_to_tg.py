@@ -72,7 +72,7 @@ import urllib.parse
 
 from aiohttp import ClientTimeout
 
-from . import compat as config_store, compat as transcode, folder_watch, mountfix, music, throttle, tgaccount as telegram_src
+from . import compat as config_store, compat as transcode, folder_watch, mountfix, music, throttle, tgaccount as telegram_src, youtube
 from gdw import memtrim  # noqa: E402 - 큰 작업 뒤 쓰고 난 메모리를 OS에
 
 log = logging.getLogger("ym_player.plex_to_tg")
@@ -227,10 +227,12 @@ def clean_settings(raw):
                 "tg_alt": [],
                 "burn_subs": bool(r.get("burn_subs", True)),
                 # 폴더 규칙 (rclone 드라이브 등): kind "folder", folder = 절대 경로 또는 rclone "원격:경로"
-                "kind": "folder" if r.get("kind") in ("folder", "music") else "plex",
+                "kind": "folder" if r.get("kind") in ("folder", "music", "youtube") else "plex",
                 "folder": str(r.get("folder") or "").strip()[:500],
                 # 음악 규칙 (폴더 규칙의 한 가지): media "music" - mp3·flac 등을 태그 캡션·오디오로 (tgup/music.py)
-                "media": "music" if r.get("kind") == "music" or r.get("media") == "music" else "video",
+                # 유튜브 규칙 (폴더 규칙의 한 가지): media "youtube" - 링크를 주면 yt-dlp로 받아 올린다 (tgup/youtube.py)
+                "media": ("music" if r.get("kind") == "music" or r.get("media") == "music" else
+                          "youtube" if r.get("kind") == "youtube" or r.get("media") == "youtube" else "video"),
                 # 음악 규칙: 처음 켤 때 폴더에 이미 있는 곡도 올릴지 (영상 규칙은 늘 새로 생긴 것만)
                 "upload_existing": bool(r.get("upload_existing", False)),
                 # height보다 높은 영상은 용량과 상관없이 height로 줄여 올린다 (0이면 줄이지 않음) - Plex·폴더 규칙 모두
@@ -243,10 +245,16 @@ def clean_settings(raw):
             rule["media"], rule["upload_existing"] = "video", False
         if rule["media"] == "music":   # (자막 기다리기·입히기는 영상만)
             rule["wait_subs"], rule["burn_subs"] = False, False
+        if rule["media"] == "youtube":   # 폴더는 이 서버 안 (받은 파일을 잠깐 두는 곳), 자막은 기다리지 않음
+            rule["folder"] = youtube.rule_folder(rule["id"])
+            rule["wait_subs"], rule["upload_existing"] = False, False
+            if rule["caption"] == DEFAULT_CAPTION:
+                rule["caption"] = youtube.YT_CAPTION
         if rule["kind"] == "folder":
             rule["folder"] = folder_watch.clean_folder(rule["folder"])
             rule["plex"], rule["section"] = "", ""
-            rule["section_title"] = rule["folder"].rstrip("/").rsplit("/", 1)[-1].rsplit(":", 1)[-1] or rule["folder"]
+            rule["section_title"] = ("유튜브" if rule["media"] == "youtube" else
+                                     rule["folder"].rstrip("/").rsplit("/", 1)[-1].rsplit(":", 1)[-1] or rule["folder"])
             if not (rule["tg"] and re.fullmatch(r"-?\d+", rule["channel"])):
                 raise ValueError("규칙마다 텔레그램 채널을 골라 주세요.")
         elif not (rule["plex"] and rule["section"] and rule["tg"] and re.fullmatch(r"-?\d+", rule["channel"])):
@@ -979,7 +987,7 @@ class Mirror:
         # 1) 바깥(폴더·Plex)에서 목록부터 받는다 - 받는 동안 올리는 줄이 상태 파일을 고칠 수 있어서, 상태는 다 받은 뒤에 한 번에 읽고 쓴다
         got = {}
         for rule in st["rules"]:
-            if not rule["enabled"]:
+            if not rule["enabled"] or rule.get("media") == "youtube":   # 유튜브 규칙은 링크를 받을 때만 (폴더를 보지 않음)
                 continue
             try:
                 got[rule["id"]] = (await folder_watch.scan(rule["folder"], rule_exts(rule)) if rule["kind"] == "folder"
@@ -1153,7 +1161,7 @@ class Mirror:
         """[파일 골라 보내기] 폴더 규칙의 파일들을 직접 골라 진행 목록 끝에 넣는다 (제외 정규식·자막 기다리기는 건너뜀 - 고른 것이니).
         again: 이 채널에 이미 올린 파일(같은 파일·파일 이름·회차)도 다시 올린다. 돌려주는 값: 넣은 수"""
         rule = next((r for r in load_settings()["rules"] if r["id"] == rule_id), None)
-        if not rule or rule["kind"] != "folder":
+        if not rule or rule["kind"] != "folder" or rule.get("media") == "youtube":
             raise ValueError("폴더(rclone 드라이브) 규칙을 골라 주세요.")
         exts = rule_exts(rule)
         queued = {(j["rule"], j["key"]) for j in self.queue}
@@ -1650,6 +1658,8 @@ class Mirror:
         lane.current = lane.current_job = None
         state = load_state()
         tg = (rule or {}).get("tg", "")
+        if (rule or {}).get("media") == "youtube" and cancelled:   # 유튜브: 받아 둔 것은 지운다
+            youtube.cleanup(rule["folder"], job["key"], youtube.find_file(rule["folder"], job["key"]))
         if cancelled:   # 올리던 중에 직접 취소
             self._forget(state, job["rule"], job["key"], job["title"], "건너뜀: 올리던 중 직접 취소", job.get("sig", ""))
             save_state(state)
@@ -1718,6 +1728,8 @@ class Mirror:
             else:
                 retry.pop(job["key"], None)
                 note += f" (다시 시도 {MAX_TRIES}번 모두 실패 - 그만둠)"
+                if (rule or {}).get("media") == "youtube":   # 그만둠 - 받아 둔 것은 지운다
+                    youtube.cleanup(rule["folder"], job["key"], youtube.find_file(rule["folder"], job["key"]))
         acct = state.setdefault("accounts", {}).setdefault(tg, {"ok": 0, "fail": 0})
         acct["ok" if ok else "fail"] = acct.get("ok" if ok else "fail", 0) + 1
         state["history"] = trim_history([{"title": job["title"], "ok": ok, "note": note, "at": int(time.time()), "key": job["key"],
@@ -1965,7 +1977,7 @@ class Mirror:
         if self._poster_task and not self._poster_task.done():
             return self.poster_job
         chans = sorted({(r["tg"], int(r["channel"])) for r in load_settings()["rules"]
-                        if r["kind"] == "folder" and r.get("media") != "music" and rule_id in (None, r["id"])})
+                        if r["kind"] == "folder" and r.get("media") not in ("music", "youtube") and rule_id in (None, r["id"])})
         if not chans:
             raise ValueError("rclone(폴더) 규칙이 없습니다.")
         self.poster_job = {"running": True, "done": 0, "total": 0, "found": 0, "missing": 0, "error": ""}
@@ -2042,6 +2054,8 @@ class Mirror:
         return gb
 
     async def upload(self, rule, key, max_gb, test=False):
+        if rule.get("kind") == "folder" and rule.get("media") == "youtube":
+            return await self.upload_youtube(rule, key, max_gb, test)
         if rule.get("kind") == "folder" and rule.get("media") == "music":
             return await self.upload_music(rule, key, max_gb, test)
         if rule.get("kind") == "folder":
@@ -2232,7 +2246,7 @@ class Mirror:
             notes.insert(0, mount_note)
         return ", ".join(notes)
 
-    async def upload_file(self, rule, key, max_gb, test=False):
+    async def upload_file(self, rule, key, max_gb, test=False, extra_fields=None):
         """폴더 규칙(rclone 드라이브 등)의 파일 하나: 텔레그램에서 바로 재생되게 H.264/AAC mp4로 (필요할 때만 인코딩),
         크면 720p로 줄이고, 자막 파일이 있으면 화면에 입혀서 올린다"""
         folder = rule["folder"]
@@ -2240,6 +2254,8 @@ class Mirror:
         copied = False
         self._cur_sig = (self._job or {}).get("sig") or ""
         fields = folder_watch.file_fields(key, rule["section_title"])
+        if extra_fields:   # 유튜브: 영상 제목·채널·날짜·주소 (파일 이름에서 짐작하지 않음)
+            fields.update(extra_fields)
         # 1) 중복 (같은 파일 / 채널에 같은 파일 이름 / 같은 작품·시즌·회차) -> 2) 제외 정규식
         dup = "" if test else await self._duplicate(rule, fields, os.path.basename(key))
         if dup:
@@ -2355,7 +2371,7 @@ class Mirror:
             memtrim.release()   # 큰 작업 뒤 쓰고 난 메모리를 OS에 (스왑 줄이기)
         log.info("자동 올리기(폴더): %s -> %s", key, rule["channel_title"] or rule["channel"])
         # Plex 정보가 없으니 TMDB에서 작품을 찾아 둔다 (목록 카드의 포스터) - 같은 드라마는 처음 찾은 것을 그대로
-        poster = await self._find_poster(rule, fields["name"], os.path.basename(key))
+        poster = "" if extra_fields else await self._find_poster(rule, fields["name"], os.path.basename(key))
         self.subs_label = "화면에 입힘" if burn else f"파일 {sent_subs}개" if sent_subs else "없음"
         if not plan:
             notes = ["그대로 올림 (바로 재생되는 mp4)"]
@@ -2374,6 +2390,55 @@ class Mirror:
         if mount_note:
             notes.insert(0, mount_note)
         return ", ".join(notes)
+
+    async def add_youtube(self, rule_id, urls, again=False):
+        """[유튜브 보내기] 링크들(영상·재생목록)을 그 유튜브 규칙의 진행 목록 끝에 넣는다. 돌려주는 값: (넣은 수, 이미 목록에 있던 수)"""
+        rule = next((r for r in load_settings()["rules"] if r["id"] == rule_id), None)
+        if not rule or rule.get("media") != "youtube":
+            raise ValueError("유튜브 규칙을 골라 주세요.")
+        if not youtube.available():
+            raise ValueError("서버에 yt-dlp가 없습니다 (pip install yt-dlp).")
+        items = await youtube.expand(urls)
+        if not items:
+            raise ValueError("유튜브 주소를 넣어 주세요.")
+        queued = {(j["rule"], j["key"]) for j in self.queue}
+        n = dup = 0
+        for vid, url in items:
+            key = youtube.key_of(vid)
+            if (rule_id, key) in queued:
+                dup += 1
+                continue
+            youtube.save_request(rule["folder"], key, url)
+            self.queue.append({"rule": rule_id, "key": key, "title": f"유튜브 {vid}", "manual": True, **({"force": True} if again else {})})
+            queued.add((rule_id, key))
+            n += 1
+        if n:
+            self._queue_changed()
+            self.wake()
+        return n, dup
+
+    async def upload_youtube(self, rule, key, max_gb, test=False):
+        """유튜브 규칙의 링크 하나: yt-dlp로 받아(이미 받아 둔 것이 있으면 그것) 폴더 규칙과 같은 과정으로 올린 뒤 받은 파일을 지운다"""
+        folder = rule["folder"]
+        req = youtube.load_request(folder, key)
+        if not req.get("url"):
+            raise RuntimeError("유튜브 주소 기록이 없습니다 - 다시 보내 주세요.")
+        path = youtube.find_file(folder, key)
+        title = req.get("title") or req["url"]
+        if not path:
+            self.current = {"title": title, "phase": "유튜브에서 받는 중", "done": 0, "total": 0}
+
+            def prog(done, total):
+                if self.current:
+                    self.current.update(done=int(done), total=int(total))
+            path = await youtube.download(req["url"], folder, key, rule["height"], prog, self.cancelled)
+        info = youtube.load_info(folder, key)
+        f = youtube.fields(info, req)
+        if self._job is not None and f["name"]:
+            self._job["title"] = f["name"]   # 진행 목록·기록에 영상 제목으로
+        note = await self.upload_file({**rule, "wait_subs": False}, os.path.basename(path), max_gb, test, extra_fields=f)
+        youtube.cleanup(folder, key, path)   # 다 올렸거나 중복이라 건너뜀 - 받은 것은 지운다 (실패면 위에서 예외로 남겨 둠)
+        return note
 
     async def upload_music(self, rule, key, max_gb, test=False):
         """음악 규칙의 곡 하나: 태그(없으면 폴더 이름)로 캡션('이름: 값' 줄)과 텔레그램 오디오 속성을 만들고, 앨범 아트를 썸네일로,

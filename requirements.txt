@@ -10,3 +10,5 @@ aiohttp>=3.9
 telethon>=1.36
 # 텔레그램 암호화를 C로 (없으면 순수 파이썬 - 올리기가 느림):
 cryptg>=0.4; platform_machine == "x86_64" or platform_machine == "AMD64" or platform_machine == "aarch64"
+# 유튜브 규칙 (링크 -> 받아서 텔레그램 채널). 없으면 그 규칙만 못 씀:
+yt-dlp>=2025.1.15
