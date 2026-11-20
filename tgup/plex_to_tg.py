@@ -32,7 +32,8 @@
 
 - 텔레그램 계정마다 따로 올린다: 같은 계정의 항목은 차례로, 다른 계정(A·B·C)의 항목은 동시에. 한 계정이 텔레그램 요청 제한
   (FloodWait)에 걸리면 그 계정만 그 시간 쉬고(항목은 진행 목록 제자리) 다른 계정은 다른 항목·채널을 계속 올린다.
-  같은 채널로는 동시에 올리지 않고 다른 채널의 항목을 먼저 하며, 그래도 같은 채널이면 연결 경로가 다른 계정(직접 하나 + 프록시)만 같이 올린다. 인코딩은 서버 부하를 생각해 동시에 encode_slots개까지
+  같은 채널로는 동시에 보내지 않고(텔레그램으로 보내는 동안만 채널을 잡음 - 받기·인코딩·나누기는 동시에) 다른 채널의 항목을 먼저 하며,
+  같은 채널이면 연결 경로가 다른 계정(직접 하나 + 프록시)만 같이 보내고 같은 경로는 보내기 차례를 기다린다. 인코딩은 서버 부하를 생각해 동시에 encode_slots개까지
   (기본 1 - 다른 계정 것은 앞 인코딩이 끝날 때까지 "인코딩 차례 기다리는 중"). 기록·성공/실패 수는 계정마다.
 - 드라마 회차 중복 막기: 작품 이름 + 시즌 + 회차가 같으면(ST/SW 같은 태그, mp4/mkv, 해상도와 상관없이) 이미 올린 것으로 보고
   건너뛴다 - 자동 올리기로 올린 것과 그 채널에 이미 있는 영상(텔레그램 색인) 모두. 건너뛴 까닭은 기록에 남는다.
@@ -56,6 +57,7 @@ channel, channel_title, caption, wait_subs, wait_min, burn_subs, kind, folder, h
 (예전 wait_days / wait_hours는 읽을 때 wait_min(분)으로 바꾼다)
 """
 import asyncio
+import contextlib
 import contextvars
 import errno
 import hashlib
@@ -691,6 +693,7 @@ class Lane:
         self.subs_label = ""
         self.resume = None        # 나눠 올리다 멈춘 항목을 이어 올릴 때 {n, done, vids} (서버를 다시 켠 뒤 등)
         self.flood_until = 0      # 텔레그램 요청 제한으로 이때까지 쉼
+        self.channel = ""         # 지금 항목을 올릴 채널 (채널별 보내기 차례 - 인코딩 중에는 잡지 않는다)
         self.started = 0          # 지금 항목을 시작한 때
         self.times = {}           # 지금 항목의 단계별 걸린 초 {받기, 인코딩, 나누기, 올리기, 대기, 준비}
         self.phase_kind = ""      # 지금 단계 칸과 그 시작 시각
@@ -764,7 +767,8 @@ class Mirror:
         self.lanes = {}          # 텔레그램 소스 id -> Lane (지금 도는 줄)
         self._lane_tasks = {}    # 텔레그램 소스 id -> asyncio.Task
         self._taken = set()      # 줄이 잡은 항목 id(job) - 다른 줄이 다시 잡지 않게
-        self._chan_routes = {}   # 채널 -> 지금 그 채널로 올리는 경로들 ["direct", "socks5://…"] (채널별 동시 올리기 규칙)
+        self._chan_routes = {}   # 채널 -> 지금 그 채널로 보내는 경로들 ["direct", "socks5://…"] (채널별 동시 올리기 규칙)
+        self._chan_cond = None   # 그 표가 바뀔 때 깨우는 조건 (루프 안에서 만든다)
         self.offline = {}        # 닿지 못한 원본 드라이브 -> {since, path, last, count, logged} (실패로 세지 않고 다시 시도 중)
         self._queue_event = asyncio.Event()
         self._encoding = 0       # 지금 돌고 있는 인코딩 수 (encode_slots까지)
@@ -1552,14 +1556,15 @@ class Mirror:
             if id(j) in self._taken:
                 continue
             for a in self._accounts_for(rules.get(j["rule"]), j):
-                if a not in out and (include_down or not self._is_down(a)) and self._channel_ok(rules.get(j["rule"]), a, True):
+                if a not in out and (include_down or not self._is_down(a)):
                     out.append(a)
         return out
 
     # ----- 채널별 동시 올리기 규칙 -----
-    # 1) 같은 채널로는 동시에 올리지 않는다. 2) 그 채널이 올리는 중이면 다른 채널에 올릴 것을 먼저 한다.
-    # 4) 그래도 같은 채널로 올려야 하면(다른 채널에 올릴 것이 없음) 연결 경로가 다른 계정만 - 한 계정은 그대로(직접),
-    #    두 번째는 프록시를 거치는 계정 (계정마다 프록시는 텔레그램 계정 탭). 경로(직접 / 프록시 주소)마다 한 채널에 하나씩.
+    # 1) 같은 채널로는 동시에 보내지 않는다 - 텔레그램으로 보내는 동안만 그 채널을 잡는다 (받기·인코딩은 채널과 상관없이 동시에).
+    # 2) 다른 계정 줄이 처리 중인 채널이면 다른 채널의 항목을 먼저 가져간다.
+    # 4) 그래도 같은 채널이면 연결 경로가 다른 계정만 같이 보낸다 - 한 계정은 그대로(직접), 두 번째는 프록시를 거치는 계정
+    #    (계정마다 프록시는 텔레그램 계정 탭). 경로(직접 / 프록시 주소)마다 한 채널에 하나씩, 같은 경로면 보내기 차례를 기다린다.
     @staticmethod
     def _channel_of(rule):
         return str((rule or {}).get("channel") or "")
@@ -1567,35 +1572,41 @@ class Mirror:
     def _route(self, tg):
         return telegram_src.route_of(tg) if hasattr(telegram_src, "route_of") else "direct"
 
-    def _channel_ok(self, rule, tg, share=False):
-        """이 계정이 지금 이 규칙의 채널로 올려도 되는지. share=False: 아무도 그 채널로 올리지 않을 때만,
-        share=True: 올리는 중이어도 이 계정의 경로(직접/프록시)가 아직 그 채널에 없으면"""
-        used = self._chan_routes.get(self._channel_of(rule)) or []
-        if not used:
-            return True
-        return share and self._route(tg) not in used
-
-    def _hold_channel(self, rule, tg):
+    def _channel_busy(self, rule, tg):
+        """다른 계정 줄이 이 채널의 항목을 처리 중인지 (받기·인코딩·보내기 아무 단계든)"""
         ch = self._channel_of(rule)
-        if not ch:
-            return None
-        hold = (ch, self._route(tg))
-        self._chan_routes.setdefault(ch, []).append(hold[1])
-        return hold
+        return bool(ch) and any(ln.channel == ch and ln.tg != tg and ln.current_job for ln in self.lanes.values())
 
-    def _release_channel(self, hold):
-        if not hold:
+    @contextlib.asynccontextmanager
+    async def _channel_gate(self):
+        """텔레그램으로 보내는 동안 이 채널·경로를 잡는다 - 같은 경로가 그 채널로 보내는 중이면 끝날 때까지 기다림"""
+        lane = _LANE.get() or self._main
+        ch, route = lane.channel, self._route(lane.tg)
+        if not ch:
+            yield
             return
-        used = self._chan_routes.get(hold[0]) or []
-        if hold[1] in used:
-            used.remove(hold[1])
-        if not used:
-            self._chan_routes.pop(hold[0], None)
-        self._queue_event.set()   # 채널이 비었다 - 기다리던 계정 줄을 다시 띄우게
+        if self._chan_cond is None:
+            self._chan_cond = asyncio.Condition()
+        async with self._chan_cond:
+            if route in (self._chan_routes.get(ch) or []):
+                prev = dict(self.current or {})
+                self.current = {**prev, "phase": "같은 채널로 보내는 중인 것이 끝나기를 기다리는 중", "done": 0, "total": 0}
+                await self._chan_cond.wait_for(lambda: route not in (self._chan_routes.get(ch) or []))
+            self._chan_routes.setdefault(ch, []).append(route)
+        try:
+            yield
+        finally:
+            async with self._chan_cond:
+                used = self._chan_routes.get(ch) or []
+                if route in used:
+                    used.remove(route)
+                if not used:
+                    self._chan_routes.pop(ch, None)
+                self._chan_cond.notify_all()
 
     def _next_job(self, tg, rules):
         """이 계정이 가져갈 다음 항목 - 진행 목록의 앞에서부터 (그 계정이 올릴 수 있는 것 중).
-        먼저 아무도 올리지 않는 채널의 항목, 없으면 이 계정의 경로(직접/프록시)가 아직 쓰이지 않은 채널의 항목 (채널별 동시 올리기 규칙).
+        먼저 다른 계정 줄이 처리하지 않는 채널의 항목, 없으면 같은 채널의 항목 (받기·인코딩은 하고, 보내기는 _channel_gate에서 차례로).
         이 계정이 텔레그램 속도 제한에 걸려 있으면(tgup/throttle.py) 같이 올릴 수 있는 다른 계정 중 놀고 있고 제한 없는 계정에게 양보한다"""
         mine_slow = throttle.throttled(tg)
         for share in (False, True):
@@ -1604,7 +1615,7 @@ class Mirror:
                     continue
                 rule = rules.get(j["rule"])
                 cands = self._accounts_for(rule, j)
-                if tg not in cands or not self._channel_ok(rule, tg, share):
+                if tg not in cands or (not share and self._channel_busy(rule, tg)):
                     continue
                 if mine_slow and not j.get("pin") and any(
                         a != tg and not self._is_down(a) and not throttle.throttled(a)
@@ -1623,12 +1634,12 @@ class Mirror:
                 if job is None:
                     break
                 self._taken.add(id(job))
-                hold = self._hold_channel(rules.get(job["rule"]), tg)
+                lane.channel = self._channel_of(rules.get(job["rule"]))
                 try:
                     await self._run_job(lane, job, rules.get(job["rule"]), st)
                 finally:
                     self._taken.discard(id(job))
-                    self._release_channel(hold)
+                    lane.channel = ""
                     throttle.stopped(tg)
         finally:
             lane.current = lane.current_job = lane.job = None
@@ -2592,27 +2603,28 @@ class Mirror:
                 if self.current:
                     self.current.update(done=int(done), total=int(total))
                 throttle.progress(tg_now, done)
-            t_send = time.time()
-            sent = await client.send_file(peer, local, caption=cap, thumb=thumb, attributes=attrs, force_document=False,
-                                          progress_callback=progress)
-            throttle.done(tg_now, os.path.getsize(local), time.time() - t_send)
-            msgs.append(getattr(sent, "id", None))
-            self._note_sent(getattr(sent, "id", None))
-            # 가사 (.lrc - 같은 이름): 곡 바로 뒤에 파일로 (YMPlayer가 곡에 붙여 보여 줄 수 있게)
-            stem = os.path.splitext(base)[0].casefold()
-            lrc = next((n for n in names if os.path.splitext(n)[1].lower() == ".lrc" and os.path.splitext(n)[0].casefold() == stem), "")
-            if lrc:
-                rel = f"{d}/{lrc}" if d else lrc
-                lpath = os.path.join(tmp, "lyrics.lrc") if remote else os.path.join(os.path.dirname(local), lrc)
-                try:
-                    if remote:
-                        await folder_watch.fetch(folder, rel, lpath)
-                    lm = await client.send_file(peer, lpath, force_document=True,
-                                                attributes=[DocumentAttributeFilename(os.path.splitext(name)[0] + ".lrc")])
-                    self._note_sent(getattr(lm, "id", None))
-                    notes.append("가사(.lrc) 첨부")
-                except Exception as e:  # noqa: BLE001 - 가사는 못 올려도 곡은 올라감
-                    log.info("자동 올리기(음악): 가사를 올리지 못했습니다 (%s): %s", key, e)
+            async with self._channel_gate():   # 그 채널 보내기 차례 (곡 + 가사)
+                t_send = time.time()
+                sent = await client.send_file(peer, local, caption=cap, thumb=thumb, attributes=attrs, force_document=False,
+                                              progress_callback=progress)
+                throttle.done(tg_now, os.path.getsize(local), time.time() - t_send)
+                msgs.append(getattr(sent, "id", None))
+                self._note_sent(getattr(sent, "id", None))
+                # 가사 (.lrc - 같은 이름): 곡 바로 뒤에 파일로 (YMPlayer가 곡에 붙여 보여 줄 수 있게)
+                stem = os.path.splitext(base)[0].casefold()
+                lrc = next((n for n in names if os.path.splitext(n)[1].lower() == ".lrc" and os.path.splitext(n)[0].casefold() == stem), "")
+                if lrc:
+                    rel = f"{d}/{lrc}" if d else lrc
+                    lpath = os.path.join(tmp, "lyrics.lrc") if remote else os.path.join(os.path.dirname(local), lrc)
+                    try:
+                        if remote:
+                            await folder_watch.fetch(folder, rel, lpath)
+                        lm = await client.send_file(peer, lpath, force_document=True,
+                                                    attributes=[DocumentAttributeFilename(os.path.splitext(name)[0] + ".lrc")])
+                        self._note_sent(getattr(lm, "id", None))
+                        notes.append("가사(.lrc) 첨부")
+                    except Exception as e:  # noqa: BLE001 - 가사는 못 올려도 곡은 올라감
+                        log.info("자동 올리기(음악): 가사를 올리지 못했습니다 (%s): %s", key, e)
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
             memtrim.release()
@@ -2623,7 +2635,12 @@ class Mirror:
             notes.append("앨범 아트")
         return ", ".join(notes)
 
-    async def _send_pieces(self, client, peer, pieces, name, caption, width, height, thumb, sub_files, title, tmp, msgs):
+    async def _send_pieces(self, *args):
+        """조각들을 텔레그램으로 - 그 채널 보내기 차례를 잡고 (나눈 조각은 한 번에 이어서)"""
+        async with self._channel_gate():
+            return await self._send_pieces_now(*args)
+
+    async def _send_pieces_now(self, client, peer, pieces, name, caption, width, height, thumb, sub_files, title, tmp, msgs):
         """영상 조각들을 차례로 올리고(나눴으면 이름 끝에 _0000, _0001…, 캡션에 (i/n)) 그 뒤에 자막 파일. 올린 메시지 id는 msgs에.
         돌려주는 값: 올린 자막 파일 수"""
         from telethon.tl.types import DocumentAttributeFilename, DocumentAttributeVideo

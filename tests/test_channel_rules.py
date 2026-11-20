@@ -63,33 +63,43 @@ class ChannelRuleTest(unittest.TestCase):
         self.mir.queue.append(j)
         return j
 
-    def take(self, tg):
-        j = self.mir._next_job(tg, self.rules)
-        if j:
-            self.mir._taken.add(id(j))
-            self.mir._hold_channel(self.rules[j["rule"]], tg)
-        return j
+    def busy(self, tg, rule):
+        """그 계정 줄이 그 규칙의 항목을 처리 중 (받기·인코딩·보내기 어느 단계든)"""
+        ln = self.mir.lanes.setdefault(tg, self.m.Lane(tg))
+        ln.channel, ln.current_job = self.rules[rule]["channel"], {"rule": rule, "key": "?"}
 
-    def test_other_channel_first_then_proxy_route(self):
+    def test_other_channel_first(self):
         x1, x2, y1 = self.job("x", "x1"), self.job("x", "x2"), self.job("y", "y1")
-        self.assertIs(self.take("A"), x1)                 # A: 채널 -100
-        self.assertIs(self.take("B"), y1)                 # B: -100은 올리는 중 -> 다른 채널(-200)을 먼저
-        self.mir._release_channel(("-200", "direct"))   # B가 -200을 다 올림
-        # 남은 것은 -100뿐: 직접 경로(A·B)는 -100에 이미 있음 -> B는 못 가져가고, 프록시 계정 P만
-        self.assertIsNone(self.mir._next_job("B", self.rules))
-        self.assertIs(self.take("P"), x2)
-        self.assertEqual(sorted(self.mir._chan_routes["-100"]), ["direct", "socks5://h:1"])
-        # 경로가 둘 다 찼으면 그 채널엔 더 못 올림
-        self.job("x", "x3")
-        self.routes["Q"] = "socks5://h:1"
-        self.rules["x"]["tg_alt"].append("Q")
-        self.assertIsNone(self.mir._next_job("Q", self.rules))
+        self.mir._taken.add(id(x1))
+        self.busy("A", "x")
+        self.assertIs(self.mir._next_job("B", self.rules), y1)   # -100은 A가 처리 중 -> 다른 채널(-200)을 먼저
+        self.mir._taken.add(id(y1))
+        self.assertIs(self.mir._next_job("B", self.rules), x2)   # 다른 채널이 없으면 같은 채널도 가져가 받기·인코딩은 한다
+        self.assertEqual(self.mir._waiting_accounts(self.rules), ["A", "B", "P"])   # 줄은 막지 않는다 (보내기에서 차례)
 
-    def test_waiting_accounts_skip_blocked(self):
-        self.job("x", "x1")
-        self.job("x", "x2")
-        self.take("A")
-        self.assertEqual(self.mir._waiting_accounts(self.rules), ["P"])   # B(직접)는 -100에 못 붙음 -> 줄을 띄우지 않는다
+    def test_send_gate_same_route_waits_other_route_shares(self):
+        m, mir = self.m, self.mir
+        order = []
+
+        async def send(tg, name, hold):
+            lane = mir.lanes.setdefault(tg, m.Lane(tg))
+            lane.channel = "-100"
+            m._LANE.set(lane)
+            async with mir._channel_gate():
+                order.append(("start", name))
+                await asyncio.sleep(hold)
+                order.append(("end", name))
+
+        async def run():
+            a = asyncio.ensure_future(send("A", "A", 0.2))
+            await asyncio.sleep(0.02)
+            b = asyncio.ensure_future(send("B", "B", 0.01))   # A와 같은 경로(직접) -> A가 끝날 때까지 기다림
+            p = asyncio.ensure_future(send("P", "P", 0.01))   # 프록시 경로 -> 바로 같이
+            await asyncio.gather(a, b, p)
+        asyncio.run(run())
+        self.assertLess(order.index(("start", "P")), order.index(("end", "A")))
+        self.assertGreater(order.index(("start", "B")), order.index(("end", "A")))
+        self.assertEqual(mir._chan_routes, {})
 
     def test_flood_wait_rests_account_and_keeps_job(self):
         m = self.m
