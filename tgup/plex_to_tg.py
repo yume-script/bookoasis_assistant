@@ -75,7 +75,7 @@ import urllib.parse
 
 from aiohttp import ClientTimeout
 
-from . import compat as config_store, compat as transcode, folder_watch, mountfix, music, throttle, tgaccount as telegram_src, youtube
+from . import compat as config_store, compat as transcode, folder_watch, hardsub_llm, mountfix, music, throttle, tgaccount as telegram_src, youtube
 from gdw import memtrim  # noqa: E402 - 큰 작업 뒤 쓰고 난 메모리를 OS에
 
 log = logging.getLogger("ym_player.plex_to_tg")
@@ -282,7 +282,9 @@ def clean_settings(raw):
     # 인코딩을 동시에 몇 개까지 (계정이 여럿이면 올리기는 동시에 해도 인코딩은 CPU를 많이 써서 이만큼만) - 기본 1
     slots = num(raw.get("encode_slots"), 1, MAX_ENCODE_SLOTS, 1)
     return {"interval": num(raw.get("interval"), 2, 1440, 10), "max_gb": max_gb, "max_gb_v": 1, "encoder": encoder,
-            "cpu_preset": preset, "hours": hours, "encode_slots": slots, "exclude": clean_exclude(raw.get("exclude")), "rules": rules}
+            "cpu_preset": preset, "hours": hours, "encode_slots": slots, "exclude": clean_exclude(raw.get("exclude")), "rules": rules,
+            # 하드섭 자동 판단 (선택): 자막 기다리는 항목의 5분 간격 장면을 LLM(이미지를 보는 모델)에게 보여 판단 - tgup/hardsub_llm.py
+            "hardsub_llm": hardsub_llm.settings(raw.get("hardsub_llm"))}
 
 
 def _wait_min(r):
@@ -900,6 +902,7 @@ class Mirror:
                             for d, x in self.offline.items()], "off_hours": self.off_hours, "history": trim_history(st["history"]),
                 "rules": {rid: {"baseline": r.get("baseline", 0), "count": len(r.get("done", []))} for rid, r in st["rules"].items()},
                 "waiting": [{"title": w.get("title", k), "since": w.get("since", 0), "rule": rid, "key": k, "why": w.get("why", ""),
+                             "llm": hardsub_llm.label(w.get("llm")), "llm_go": hardsub_llm.is_go(w.get("llm")),
                              "shot": self._shot_mtime(rid, k), "shot_error": (self._shot_fail.get((rid, k)) or (0, ""))[1]}
                             for rid, r in st["rules"].items() for k, w in (r.get("waiting") or {}).items()],
                 "retry": [{"title": x.get("title", k), "at": x.get("at", 0), "tries": r.get("fails", {}).get(k, 0), "rule": rid, "key": k}
@@ -930,6 +933,7 @@ class Mirror:
                     if not os.path.exists(_shot_path(rid, k))
                     and time.time() - self._shot_fail.get((rid, k), (0, ""))[0] > SHOT_RETRY_SEC]
             if not todo:
+                await self._judge_waiting()
                 return
             rid, key = todo[0]
             try:
@@ -938,6 +942,38 @@ class Mirror:
             except Exception as e:   # 이 항목은 SHOT_RETRY_SEC 뒤에 다시 (다른 항목은 계속)
                 self._shot_fail[(rid, key)] = (time.time(), str(e)[:200])
                 log.info("자동 올리기 장면 뽑기 실패 (%s): %s", key, e)
+
+    async def _judge_waiting(self):
+        """[선택] 장면을 다 만든 자막 기다리는 항목을 LLM에게 하나씩 보여 하드섭인지 판단 (한 항목에 한 번, 실패하면 RETRY_SEC 뒤에).
+        auto면 '한국어 하드섭'(확신 MIN_CONF 이상)인 것은 [지금 올리기]처럼 바로 올린다"""
+        conf = load_settings()["hardsub_llm"]
+        if hardsub_llm.ready(conf) or not self.http:
+            return
+        for rid, r in load_state()["rules"].items():
+            for key, w in list((r.get("waiting") or {}).items()):
+                v = w.get("llm") or {}
+                if v and not (v.get("error") and time.time() - v.get("at", 0) > hardsub_llm.RETRY_SEC):
+                    continue
+                shot = _shot_path(rid, key)
+                if not os.path.exists(shot):
+                    continue
+                try:
+                    v = {**await hardsub_llm.judge(self.http(), conf, shot), "at": int(time.time()), "model": conf["model"]}
+                except Exception as e:  # noqa: BLE001 - 판단은 덤 (사람이 볼 수 있음)
+                    v = {"error": str(e)[:200], "at": int(time.time())}
+                    log.info("자동 올리기 하드섭 판단 실패 (%s): %s", w.get("title", key), e)
+                state = load_state()
+                cur = (state["rules"].get(rid, {}).get("waiting") or {}).get(key)
+                if cur is None:   # 그사이 빠졌다
+                    continue
+                cur["llm"] = v
+                save_state(state)
+                if conf["auto"] and hardsub_llm.is_go(v):
+                    log.info("자동 올리기: %s - %s → 기다리지 않고 올립니다", w.get("title", key), hardsub_llm.label(v))
+                    try:
+                        self.force_item(rid, key, note=hardsub_llm.label(v))
+                    except ValueError:
+                        pass
 
     async def loop(self):
         await asyncio.sleep(5)
@@ -1218,7 +1254,7 @@ class Mirror:
             self.wake()
         return n
 
-    def force_item(self, rule_id, key):
+    def force_item(self, rule_id, key, note=""):
         """자막 기다리는 항목을 기다리지 않고 지금 올린다 (자막을 영상에 입힌 하드섭처럼 자동으로 알 수 없는 경우)"""
         state = load_state()
         w = (state["rules"].get(rule_id, {}).get("waiting") or {}).pop(key, None)
@@ -1230,7 +1266,10 @@ class Mirror:
         if job:
             job["force"] = True
         else:
-            self.queue.append({"rule": rule_id, "key": key, "title": w.get("title", key), "force": True})
+            job = {"rule": rule_id, "key": key, "title": w.get("title", key), "force": True}
+            self.queue.append(job)
+        if note:   # (기록의 메모 앞에 - 왜 기다리지 않고 올렸는지)
+            job["note_pre"] = note
         self._queue_changed()
         self.wake()
         return w.get("title", key)
@@ -1822,6 +1861,8 @@ class Mirror:
                     youtube.cleanup(rule["folder"], job["key"], youtube.find_file(rule["folder"], job["key"]))
         acct = state.setdefault("accounts", {}).setdefault(tg, {"ok": 0, "fail": 0})
         acct["ok" if ok else "fail"] = acct.get("ok" if ok else "fail", 0) + 1
+        if job.get("note_pre") and ok:   # 왜 기다리지 않고 올렸는지 (LLM 하드섭 판단 등)
+            note = f"{job['note_pre']}, {note}" if note else job["note_pre"]
         state["history"] = trim_history([{"title": job["title"], "ok": ok, "note": note, "at": int(time.time()), "key": job["key"],
                                           "subs": lane.subs_label if ok else "", "channel": (rule or {}).get("channel_title", ""),
                                           "tg": tg, "rule": job["rule"], "elapsed": elapsed, "times": times,

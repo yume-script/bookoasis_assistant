@@ -357,6 +357,22 @@
             h('option', { value: v, text: t, selected: (st.hours || '') === v })));
         const presetSel = h('select', { class: 'select' }, [['veryfast', '보통 (veryfast)'], ['superfast', '빠르게 (superfast)'], ['ultrafast', '가장 빠르게 (ultrafast, 파일이 큼)']].map(([v, t]) =>
             h('option', { value: v, text: t, selected: (st.cpu_preset || 'superfast') === v })));
+        // 하드섭 자동 판단 (선택): 자막 기다리는 항목의 5분 간격 장면을 LLM(이미지를 보는 모델 - Gemini 등)에게 보여 판단
+        const llm = st.hardsub_llm || {};
+        const llmOn = h('input', { type: 'checkbox', checked: !!llm.enabled });
+        const llmAuto = h('input', { type: 'checkbox', checked: llm.auto !== false });
+        const llmUrl = h('input', { class: 'input', placeholder: 'http://127.0.0.1:4000 (LiteLLM 주소)', value: llm.url || '' });
+        const llmModel = h('input', { class: 'input', placeholder: 'LiteLLM의 model_name (예: gemini-flash)', value: llm.model || '' });
+        const llmKey = h('input', { class: 'input', type: 'password', autocomplete: 'off',
+            placeholder: data.llm_key_env ? '.env의 키를 씀' : data.llm_key ? '저장됨 (바꾸려면 새로 넣기, 지우려면 -)' : 'LiteLLM 키 (없으면 비움)', disabled: !!data.llm_key_env });
+        const llmBox = h('div', { class: 'mirror-rule' },
+            h('h3', { class: 'pane-title' }, icon('wand-magic-sparkles'), ' 하드섭 자동 판단 (LLM, 선택)'),
+            h('p', { class: 'field-hint', text: '자막을 기다리는 영상의 5분 간격 장면을 이미지를 볼 수 있는 모델(Gemini 등)에게 보여 화면에 한국어 자막이 박혀 있는지(하드섭) 판단합니다. '
+                + '한 항목에 한 번만 묻고, 판단은 진행 상태의 자막 기다림 줄에 나옵니다. 끄면 지금처럼 사람이 장면을 보고 [지금 올리기].' }),
+            h('label', { class: 'check' }, llmOn, ' 켜기'),
+            h('div', { class: 'row-2' }, field('LiteLLM 주소', llmUrl), field('모델', llmModel, '이미지를 받는 모델이어야 합니다 (글자 전용 모델은 안 됨).')),
+            field('키', llmKey, '.env의 HARDSUB_LLM_API_KEY(또는 LITELLM_API_KEY)가 있으면 그것을 씁니다.'),
+            h('label', { class: 'check' }, llmAuto, ' "한국어 하드섭"(확신 70% 이상)으로 판단하면 기다리지 않고 바로 올리기 (끄면 판단만 표시)'));
         const slotsSel = h('select', { class: 'select' }, [1, 2, 3, 4].map((v) => h('option', { value: String(v), text: `${v}개${v === 1 ? ' (기본)' : ''}`, selected: (st.encode_slots || 1) === v })));
         const excludeIn = h('textarea', { class: 'input', rows: '3', placeholder: 'S101\nS201', spellcheck: false });
         excludeIn.value = (st.exclude || []).join('\n');
@@ -501,7 +517,9 @@
             try {
                 const r = await post('api/tgup/settings', { interval: Number(intervalIn.value), max_gb: Number(maxSel.value), max_gb_v: 1, encoder: encSel.value,
                     cpu_preset: presetSel.value, hours: hoursSel.value, encode_slots: Number(slotsSel.value),
-                    exclude: excludeIn.value.split('\n').map((x) => x.trim()).filter(Boolean), rules: rows.map((x) => x.get()) });
+                    exclude: excludeIn.value.split('\n').map((x) => x.trim()).filter(Boolean), rules: rows.map((x) => x.get()),
+                    hardsub_llm: { enabled: llmOn.checked, url: llmUrl.value.trim(), model: llmModel.value.trim(), auto: llmAuto.checked },
+                    ...(llmKey.value.trim() ? { hardsub_llm_key: llmKey.value.trim() } : {}) });
                 r.settings.rules.forEach((x, i) => { if (rows[i]) rows[i].id = x.id; });
                 toast('저장했습니다. 새 규칙은 지금 있는 것 다음부터 올립니다.', 'success', 5000);
             } catch (e) { toast(e.message, 'error', 6000); } finally { save.disabled = false; }
@@ -547,6 +565,7 @@
             h('div', { class: 'row-2' }, field('올리기 시간대', hoursSel, '받기·인코딩·올리기를 이 시간에만 합니다. 새 항목 찾기는 늘 하고, 쌓아 두었다가 이 시간에 올립니다.'),
                 field('동시 인코딩 개수', slotsSel, '계정이 여럿이면 올리기는 계정마다 동시에 하지만, 인코딩은 CPU·그래픽 카드를 많이 써서 이만큼만 동시에 합니다. 나머지는 "인코딩 차례 기다리는 중".')),
             field('제외할 파일 (정규식, 한 줄에 하나)', excludeIn, '파일 이름·제목·경로에 맞으면 올리지 않고 최근 기록에 "제외"로 남깁니다. 예: S101, S201, Featurettes 폴더 아래는 (?i)(^|[\\\\/])featurettes[\\\\/] (대소문자 무시는 (?i)를 앞에).'),
+            llmBox,
             rulesBox,
             h('div', { class: 'toolbar' }, h('button', { class: 'btn', on: { click: () => addRule() } }, icon('plus'), ' 규칙 추가'), save),
             h('p', { class: 'field-hint', text: '올리려면 그 채널에 글을 쓸 수 있어야 합니다(채널 관리자). Plex 서버의 파일 경로가 이 컴퓨터에서 보이면(PLEX_PATH_MAP으로 바꿈) 그대로 쓰고, '
@@ -693,6 +712,7 @@
                     title: w.shot_error ? `장면을 뽑지 못했습니다 (6시간 뒤 다시): ${w.shot_error}` : '장면을 만드는 중 (잠시 뒤 나타남)' },
                 icon(w.shot_error ? 'image' : 'hourglass-half'));
             r.firstChild.replaceWith(h('span', { class: 'mirror-title-shot' }, shot, h('span', { class: 'mirror-title', title: w.title, text: w.title })));
+            if (w.llm) r.lastChild.prepend(h('span', { class: `subs-tag ${w.llm_go ? 'subs-burn' : 'subs-none'}`, title: 'LLM이 5분 간격 장면을 보고 판단 (설정: 규칙 탭 > 하드섭 자동 판단)', text: w.llm }));
             r.lastChild.append(h('span', { class: 'mirror-actions' }, act(w, 'upload', '지금 올리기'), act(w, 'drop', '빼기', `"${w.title}"을(를) 올리지 않고 뺄까요?`)));
             live.push(r);
         }

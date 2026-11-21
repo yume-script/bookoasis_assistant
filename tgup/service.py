@@ -27,7 +27,7 @@ import os
 import threading
 import time
 
-from . import compat, folder_watch, notify, plex_to_tg, tgaccount, youtube
+from . import compat, folder_watch, hardsub_llm, notify, plex_to_tg, tgaccount, youtube
 
 log = logging.getLogger("tgup")
 CALL_TIMEOUT = 120
@@ -211,6 +211,7 @@ def account_title(st):
 def _state():
     return {"success": True, "settings": plex_to_tg.load_settings(), "status": RUNNER.run(RUNNER.mirror.status),
             "ytdlp": youtube.available(),
+            "llm_key": bool(hardsub_llm.api_key()), "llm_key_env": hardsub_llm.key_from_env(),
             "plex": bool(compat.plex_conf()["url"]), "ffmpeg": compat.available(),
             "rclone": bool(folder_watch.rclone_path()), "notify": notify.public(notify.settings())}
 
@@ -333,6 +334,12 @@ def api_post(path, body):
         except ValueError as e:
             raise ApiError(400, str(e))
         compat.save(data)
+        if "hardsub_llm_key" in body:   # 하드섭 판단 LLM 키 (비우면 그대로, "-"면 지움) - 화면에 다시 보내지 않는다
+            k = str(body.get("hardsub_llm_key") or "").strip()
+            if k == "-":
+                hardsub_llm.save_key("")
+            elif k:
+                hardsub_llm.save_key(k)
         RUNNER.run(m.wake)
         return _state()
     if path == "/api/tgup/notify":   # 디스코드 알림: {action: save|test, webhook, bot_token, channel_id, ok, fail, skip}
