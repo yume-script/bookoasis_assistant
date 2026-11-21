@@ -9,7 +9,7 @@
   GET  /api/tgup/options      규칙 고르기용: Plex 영화·TV 라이브러리, rclone 드라이브, 쓸 수 있는 그래픽 인코더
   GET  /api/tgup/channels?account=  그 계정이 들어가 있는 채널·그룹 (비우면 첫 계정)
   GET  /api/tgup/folders?path= 폴더 고르기 (비우면 rclone mount 폴더·원격 목록)
-  GET  /api/tgup/shot?rule=&key=  자막 기다리는 항목의 10분 지점 장면 (JPEG)
+  GET  /api/tgup/shot?rule=&key=  자막 기다리는 항목의 5분 간격 장면 (JPEG)
   GET  /api/tgup/files?rule=&sub= 파일 골라 보내기: 폴더 규칙의 sub 폴더 안 하위 폴더·파일 (규칙이 올리는 종류만)
   POST /api/tgup/send         {rule, keys: [폴더 규칙 기준 상대 경로], again} 고른 파일을 진행 목록에
   POST /api/tgup/settings     설정 저장 (규칙들)
@@ -27,7 +27,7 @@ import os
 import threading
 import time
 
-from . import compat, folder_watch, notify, plex_to_tg, tgaccount, youtube
+from . import compat, folder_watch, hardsub_llm, notify, plex_to_tg, tgaccount, youtube
 
 log = logging.getLogger("tgup")
 CALL_TIMEOUT = 120
@@ -211,6 +211,7 @@ def account_title(st):
 def _state():
     return {"success": True, "settings": plex_to_tg.load_settings(), "status": RUNNER.run(RUNNER.mirror.status),
             "ytdlp": youtube.available(),
+            "llm_key": bool(hardsub_llm.api_key()), "llm_key_env": hardsub_llm.key_from_env(),
             "plex": bool(compat.plex_conf()["url"]), "ffmpeg": compat.available(),
             "rclone": bool(folder_watch.rclone_path()), "notify": notify.public(notify.settings())}
 
@@ -333,6 +334,12 @@ def api_post(path, body):
         except ValueError as e:
             raise ApiError(400, str(e))
         compat.save(data)
+        if "hardsub_llm_key" in body:   # 하드섭 판단 LLM 키 (비우면 그대로, "-"면 지움) - 화면에 다시 보내지 않는다
+            k = str(body.get("hardsub_llm_key") or "").strip()
+            if k == "-":
+                hardsub_llm.save_key("")
+            elif k:
+                hardsub_llm.save_key(k)
         RUNNER.run(m.wake)
         return _state()
     if path == "/api/tgup/notify":   # 디스코드 알림: {action: save|test, webhook, bot_token, channel_id, ok, fail, skip}
