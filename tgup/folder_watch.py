@@ -53,8 +53,13 @@ def classify_subs(tracks):
         if t.get("forced") or _FORCED_TITLE.search(title):
             out["forced"] += 1
             continue
-        if lang in _KO_LANGS or _KO_TITLE.search(title):
+        det = t.get("detected")   # 자막 글자를 5분 간격으로 읽어 본 결과 (detect_sub_langs) - 언어 표시보다 믿는다
+        if det == "ko" or (det is None and (lang in _KO_LANGS or _KO_TITLE.search(title))):
             out["korean"] += 1
+        elif det == "other" and lang in ("", "und", "unk", "mis", "zxx", *_KO_LANGS):
+            name = "한국어 아님(내용 확인)"
+            if name not in out["other"]:
+                out["other"].append(name)
         elif lang in ("", "und", "unk", "mis", "zxx"):
             out["unknown"] += 1
         else:
@@ -75,9 +80,79 @@ def classify_subs(tracks):
 
 
 def stream_tracks(info):
-    """ffprobe 결과 -> classify_subs가 받는 모양 [{codec, lang, title, forced}]"""
-    return [{"codec": s.get("codec_name", ""), "lang": (s.get("tags") or {}).get("language", ""), "title": (s.get("tags") or {}).get("title", ""),
+    """ffprobe 결과 -> classify_subs가 받는 모양 [{index, codec, lang, title, forced}]"""
+    return [{"index": s.get("index"), "codec": s.get("codec_name", ""), "lang": (s.get("tags") or {}).get("language", ""),
+             "title": (s.get("tags") or {}).get("title", ""),
              "forced": bool((s.get("disposition") or {}).get("forced"))} for s in streams(info, "subtitle")]
+
+
+# ---------------------------------------------------------------------------
+# 소프트 자막 내용으로 언어 알아보기: 언어 표시가 없거나 잘못 붙은 MKV가 많아서, 글자 자막 트랙을 5분 간격으로 조금씩 읽어
+# 한글 비율로 한국어인지 본다 (영상 전체를 읽지 않음 - 그 지점 근처만)
+# ---------------------------------------------------------------------------
+SUB_SAMPLE_EVERY = 300      # 5분마다
+SUB_SAMPLE_MAX = 8          # 최대 몇 군데 (5분·10분 … 40분)
+SUB_SAMPLE_SPAN = 60        # 한 군데에서 읽는 길이(초)
+_HANGUL = re.compile(r"[\uac00-\ud7a3\u3131-\u318e]")
+_LETTER = re.compile(r"[^\W\d_]")
+_SRT_JUNK = re.compile(r"^\s*(\d+|\d{2}:\d{2}:\d{2}[,.]\d+\s*-->.*)\s*$")
+
+
+def sample_times(dur, every=SUB_SAMPLE_EVERY, most=SUB_SAMPLE_MAX):
+    """5분·10분·15분 … (영상 길이 안에서, 최대 most개). 5분보다 짧으면 처음부터 [0]"""
+    dur = float(dur or 0)
+    if dur <= 0:
+        return [every * (i + 1) for i in range(min(3, most))]   # 길이를 모름: 5·10·15분 (없는 지점은 그냥 비어 있음)
+    times = [t for t in range(every, int(dur) - 5, every)][:most]
+    return times or [0]
+
+
+def korean_ratio(text):
+    """글자(문자) 중 한글 비율 (글자가 없으면 None)"""
+    letters = _LETTER.findall(text or "")
+    if len(letters) < 10:
+        return None
+    return len(_HANGUL.findall(text)) / len(letters)
+
+
+def _srt_text(raw):
+    lines = [re.sub(r"<[^>]+>|\{[^}]*\}", "", ln) for ln in raw.splitlines() if not _SRT_JUNK.match(ln)]
+    return " ".join(x.strip() for x in lines if x.strip())
+
+
+async def sample_sub_text(target, index, dur, headers=None, timeout=60):
+    """자막 트랙(index)의 글자를 5분 간격으로 조금씩 읽는다 (ffmpeg -ss 앞으로 찾아가기 - 그 근처만 읽음)"""
+    ff = transcode.ffmpeg_path()
+    if not ff or index is None:
+        return ""
+    out = []
+    for t in sample_times(dur):
+        args = [ff, "-v", "error", "-nostdin", "-ss", str(t)]
+        if headers:
+            args += ["-headers", headers]
+        args += ["-i", target, "-t", str(SUB_SAMPLE_SPAN), "-map", f"0:{int(index)}", "-f", "srt", "-"]
+        try:
+            code, raw, _err = await _run(*args, timeout=timeout)
+        except (FolderError, OSError):
+            continue
+        if code == 0:
+            out.append(_srt_text(raw.decode("utf-8", "replace")))
+        if korean_ratio(" ".join(out)) is not None and len(" ".join(out)) > 400:   # 이만큼이면 충분
+            break
+    return " ".join(x for x in out if x)
+
+
+async def detect_sub_langs(target, tracks, dur, headers=None):
+    """글자 자막 트랙마다 내용으로 언어를 알아본다: t["detected"] = "ko" (한글 30% 이상) / "other" / 읽은 글자가 적으면 그대로.
+    한국어로 표시된 트랙도 본다 (표시만 kor이고 내용은 영어인 경우). 그림 자막·강제(forced) 트랙은 보지 않는다"""
+    for t in tracks or []:
+        codec = str(t.get("codec") or "").lower()
+        if codec in IMAGE_SUBS or codec not in TEXT_SUBS or t.get("forced") or t.get("index") is None:
+            continue
+        ratio = korean_ratio(await sample_sub_text(target, t["index"], dur, headers))
+        if ratio is not None:
+            t["detected"] = "ko" if ratio >= 0.3 else "other"
+    return tracks
 
 
 class FolderError(Exception):
@@ -556,13 +631,21 @@ def streams(info, kind):
     return [s for s in info.get("streams") or [] if s.get("codec_type") == kind]
 
 
-def text_subs(info):
-    """파일 안의 글자 자막 트랙 [(스트림 번호, 언어, 확장자)] - 한국어를 앞으로"""
+def text_subs(info, detected=None):
+    """파일 안의 글자 자막 트랙 [(스트림 번호, 언어, 확장자)] - 한국어를 앞으로.
+    detected {스트림 번호: "ko"/"other"} (detect_sub_langs - 자막 내용으로 본 것)가 있으면 언어 표시보다 그것을 믿는다"""
+    detected = detected or {}
     out = []
     for s in streams(info, "subtitle"):
         ext = TEXT_SUBS.get(str(s.get("codec_name") or "").lower())
         if ext:
-            out.append((int(s.get("index", 0)), str((s.get("tags") or {}).get("language") or ""), ext))
+            i = int(s.get("index", 0))
+            lang = str((s.get("tags") or {}).get("language") or "")
+            if detected.get(i) == "ko":
+                lang = "kor"
+            elif detected.get(i) == "other" and lang.lower() in _KO_LANGS:
+                lang = "und"
+            out.append((i, lang, ext))
     return sorted(out, key=lambda x: x[1].lower() not in ("kor", "ko"))
 
 

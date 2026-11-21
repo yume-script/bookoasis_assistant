@@ -182,7 +182,8 @@ def sidecar_subs(video_path):
             for n, lang, sext in folder_watch.match_subs(base, names)]
 
 
-SHOT_AT = 600      # 자막을 사람이 판단할 장면: 10분 지점 (더 짧은 영상은 가운데)
+SHOT_EVERY = 300   # 자막을 사람이 판단할 장면: 5분·10분·15분 … (최대 SHOT_MAX장을 한 장으로 이어 붙임, 5분보다 짧으면 가운데 한 장)
+SHOT_MAX = 8
 
 
 def _shot_path(rule_id, key):
@@ -1121,7 +1122,7 @@ class Mirror:
         return item_fields(m)["name"]
 
     async def screenshot(self, rule_id, key):
-        """자막을 기다리는 항목의 10분 지점 장면(JPEG 경로) - 자막을 영상에 입힌 하드섭인지 사람이 보고 판단하게.
+        """자막을 기다리는 항목의 5분 간격 장면(5·10·15분 … 한 장으로 이어 붙임)(JPEG 경로) - 자막을 영상에 입힌 하드섭인지 사람이 보고 판단하게.
         prepare_shots가 뒤에서 하나씩 ffmpeg로 뽑아 data/plex_to_tg_shots/에 두고(화면은 만든 파일만 가져감),
         항목이 대기에서 빠지면 지운다"""
         path = _shot_path(rule_id, key)
@@ -1135,8 +1136,7 @@ class Mirror:
                 raise ValueError("rclone 원격 파일은 장면을 뽑지 않습니다 (드라이브를 mount해서 폴더로 적으면 됩니다).")
             local = folder_watch.local_path(rule["folder"], key)
             dur = folder_watch.duration(await folder_watch.probe(local))
-            at = SHOT_AT if not dur or dur > SHOT_AT + 5 else dur / 2
-            return await self._grab(["-ss", f"{at:.0f}", "-i", local], path)
+            return await self._grab_sheet(["-i", local], dur, path)
         cfg, src = self.plex_src(rule["plex"])
         if not src:
             raise ValueError("Plex 소스를 찾을 수 없습니다.")
@@ -1147,16 +1147,44 @@ class Mirror:
         media = (m.get("Media") or [{}])[0]
         part = (media.get("Part") or [{}])[0]
         duration = (m.get("duration") or media.get("duration") or 0) / 1000
-        at = SHOT_AT if not duration or duration > SHOT_AT + 5 else duration / 2
         local = str(part.get("file") or "")
-        args = ["-ss", f"{at:.0f}"]
         if local and os.path.isfile(local) and os.access(local, os.R_OK):
-            args += ["-i", local]
+            args = ["-i", local]
         elif part.get("key"):   # Plex가 다른 컴퓨터면 Plex 주소로 (그 지점 근처만 Range로 받는다)
-            args += ["-headers", f"X-Plex-Token: {src.get('token', '')}\r\n", "-i", f"{src['url']}{part['key']}"]
+            args = ["-headers", f"X-Plex-Token: {src.get('token', '')}\r\n", "-i", f"{src['url']}{part['key']}"]
         else:
             raise ValueError("Plex 항목에 파일 정보가 없습니다.")
-        return await self._grab(args, path)
+        return await self._grab_sheet(args, duration, path)
+
+    async def _grab_sheet(self, input_args, dur, path):
+        """5분 간격 장면들(5·10·15분 …, 최대 SHOT_MAX장)을 뽑아 한 장으로 이어 붙인다 (4장씩 한 줄). 하나도 못 뽑으면 ValueError"""
+        times = [t for t in range(SHOT_EVERY, int(dur or 0) - 5, SHOT_EVERY)][:SHOT_MAX] if dur else [SHOT_EVERY, SHOT_EVERY * 2]
+        if not times:
+            times = [max(0, (dur or 0) / 2)]
+        tmpd = path + ".parts"
+        os.makedirs(tmpd, exist_ok=True)
+        try:
+            got, err = [], ""
+            for t in times:
+                out = os.path.join(tmpd, f"s{len(got):02d}.jpg")
+                ok, err = await self._ffmpeg("-ss", f"{t:.0f}", *input_args, "-frames:v", "1", "-vf", "scale=480:-2", "-q:v", "5", out)
+                if ok and os.path.exists(out):
+                    got.append(t)
+            if not got:
+                raise ValueError(f"장면을 뽑지 못했습니다: {err.strip()[-200:]}")
+            if len(got) == 1:
+                os.replace(os.path.join(tmpd, "s00.jpg"), path)
+                return path
+            cols = min(4, len(got))
+            rows = (len(got) + cols - 1) // cols
+            ok, err = await self._ffmpeg("-framerate", "1", "-i", os.path.join(tmpd, "s%02d.jpg"), "-frames:v", "1",
+                                         "-vf", f"tile={cols}x{rows}:padding=4:color=black", "-q:v", "4", path + ".tmp.jpg")
+            if not ok or not os.path.exists(path + ".tmp.jpg"):
+                raise ValueError(f"장면을 이어 붙이지 못했습니다: {err.strip()[-200:]}")
+            os.replace(path + ".tmp.jpg", path)
+            return path
+        finally:
+            shutil.rmtree(tmpd, ignore_errors=True)
 
     async def _grab(self, args, path):
         os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -2155,6 +2183,11 @@ class Mirror:
         if soft is None:   # ffprobe가 없거나 못 열었으면 Plex 정보로
             soft = [{"codec": x.get("codec", ""), "lang": x.get("languageCode") or x.get("languageTag") or "",
                      "title": x.get("title") or x.get("displayTitle") or "", "forced": bool(x.get("forced"))} for x in subs if not x.get("key")]
+        else:   # 자막 글자를 5분 간격으로 조금씩 읽어 한국어인지 (언어 표시가 없거나 잘못 붙은 트랙)
+            await folder_watch.detect_sub_langs(local_file if local_ok else f"{src['url']}{part['key']}", soft,
+                                                (m.get("duration") or media.get("duration") or 0) / 1000,
+                                                None if local_ok else f"X-Plex-Token: {src.get('token', '')}\r\n")
+        sub_det = {t["index"]: t["detected"] for t in soft if t.get("detected") and t.get("index") is not None}
         # 4) 자막 파일을 기다린다 (정한 분만큼 - 0이면 생길 때까지). 파일 안의 자막은 한국어(또는 언어 표시 없음) 글자 자막만 친다
         #    - 영어만·그림 자막(PGS)만·간판/노래(forced)만이면 한국어 자막 파일을 기다린다
         soft_kind = folder_watch.classify_subs(soft)
@@ -2219,7 +2252,7 @@ class Mirror:
             scale = bool(rule["height"] and vh > rule["height"])
             width, height = int(media.get("width") or 0), int(media.get("height") or 0)
             enc_used, remux_notes = "", []
-            inside = folder_watch.text_subs(info) if info else []
+            inside = folder_watch.text_subs(info, sub_det) if info else []
             # 자막 입히기: 텔레그램 앱은 영상 안의 자막 트랙(소프트 자막)을 보여 주지 않는다 - 영상 안에 자막이 있어도
             # 자막 파일이나 글자 자막이 있으면 화면에 입힌다 (한국어 먼저). 전에는 영상 안에 아무 자막(영어·그림 자막 포함)이
             # 있으면 옆의 한국어 자막 파일을 입히지 않았다
@@ -2356,7 +2389,11 @@ class Mirror:
                 side = sidecar_subs(local)
                 # (rclone mount에서 못 읽으면 그 파일만 vfs/forget 후 다시 - 받기는 아래 서버로 복사할 때)
                 _p, info, mount_note = await self._probe_safe(local, tmp, fields["name"], "video", fetch=False)
-            soft_kind = folder_watch.classify_subs(folder_watch.stream_tracks(info))
+            tracks = folder_watch.stream_tracks(info)
+            if not remote and tracks:   # 자막 글자를 5분 간격으로 조금씩 읽어 한국어인지 (원격은 앞부분만 받아 봐서 못 함)
+                await folder_watch.detect_sub_langs(local, tracks, folder_watch.duration(info))
+            sub_det = {t["index"]: t["detected"] for t in tracks if t.get("detected") and t.get("index") is not None}
+            soft_kind = folder_watch.classify_subs(tracks)
             any_inside = soft_kind["usable"]
             # 3) 쓸 수 있는 소프트 자막(한국어·언어 표시 없음 글자 자막)이 있으면 바로, 4) 없으면 자막 파일을 정한 분만큼 기다린다
             if rule["wait_subs"] and not side and not any_inside and not test and not manual:
@@ -2392,7 +2429,7 @@ class Mirror:
                 raise RuntimeError("영상 정보를 읽지 못했습니다 (ffprobe).")
             duration = folder_watch.duration(info)
             # 3) 화면에 입힐 자막: 한국어 먼저 (자막 파일 > 파일 안의 글자 자막 > 다른 언어)
-            burn, burn_skip, inside = None, "", folder_watch.text_subs(info)
+            burn, burn_skip, inside = None, "", folder_watch.text_subs(info, sub_det)
             self.subs_label = f"파일 {len(sub_files)}개" if sub_files else "소프트 자막" if inside else "없음"   # (진행 상태 화면, 올리는 동안)
             if rule["burn_subs"] and (sub_files or inside):
                 if not has_korean_font():
@@ -2751,7 +2788,8 @@ class Mirror:
             streams = json.loads(out.decode("utf-8", "replace") or "{}").get("streams") or []
         except ValueError:
             return None
-        return [{"codec": x.get("codec_name", ""), "lang": (x.get("tags") or {}).get("language", ""), "title": (x.get("tags") or {}).get("title", ""),
+        return [{"index": x.get("index"), "codec": x.get("codec_name", ""), "lang": (x.get("tags") or {}).get("language", ""),
+                 "title": (x.get("tags") or {}).get("title", ""),
                  "forced": bool((x.get("disposition") or {}).get("forced"))} for x in streams]
 
     async def _bring_local(self, src_path, subs, tmp, title):

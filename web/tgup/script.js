@@ -686,9 +686,9 @@
             // 자막 칸: 왜 기다리는지 ("영어 자막만", "그림 자막(PGS)만" - 파일 안의 자막이 한국어가 아니면 자막 파일을 기다린다)
             const r = row(w.title, chip('wait', '자막 기다림'), w.why ? h('span', { class: 'subs-tag subs-none', title: '파일 안에 한국어(또는 언어 표시 없는) 글자 자막이 없어 자막 파일을 기다림', text: w.why }) : subsTag('없음'), `${when(w.since)}부터 · ${fmtDur(now - w.since)} 기다림${ruleTg.wait_min ? ` (최대 ${fmtDur(ruleTg.wait_min * 60)})` : ''}`);
             const shotUrl = `api/tgup/shot?${new URLSearchParams({ rule: w.rule, key: w.key, v: w.shot || 0 })}`;
-            const shot = w.shot ? h('img', { class: 'mirror-shot', src: shotUrl, alt: '', loading: 'lazy', title: '10분 지점 장면 (누르면 크게)',
+            const shot = w.shot ? h('img', { class: 'mirror-shot', src: shotUrl, alt: '', loading: 'lazy', title: '5분 간격 장면 (5·10·15분 … 누르면 크게)',
                 on: { error: (e) => e.target.classList.add('failed'),
-                    click: () => modal(`${w.title} - 10분 지점`, h('img', { class: 'mirror-shot-big', src: shotUrl, alt: '' })) } })
+                    click: () => modal(`${w.title} - 5분 간격 장면 (5·10·15분 …)`, h('img', { class: 'mirror-shot-big', src: shotUrl, alt: '' })) } })
                 : h('span', { class: `mirror-shot mirror-shot-wait${w.shot_error ? ' failed' : ''}`,
                     title: w.shot_error ? `장면을 뽑지 못했습니다 (6시간 뒤 다시): ${w.shot_error}` : '장면을 만드는 중 (잠시 뒤 나타남)' },
                 icon(w.shot_error ? 'image' : 'hourglass-half'));

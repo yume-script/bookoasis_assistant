@@ -9,7 +9,7 @@
   GET  /api/tgup/options      규칙 고르기용: Plex 영화·TV 라이브러리, rclone 드라이브, 쓸 수 있는 그래픽 인코더
   GET  /api/tgup/channels?account=  그 계정이 들어가 있는 채널·그룹 (비우면 첫 계정)
   GET  /api/tgup/folders?path= 폴더 고르기 (비우면 rclone mount 폴더·원격 목록)
-  GET  /api/tgup/shot?rule=&key=  자막 기다리는 항목의 10분 지점 장면 (JPEG)
+  GET  /api/tgup/shot?rule=&key=  자막 기다리는 항목의 5분 간격 장면 (JPEG)
   GET  /api/tgup/files?rule=&sub= 파일 골라 보내기: 폴더 규칙의 sub 폴더 안 하위 폴더·파일 (규칙이 올리는 종류만)
   POST /api/tgup/send         {rule, keys: [폴더 규칙 기준 상대 경로], again} 고른 파일을 진행 목록에
   POST /api/tgup/settings     설정 저장 (규칙들)
