@@ -89,5 +89,40 @@ class JudgeTest(unittest.TestCase):
         self.assertNotIn("a.mkv", m.load_state()["rules"]["r1"].get("waiting") or {})
 
 
+@unittest.skipUnless(HAVE_AIOHTTP, "aiohttp 없음")
+class CheckTest(unittest.TestCase):
+    def test_check_button(self):
+        seen = []
+
+        async def handler(request):
+            seen.append(request.headers.get("Authorization"))
+            return web.json_response({"choices": [{"message": {"content": '{"hardsub": false, "korean": false, "confidence": 0.95, "reason": "자막 없음"}'}}]})
+
+        async def run():
+            app = web.Application()
+            app.router.add_post("/v1/chat/completions", handler)
+            runner = web.AppRunner(app)
+            await runner.setup()
+            site = web.TCPSite(runner, "127.0.0.1", 0)
+            await site.start()
+            port = site._server.sockets[0].getsockname()[1]
+            async with aiohttp.ClientSession() as http:
+                ok = await hardsub_llm.check(http, hardsub_llm.settings({"url": f"http://127.0.0.1:{port}/v1", "model": "g"}), "k1")
+                typo = await hardsub_llm.check(http, hardsub_llm.settings({"url": f"http://127.0.0.1:{port}/vi", "model": "g"}))
+                nomodel = await hardsub_llm.check(http, hardsub_llm.settings({"url": f"http://127.0.0.1:{port}"}))
+                down = await hardsub_llm.check(http, hardsub_llm.settings({"url": "http://127.0.0.1:1", "model": "g"}))
+            await runner.cleanup()
+            return ok, typo, nomodel, down
+        ok, typo, nomodel, down = asyncio.run(run())
+        self.assertTrue(ok["ok"])
+        self.assertEqual(ok["verdict"], "LLM: 화면에 자막 없음 (95%)")
+        self.assertEqual(seen[0], "Bearer k1")                     # 화면에 넣은(저장 전) 키로
+        self.assertFalse(typo["ok"])
+        self.assertIn("/vi 오타", typo["hint"])                     # 404 -> 주소 확인
+        self.assertIn("모델", nomodel["error"])
+        self.assertFalse(down["ok"])
+        self.assertIn("주소", down["hint"])
+
+
 if __name__ == "__main__":
     unittest.main()
