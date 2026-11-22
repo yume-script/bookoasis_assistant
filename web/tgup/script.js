@@ -365,6 +365,19 @@
         const llmModel = h('input', { class: 'input', placeholder: 'LiteLLM의 model_name (예: gemini-flash)', value: llm.model || '' });
         const llmKey = h('input', { class: 'input', type: 'password', autocomplete: 'off',
             placeholder: data.llm_key_env ? '.env의 키를 씀' : data.llm_key ? '저장됨 (바꾸려면 새로 넣기, 지우려면 -)' : 'LiteLLM 키 (없으면 비움)', disabled: !!data.llm_key_env });
+        const llmTestOut = h('span', { class: 'muted' });
+        const llmTestBtn = h('button', { class: 'btn btn-sm', type: 'button', on: { click: async () => {
+            llmTestBtn.disabled = true;
+            llmTestOut.className = 'muted';
+            llmTestOut.textContent = '확인 중... (작은 그림을 한 번 보내 봅니다)';
+            try {
+                const r = await post('api/tgup/llm_test', { url: llmUrl.value.trim(), model: llmModel.value.trim(), key: llmKey.value.trim() });
+                llmTestOut.className = r.ok ? 'ok' : 'muted error';
+                llmTestOut.textContent = r.ok ? `✓ 정상 - ${r.verdict} · ${(r.ms / 1000).toFixed(1)}초 (${r.endpoint})`
+                    : `✗ ${r.error}${r.hint ? ` → ${r.hint}` : ''}`;
+            } catch (e) { llmTestOut.className = 'muted error'; llmTestOut.textContent = `✗ ${e.message}`; }
+            finally { llmTestBtn.disabled = false; }
+        } } }, icon('plug-circle-check'), ' 설정 확인');
         const llmBox = h('div', { class: 'mirror-rule' },
             h('h3', { class: 'pane-title' }, icon('wand-magic-sparkles'), ' 하드섭 자동 판단 (LLM, 선택)'),
             h('p', { class: 'field-hint', text: '자막을 기다리는 영상의 5분 간격 장면을 이미지를 볼 수 있는 모델(Gemini 등)에게 보여 화면에 한국어 자막이 박혀 있는지(하드섭) 판단합니다. '
@@ -372,7 +385,8 @@
             h('label', { class: 'check' }, llmOn, ' 켜기'),
             h('div', { class: 'row-2' }, field('LiteLLM 주소', llmUrl), field('모델', llmModel, '이미지를 받는 모델이어야 합니다 (글자 전용 모델은 안 됨).')),
             field('키', llmKey, '.env의 HARDSUB_LLM_API_KEY(또는 LITELLM_API_KEY)가 있으면 그것을 씁니다.'),
-            h('label', { class: 'check' }, llmAuto, ' "한국어 하드섭"(확신 70% 이상)으로 판단하면 기다리지 않고 바로 올리기 (끄면 판단만 표시)'));
+            h('label', { class: 'check' }, llmAuto, ' "한국어 하드섭"(확신 70% 이상)으로 판단하면 기다리지 않고 바로 올리기 (끄면 판단만 표시)'),
+            h('div', { class: 'toolbar' }, llmTestBtn, llmTestOut));
         const parSel = h('select', { class: 'select' }, [[0, '자동 (프리미엄 4 · 일반 2)'], [1, '1 (예전처럼 하나씩)'], [2, '2'], [4, '4'], [8, '8']].map(([v, t]) =>
             h('option', { value: String(v), text: t, selected: (st.upload_parallel || 0) === v })));
         const slotsSel = h('select', { class: 'select' }, [1, 2, 3, 4].map((v) => h('option', { value: String(v), text: `${v}개${v === 1 ? ' (기본)' : ''}`, selected: (st.encode_slots || 1) === v })));

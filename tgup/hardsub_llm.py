@@ -82,14 +82,19 @@ def parse(text):
 
 async def judge(http, conf, image_path, timeout=90):
     """장면 이미지 -> 판단. 실패하면 RuntimeError"""
-    from aiohttp import ClientTimeout
     with open(image_path, "rb") as f:
-        b64 = base64.b64encode(f.read()).decode()
+        return await judge_bytes(http, conf, f.read(), timeout)
+
+
+async def judge_bytes(http, conf, jpeg, timeout=90, key=None):
+    """JPEG 바이트 -> 판단. key를 주면 저장된 키 대신 (설정 확인 버튼 - 저장 전 값)"""
+    from aiohttp import ClientTimeout
+    b64 = base64.b64encode(jpeg).decode()
     body = {"model": conf["model"], "temperature": 0, "max_tokens": 300,
             "messages": [{"role": "user", "content": [{"type": "text", "text": PROMPT},
                                                       {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}}]}]}
     headers = {"Content-Type": "application/json"}
-    key = api_key()
+    key = key or api_key()
     if key:
         headers["Authorization"] = f"Bearer {key}"
     try:
@@ -109,6 +114,41 @@ async def judge(http, conf, image_path, timeout=90):
         return parse(content)
     except (ValueError, AttributeError) as e:
         raise RuntimeError(str(e)) from None
+
+
+# 설정 확인용 작은 그림 (64x36 검은 화면 - 자막 없음)
+TEST_JPEG = base64.b64decode("/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAA0JCgsKCA0LCgsODg0PEyAVExISEyccHhcgLikxMC4pLSwzOko+MzZGNywtQFdBRkxOUlNSMj5aYVpQYEpRUk//2wBDAQ4ODhMREyYVFSZPNS01T09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT0//wAARCAAkAEADASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwDz2iiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKAP//Z")
+
+
+def hint(error):
+    """설정 확인 실패 -> 고칠 곳"""
+    e = str(error)
+    if "HTTP 404" in e:
+        return "주소를 확인하세요 - LiteLLM 주소는 http://호스트:4000 또는 http://호스트:4000/v1 (예: /vi 오타)"
+    if "HTTP 401" in e or "HTTP 403" in e:
+        return "키를 확인하세요 (LiteLLM의 키, .env의 HARDSUB_LLM_API_KEY/LITELLM_API_KEY가 있으면 그것이 먼저)"
+    if "HTTP 400" in e or "HTTP 422" in e:
+        return "모델 이름이 LiteLLM에 있는지, 이미지를 받는 모델인지 확인하세요"
+    if "연결하지 못했습니다" in e:
+        return "LiteLLM 주소·포트와 이 서버에서 그 주소로 닿는지 확인하세요"
+    if "읽지 못했습니다" in e:
+        return "모델이 JSON으로 답하지 않았습니다 - 다른(더 큰) 모델을 써 보세요"
+    return ""
+
+
+async def check(http, conf, key=None):
+    """[설정 확인] 작은 그림으로 한 번 물어본다 -> {"ok", "ms", "verdict"/"error", "hint"}"""
+    import time
+    why = ready({**conf, "enabled": True})
+    if why:
+        return {"ok": False, "error": why, "hint": ""}
+    t0 = time.time()
+    try:
+        v = await judge_bytes(http, conf, TEST_JPEG, 60, key)
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "error": str(e)[:300], "hint": hint(e), "ms": int((time.time() - t0) * 1000)}
+    return {"ok": True, "ms": int((time.time() - t0) * 1000), "verdict": label(v), "reason": v.get("reason", ""),
+            "endpoint": _endpoint(conf["url"])}
 
 
 def is_go(verdict):

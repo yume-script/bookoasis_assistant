@@ -378,6 +378,10 @@ def api_post(path, body):
         except ValueError as e:
             raise ApiError(400, str(e))
         return {"success": True, "count": n}
+    if path == "/api/tgup/llm_test":   # 하드섭 판단 LLM 설정 확인 {url, model, key?} - 화면의 (저장 전) 값으로 한 번 물어봄
+        conf = hardsub_llm.settings({**(body or {}), "enabled": True})
+        key = str(body.get("key") or "").strip()
+        return {"success": True, **RUNNER.call(hardsub_llm.check(RUNNER.http, conf, None if key in ("", "-") else key), 90)}
     if path == "/api/tgup/youtube":   # 유튜브 보내기 {rule, urls(글 또는 목록), again}
         try:
             n, dup = RUNNER.call(m.add_youtube(str(body.get("rule") or ""), body.get("urls") or "", bool(body.get("again"))), 180)
