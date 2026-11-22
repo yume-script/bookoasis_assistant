@@ -64,6 +64,7 @@ import hashlib
 import json
 import math
 import logging
+import mimetypes
 import os
 import re
 import secrets
@@ -75,7 +76,7 @@ import urllib.parse
 
 from aiohttp import ClientTimeout
 
-from . import compat as config_store, compat as transcode, folder_watch, hardsub_llm, mountfix, music, throttle, tgaccount as telegram_src, youtube
+from . import compat as config_store, compat as transcode, fastupload, folder_watch, hardsub_llm, mountfix, music, throttle, tgaccount as telegram_src, youtube
 from gdw import memtrim  # noqa: E402 - 큰 작업 뒤 쓰고 난 메모리를 OS에
 
 log = logging.getLogger("ym_player.plex_to_tg")
@@ -102,6 +103,8 @@ ACCOUNT_REST = 30 * 60   # 로그인·세션 문제가 생긴 계정을 쉬게 �
 STREAMABLE = {".mp4", ".m4v", ".mov"}   # 텔레그램 앱에서 받기 전에 바로 재생되는 형식
 SUB_EXT = {"srt": "srt", "subrip": "srt", "ass": "ass", "ssa": "ass", "smi": "smi", "sami": "smi", "vtt": "vtt", "webvtt": "vtt"}
 MAX_PARTS = 10
+UPLOAD_PARALLEL = (0, 1, 2, 4, 8)   # 동시 조각 수 (0 = 자동: 프리미엄 4, 일반 2 - 텔레그램이 속도를 늦추는 중이면 1)
+UPLOAD_GAP_SEC = 3                  # 한 계정이 파일을 연달아 올릴 때 사이에 쉬는 초 (요청 제한에 덜 걸리게)
 PART_LIMIT = 1000 * 1024 * 1024   # 텔레그램 한도 1GB 단위 (2GB = 2000MiB = 4000조각 x 512KB) - max_gb를 곱해 쓴다
 
 
@@ -281,8 +284,12 @@ def clean_settings(raw):
     hours = f"{int(m.group(1))}-{int(m.group(2))}" if m and int(m.group(1)) < 24 and int(m.group(2)) <= 24 and m.group(1) != m.group(2) else ""
     # 인코딩을 동시에 몇 개까지 (계정이 여럿이면 올리기는 동시에 해도 인코딩은 CPU를 많이 써서 이만큼만) - 기본 1
     slots = num(raw.get("encode_slots"), 1, MAX_ENCODE_SLOTS, 1)
+    # 텔레그램 업로드 동시 조각 수 (연결 여러 개로 512KB 조각을 동시에 - tgup/fastupload.py)
+    par = num(raw.get("upload_parallel"), 0, 8, 0)
+    par = par if par in UPLOAD_PARALLEL else 0
     return {"interval": num(raw.get("interval"), 2, 1440, 10), "max_gb": max_gb, "max_gb_v": 1, "encoder": encoder,
             "cpu_preset": preset, "hours": hours, "encode_slots": slots, "exclude": clean_exclude(raw.get("exclude")), "rules": rules,
+            "upload_parallel": par,
             # 하드섭 자동 판단 (선택): 자막 기다리는 항목의 5분 간격 장면을 LLM(이미지를 보는 모델)에게 보여 판단 - tgup/hardsub_llm.py
             "hardsub_llm": hardsub_llm.settings(raw.get("hardsub_llm"))}
 
@@ -696,6 +703,7 @@ class Lane:
         self.subs_label = ""
         self.resume = None        # 나눠 올리다 멈춘 항목을 이어 올릴 때 {n, done, vids} (서버를 다시 켠 뒤 등)
         self.flood_until = 0      # 텔레그램 요청 제한으로 이때까지 쉼
+        self.sent_any = False     # 이 줄이 방금 텔레그램에 무언가 보냈는지 (다음 항목 전에 UPLOAD_GAP_SEC 쉼)
         self.channel = ""         # 지금 항목을 올릴 채널 (채널별 보내기 차례 - 인코딩 중에는 잡지 않는다)
         self.started = 0          # 지금 항목을 시작한 때
         self.times = {}           # 지금 항목의 단계별 걸린 초 {받기, 인코딩, 나누기, 올리기, 대기, 준비}
@@ -1525,6 +1533,7 @@ class Mirror:
         job = self.current_job or {}
         if not msg_id or not job:
             return
+        (_LANE.get() or self._main).sent_any = True
         state = load_state()
         rs = state["rules"].setdefault(job["rule"], {"done": [], "fails": {}})
         rs.setdefault("sending", {}).setdefault(job["key"], []).append(int(msg_id))
@@ -1700,6 +1709,9 @@ class Mirror:
                 job = self._next_job(tg, rules)
                 if job is None:
                     break
+                if lane.sent_any:   # 앞 항목을 텔레그램에 보냈으면 조금 쉬고 (연달아 보내 요청 제한에 걸리지 않게)
+                    lane.sent_any = False
+                    await asyncio.sleep(UPLOAD_GAP_SEC)
                 self._taken.add(id(job))
                 lane.channel = self._channel_of(rules.get(job["rule"]))
                 try:
@@ -2683,8 +2695,8 @@ class Mirror:
                 throttle.progress(tg_now, done)
             async with self._channel_gate():   # 그 채널 보내기 차례 (곡 + 가사)
                 t_send = time.time()
-                sent = await client.send_file(peer, local, caption=cap, thumb=thumb, attributes=attrs, force_document=False,
-                                              progress_callback=progress)
+                sent = await self._send(client, peer, local, progress, caption=cap, thumb=thumb, attributes=attrs,
+                                        force_document=False)
                 throttle.done(tg_now, os.path.getsize(local), time.time() - t_send)
                 msgs.append(getattr(sent, "id", None))
                 self._note_sent(getattr(sent, "id", None))
@@ -2712,6 +2724,27 @@ class Mirror:
         if thumb:
             notes.append("앨범 아트")
         return ", ".join(notes)
+
+    def _upload_conns(self, tg):
+        """이 계정의 동시 조각 수: 설정값, 자동이면 프리미엄 4·일반 2, 텔레그램이 늦추는 중이면 1"""
+        if throttle.throttled(tg):
+            return 1
+        par = load_settings().get("upload_parallel") or 0
+        if par:
+            return par
+        return 4 if (self._gb_cache.get(tg) or (0, 2))[1] >= 4 else 2
+
+    async def _send(self, client, peer, path, progress=None, gap=False, **kw):
+        """파일 하나를 텔레그램으로: 512KB 조각을 여러 연결로 동시에 올리고(fastupload) 보낸다.
+        gap: 앞에 보낸 것이 있으면 UPLOAD_GAP_SEC 쉬고 (연달아 보내 요청 제한에 걸리지 않게)"""
+        if not hasattr(client, "_sender"):   # (진짜 TelegramClient가 아님 - 시험용 가짜 등)
+            return await client.send_file(peer, path, progress_callback=progress, **kw)
+        if gap:
+            await asyncio.sleep(UPLOAD_GAP_SEC)
+        tg = (_LANE.get() or self._main).tg
+        handle = await fastupload.upload(client, path, self._upload_conns(tg), progress)
+        kw.setdefault("mime_type", mimetypes.guess_type(path)[0] or "application/octet-stream")
+        return await client.send_file(peer, handle, **kw)
 
     async def _send_pieces(self, *args):
         """조각들을 텔레그램으로 - 그 채널 보내기 차례를 잡고 (나눈 조각은 한 번에 이어서)"""
@@ -2760,8 +2793,8 @@ class Mirror:
                     self.current.update(done=int(done), total=int(total))
                 throttle.progress(tg_now, done)   # (텔레그램 속도 제한 감지 - 지금 속도)
             t_send = time.time()
-            sent = await client.send_file(peer, path, caption=cap[:1024], thumb=thumb, attributes=attrs,
-                                          supports_streaming=stream, force_document=False, progress_callback=progress)
+            sent = await self._send(client, peer, path, progress, gap=i > skip + 1, caption=cap[:1024], thumb=thumb, attributes=attrs,
+                                    supports_streaming=stream, force_document=False)
             throttle.done(tg_now, os.path.getsize(path), time.time() - t_send)
             msgs.append(getattr(sent, "id", None))
             self._note_sent(getattr(sent, "id", None))
