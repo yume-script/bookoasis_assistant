@@ -404,7 +404,6 @@
             const accIds = opts.telegram.map((t) => t.id);
             const accSel = h('select', { class: 'select' }, ...opts.telegram.map((t) => opt(t.id, t.name, (r.tg || 'tg') === t.id)),
                 ...(r.tg && !accIds.includes(r.tg) ? [opt(r.tg, `${r.tg} (로그인 안 됨)`, true)] : []));
-            const waitIn = h('input', { type: 'checkbox', checked: r.wait_subs !== false });
             const burnIn = h('input', { type: 'checkbox', checked: r.burn_subs !== false });
             const minIn = h('input', { class: 'input mirror-days', type: 'number', min: '0', max: '525600', step: '10',
                 value: String(r.wait_min ?? (r.wait_hours !== undefined ? r.wait_hours * 60 : 720)) });
@@ -466,7 +465,8 @@
                 videoOnly.forEach((el) => el.classList.toggle('hidden', music));
                 musicNote.classList.toggle('hidden', !music);
                 ytNote.classList.toggle('hidden', !yt);
-                waitRow.classList.toggle('hidden', music || yt);
+                modeRow.classList.toggle('hidden', music || yt);   // (유튜브는 자막을 기다리지 않음 - 받은 한국어 자막 입히기만)
+                syncMode();
                 test.classList.toggle('hidden', yt);
                 existRow.classList.toggle('hidden', !music);
                 plexField.classList.toggle('hidden', folder || yt);
@@ -482,19 +482,37 @@
             };
             kindSel.addEventListener('change', syncKind);
             const heightRow = h('div', { class: 'mirror-wait' }, h('span', { class: 'muted', text: '화질:' }), heightSel, encText);
-            const waitRow = h('div', { class: 'mirror-wait' }, h('label', { class: 'check' }, waitIn, ' 자막이 생길 때까지 기다렸다가 올리기'),
-                h('span', { class: 'muted', text: ' 최대' }), minIn, h('span', { class: 'muted', text: '분 (0이면 계속 기다림. 파일 안에 자막(소프트 자막)이 있으면 기다리지 않고 바로. 하드섭은 진행 상태에서 [지금 올리기])' }));
+            // 자막: 크게 두 가지 - [자막 없이 바로 올리기] (자막이 필요 없는 채널) / [자막 기다리기] (그때만 대기 시간·자막 입혀 인코딩)
+            const modeName = `subs-mode-${r.id || Math.random().toString(36).slice(2)}`;
+            const modeNow = h('input', { type: 'radio', name: modeName, value: 'now', checked: r.wait_subs === false });
+            const modeWait = h('input', { type: 'radio', name: modeName, value: 'wait', checked: r.wait_subs !== false });
+            const waitRow = h('div', { class: 'mirror-wait' }, h('span', { class: 'muted', text: '대기 시간: 최대' }), minIn,
+                h('span', { class: 'muted', text: '분 (0이면 자막이 생길 때까지 계속. 파일 안에 한국어 자막(소프트 자막)이 있으면 기다리지 않고 바로, 하드섭은 진행 상태에서 [지금 올리기])' }));
             const burnRow = h('label', { class: 'check', title: '다시 인코딩하느라 시간이 걸립니다.' }, burnIn, burnText);
+            const waitBox = h('div', { class: 'mirror-subs-wait' }, waitRow, h('div', { class: 'mirror-wait' }, h('span', { class: 'muted', text: '인코딩:' }), burnRow));
+            const modeRow = h('div', { class: 'mirror-subs' },
+                h('span', { class: 'field-label', text: '자막' }),
+                h('label', { class: 'check' }, modeNow, ' 자막 없이 바로 올리기', h('span', { class: 'muted', text: ' (자막이 필요 없는 채널 - 기다리지 않고, 자막을 입히지 않음)' })),
+                h('label', { class: 'check' }, modeWait, ' 자막 기다리기'),
+                waitBox);
+            const syncMode = () => {
+                const yt = kindSel.value === 'youtube';
+                waitBox.classList.toggle('hidden', !modeWait.checked);
+                if (yt) modeRow.after(burnRow); else waitBox.lastChild.append(burnRow);   // 유튜브는 자막 입히기만 따로
+                burnRow.classList.toggle('hidden', kindSel.value === 'music');
+            };
+            modeNow.addEventListener('change', syncMode);
+            modeWait.addEventListener('change', syncMode);
             const capRow = field('캡션', capIn, ' ');
             const capHint = capRow.querySelector('.field-hint') || capRow.appendChild(h('p', { class: 'field-hint' }));
-            videoOnly.push(heightRow, waitRow, burnRow, capRow);
+            videoOnly.push(heightRow, capRow);
             const card = h('div', { class: 'mirror-rule' },
                 h('div', { class: 'toolbar' }, h('label', { class: 'check' }, enabledIn, ' 켜기'), kindSel),
                 h('div', { class: 'row-2 mirror-pick' }, plexField, folderField, field('올릴 텔레그램 계정 · 채널', h('div', { class: 'toolbar' }, opts.telegram.length > 1 || (r.tg && r.tg !== 'tg') ? accSel : null, chSel))),
                 musicNote, ytNote, existRow, heightRow,
                 field('같이 올릴 다른 계정', altBox, '고른 계정도 이 채널에 글을 쓸 수 있어야 합니다. 놀고 있는 계정이 진행 목록 앞에서부터 가져가고, '
                     + '한 계정에 문제(로그아웃·세션 만료·채널 권한·요청 제한·연결 끊김)가 생기면 다른 계정이 이어 올립니다.'),
-                waitRow, burnRow, capRow,
+                modeRow, capRow,
                 h('div', { class: 'toolbar' }, test, del));
             syncKind();
             const row = { id: r.id, get: () => {
@@ -502,7 +520,8 @@
                 return { id: row.id, enabled: enabledIn.checked, kind: kindSel.value, folder: folderIn.value.trim(),
                     height: Number(heightSel.value), plex, section, section_title: ((plexSel.selectedOptions[0] || {}).dataset || {}).name || '',
                     tg: accSel.value || r.tg || 'tg', channel: chSel.value, channel_title: ((chSel.selectedOptions[0] || {}).dataset || {}).name || '', caption: capIn.value,
-                    wait_subs: waitIn.checked, wait_min: Math.max(0, Math.round(Number(minIn.value) || 0)), burn_subs: burnIn.checked,
+                    wait_subs: modeWait.checked, wait_min: Math.max(0, Math.round(Number(minIn.value) || 0)),
+                    burn_subs: kindSel.value === 'youtube' ? burnIn.checked : modeWait.checked && burnIn.checked,
                     tg_alt: Object.entries(altChecks).filter(([, c]) => c.checked).map(([k]) => k), upload_existing: existIn.checked };
             } };
             rows.push(row);

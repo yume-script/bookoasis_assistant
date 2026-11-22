@@ -50,6 +50,8 @@ textarea.input { resize: vertical; }
 @media (max-width: 900px) { .mirror-pick { grid-template-columns: 1fr; } }
 .mirror-wait { display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; }
 .mirror-wait .mirror-days { width: 5rem; }
+.mirror-subs { display: flex; flex-direction: column; gap: 0.35rem; }
+.mirror-subs-wait { display: flex; flex-direction: column; gap: 0.35rem; margin-left: 1.6rem; padding-left: 0.75rem; border-left: 2px solid var(--border); }
 .mirror-table { display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; margin-bottom: 0.5rem; }
 .mirror-row { display: grid; grid-template-columns: minmax(0, 1fr) 7.5rem 7.5rem minmax(0, 0.8fr); gap: 0.75rem; align-items: center;
     padding: 0.45rem 0.75rem; border-top: 1px solid var(--border); font-size: 0.88rem; }
