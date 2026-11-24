@@ -200,6 +200,86 @@ def _llm_shot_path(rule_id, key):
     return _shot_path(rule_id, key)[:-4] + ".llm.jpg"
 
 
+# ---------------------------------------------------------------------------
+# 인코딩 결과 남겨 두기 (enc_cache): 오래 걸리는 인코딩을 서버를 다시 켜도(업데이트·재시작) 처음부터 다시 하지 않게.
+# 다 만든 mp4를 data/plex_to_tg_enc/<항목>_<조건>.mp4로 (같은 디스크면 하드링크), 다 올리면 지운다. ENC_KEEP_DAYS 지나면 정리
+# ---------------------------------------------------------------------------
+ENC_KEEP_DAYS = 3
+
+
+def _enc_dir():
+    return os.path.join(config_store.DATA_DIR, "plex_to_tg_enc")
+
+
+def enc_cache_key(rule_id, key, variant):
+    item = hashlib.sha1(f"{rule_id}|{key}".encode()).hexdigest()[:16]
+    return f"{item}_{hashlib.sha1(str(variant).encode()).hexdigest()[:10]}"
+
+
+def enc_cache_get(ck, out):
+    """남겨 둔 결과가 있으면 out으로 (하드링크/복사) 하고 정보 dict, 없으면 None"""
+    base = os.path.join(_enc_dir(), ck)
+    try:
+        with open(base + ".json", encoding="utf-8") as f:
+            info = json.load(f)
+        if not os.path.isfile(base + ".mp4"):
+            return None
+        if os.path.exists(out):
+            os.remove(out)
+        try:
+            os.link(base + ".mp4", out)
+        except OSError:
+            shutil.copyfile(base + ".mp4", out)
+        return info
+    except (OSError, ValueError):
+        return None
+
+
+def enc_cache_put(ck, out, info):
+    base = os.path.join(_enc_dir(), ck)
+    try:
+        os.makedirs(_enc_dir(), exist_ok=True)
+        if os.path.exists(base + ".mp4"):
+            os.remove(base + ".mp4")
+        try:
+            os.link(out, base + ".mp4")
+        except OSError:
+            shutil.copyfile(out, base + ".mp4")
+        with open(base + ".json", "w", encoding="utf-8") as f:
+            json.dump(info, f, ensure_ascii=False)
+    except OSError as e:   # 못 남겨도 올리기는 그대로
+        log.info("자동 올리기: 인코딩 결과를 남겨 두지 못했습니다: %s", e)
+
+
+def enc_cache_drop(rule_id, key):
+    """그 항목의 남겨 둔 인코딩 결과를 지운다 (다 올렸거나 취소·그만둠)"""
+    import glob
+    item = hashlib.sha1(f"{rule_id}|{key}".encode()).hexdigest()[:16]
+    for p in glob.glob(os.path.join(_enc_dir(), item + "_*")):
+        try:
+            os.remove(p)
+        except OSError:
+            pass
+
+
+def enc_cache_sweep(days=ENC_KEEP_DAYS):
+    """오래된(올리지 못하고 남은) 인코딩 결과 정리. 지운 수"""
+    n, cut = 0, time.time() - days * 86400
+    try:
+        names = os.listdir(_enc_dir())
+    except OSError:
+        return 0
+    for name in names:
+        p = os.path.join(_enc_dir(), name)
+        try:
+            if os.path.getmtime(p) < cut:
+                os.remove(p)
+                n += 1
+        except OSError:
+            pass
+    return n
+
+
 def drop_shot(rule_id, key):
     for p in (_shot_path(rule_id, key), _llm_shot_path(rule_id, key)):
         try:
@@ -1902,6 +1982,7 @@ class Mirror:
         if (rule or {}).get("media") == "youtube" and cancelled:   # 유튜브: 받아 둔 것은 지운다
             youtube.cleanup(rule["folder"], job["key"], youtube.find_file(rule["folder"], job["key"]))
         if cancelled:   # 올리던 중에 직접 취소
+            enc_cache_drop(job["rule"], job["key"])
             self._forget(state, job["rule"], job["key"], job["title"], "건너뜀: 올리던 중 직접 취소", job.get("sig", ""))
             save_state(state)
             lane.cancel_req = None
@@ -1973,6 +2054,8 @@ class Mirror:
                     youtube.cleanup(rule["folder"], job["key"], youtube.find_file(rule["folder"], job["key"]))
         acct = state.setdefault("accounts", {}).setdefault(tg, {"ok": 0, "fail": 0})
         acct["ok" if ok else "fail"] = acct.get("ok" if ok else "fail", 0) + 1
+        if ok or (fails.get(job["key"], 0) >= GIVE_UP):   # 다 올렸거나(건너뜀 포함) 그만둠 - 남겨 둔 인코딩 결과는 지운다
+            enc_cache_drop(job["rule"], job["key"])
         if job.get("note_pre") and ok:   # 왜 기다리지 않고 올렸는지 (LLM 하드섭 판단 등)
             note = f"{job['note_pre']}, {note}" if note else job["note_pre"]
         state["history"] = trim_history([{"title": job["title"], "ok": ok, "note": note, "at": int(time.time()), "key": job["key"],
@@ -3126,7 +3209,39 @@ class Mirror:
         return None
 
     async def _encode_burn(self, local, make, out, duration, title, tmp, burn_name):
-        """자막을 입혀 인코딩 - 자막 때문에 실패하면(깨진 자막 등) 자막 없이 한 번 더. 돌려주는 값: (plan, 입혔는지, 못 입힌 까닭)"""
+        """자막을 입혀 인코딩 - 자막 때문에 실패하면(깨진 자막 등) 자막 없이 한 번 더. 돌려주는 값: (plan, 입혔는지, 못 입힌 까닭).
+        다 만든 결과는 enc_cache에 남겨 두어 서버를 다시 켜도(업데이트 등) 같은 항목을 처음부터 다시 인코딩하지 않는다"""
+        ck = self._enc_key(local, burn_name)
+        hit = enc_cache_get(ck, out) if ck else None
+        if hit:
+            log.info("자동 올리기: 지난번에 다 만든 인코딩 결과를 씁니다 (%s)", title)
+            self._set_phase("지난번에 인코딩해 둔 것을 씀")
+            return folder_watch.Plan([], hit.get("notes") or [], (), hit.get("encoder") or "cpu"), bool(hit.get("burned")), hit.get("why") or ""
+        res = await self._encode_burn_run(local, make, out, duration, title, tmp, burn_name)
+        if ck and res[0] and os.path.exists(out):
+            enc_cache_put(ck, out, {"notes": list(res[0][1]), "encoder": res[0].encoder, "burned": res[1], "why": res[2]})
+        return res
+
+    def _enc_key(self, local, burn_name):
+        """인코딩 결과를 알아볼 키 (규칙·항목·원본 크기·자막·화질) - 항목을 모르면 None"""
+        job = self.current_job or {}
+        if not job.get("rule") or not job.get("key"):
+            return None
+        rule = next((r for r in load_settings()["rules"] if r["id"] == job["rule"]), {})
+        try:
+            size = os.path.getsize(local)
+        except OSError:
+            return None
+        sub = ""
+        if burn_name:
+            try:
+                with open(burn_name if os.path.isabs(burn_name) else os.path.join(os.path.dirname(local), burn_name), "rb") as f:
+                    sub = hashlib.sha1(f.read()).hexdigest()[:12]
+            except OSError:
+                sub = str(burn_name)
+        return enc_cache_key(job["rule"], job["key"], f"{size}|{sub}|{rule.get('height')}")
+
+    async def _encode_burn_run(self, local, make, out, duration, title, tmp, burn_name):
         try:
             return await self._encode_plan(local, lambda enc: make(enc, burn_name), out, duration, title, tmp), bool(burn_name), ""
         except RuntimeError as e:
@@ -3191,10 +3306,11 @@ class Mirror:
         cmd = [transcode.ffmpeg_path(), "-v", "error", "-y", "-nostats", "-progress", "pipe:1", *pre, "-i", os.path.abspath(src_path),
                *args, os.path.abspath(out)]
         self.current = {"title": title, "phase": phase, "done": 0, "total": int(duration * 1000) or 0}
-        # 올리기 인코딩은 뒤 작업 - CPU·디스크를 가장 낮은 우선순위로 (재생용 서버 변환이 먼저)
+        # 올리기 인코딩은 뒤 작업 - CPU는 가장 낮게, 디스크는 '보통의 가장 낮은 단계'(best-effort 7)로.
+        # (예전의 idle(-c 3)은 다른 줄이 원본을 복사하는 동안 디스크를 거의 못 받아 0.1배속까지 느려졌다)
         ionice = shutil.which("ionice") if os.name != "nt" else None
         if ionice:
-            cmd = [ionice, "-c", "3", *cmd]
+            cmd = [ionice, "-c", "2", "-n", "7", *cmd]
         proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, cwd=cwd,
                                                     **low_priority_kwargs())
         errs = []
