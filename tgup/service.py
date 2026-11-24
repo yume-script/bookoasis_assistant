@@ -168,6 +168,11 @@ def _sweep_tmp():
         return 0
     n = len(os.listdir(tmp))
     shutil.rmtree(tmp, ignore_errors=True)
+    try:   # (다 만든 인코딩 결과는 plex_to_tg_enc에 따로 남아 있다 - 오래된 것만 정리)
+        from . import plex_to_tg
+        plex_to_tg.enc_cache_sweep()
+    except Exception:  # noqa: BLE001
+        pass
     if n:
         log.info("텔레그램 자동 올리기: 지난번에 남은 작업 폴더 %d개를 지웠습니다", n)
     return n
