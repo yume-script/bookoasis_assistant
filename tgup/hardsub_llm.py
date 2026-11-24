@@ -19,10 +19,11 @@ from . import compat
 log = logging.getLogger("tgup")
 MIN_CONF = 0.7
 RETRY_SEC = 6 * 3600
-PROMPT = ("이 이미지는 한 동영상의 5분 간격 장면들을 이어 붙인 것입니다. 영상 화면 안에 자막 글자가 박혀 있는지(하드섭) 판단하세요. "
-          "방송 로고·간판·제목 글자·화면 속 표지판은 자막이 아닙니다. 대사 자막(보통 화면 아래쪽 가운데)만 봅니다. "
+PROMPT = ("이 이미지는 한 동영상의 5분 간격 장면마다 화면 아래 25%(자막이 나오는 자리)만 잘라 위아래로 이어 붙인 것입니다. "
+          "이 띠들 안에 대사 자막 글자가 영상에 박혀 있는지(하드섭), 그 자막이 한글인지 판단하세요. "
+          "방송 로고·채널 워터마크·간판·제목 글자는 자막이 아닙니다. 여러 띠에 걸쳐 대사 글자가 보여야 자막입니다. "
           "다른 말 없이 JSON 하나로만 답하세요: "
-          '{"hardsub": true/false, "korean": true/false (박힌 자막이 한국어인지), "confidence": 0~1, "reason": "짧은 근거(한국어)"}')
+          '{"hardsub": true/false, "korean": true/false (박힌 자막이 한글인지), "confidence": 0~1, "reason": "짧은 근거(한국어)"}')
 
 
 def settings(raw=None):

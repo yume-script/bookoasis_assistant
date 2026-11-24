@@ -707,11 +707,13 @@
             const c = l.current;
             if (!c) continue;
             shown.add(`${c.rule}/${c.key}`);
-            if (!show([l.tg])) continue;
+            if (l.stage === 'upload' ? !show([l.tg]) : statusFilter !== 'all') continue;
             const pct = c.total ? Math.min(100, (c.done / c.total) * 100) : 0;
-            const flood = l.flood_until && /요청 제한/.test(c.phase || '');
-            const r = row(c.title, chip(flood ? 'wait' : 'run', flood ? '계정 대기' : '올리는 중'), c.subs ? subsTag(c.subs) : '확인 중',
-                [many ? `[${accName(l.tg)}]` : '', `${c.phase}${c.speed && /인코딩/.test(c.phase) ? ` · ${c.speed}` : ''}${c.total && /올리는|받는|복사/.test(c.phase) ? ` · ${fmtB(c.done)} / ${fmtB(c.total)}` : ''}`,
+            // 1단계(준비: 받기·자막·인코딩·나누기 - 계정과 상관없이) / 2단계(그 계정으로 텔레그램에 보내는 중)
+            const prep = l.stage === 'prepare';
+            const waitSlot = /차례 기다리는/.test(c.phase || '');
+            const r = row(c.title, chip(waitSlot ? 'wait' : 'run', prep ? (waitSlot ? '올릴 차례 기다림' : '준비 중') : '올리는 중'), c.subs ? subsTag(c.subs) : '확인 중',
+                [many && !prep ? `[${accName(l.tg)}]` : '', `${c.phase}${c.speed && /인코딩/.test(c.phase) ? ` · ${c.speed}` : ''}${c.total && /올리는|받는|복사/.test(c.phase) ? ` · ${fmtB(c.done)} / ${fmtB(c.total)}` : ''}`,
                     c.elapsed ? `시작 ${when(c.started)} · ${fmtDur(c.elapsed)} 지남` : '', fmtTimes(c.times)].filter(Boolean).join(' · '),
                 h('div', { class: 'cache-bar mirror-bar' }, h('div', { style: { width: `${pct}%` } })));
             if (c.rule) r.lastChild.append(h('span', { class: 'mirror-actions' }, cancelBtn({ rule: c.rule, key: c.key, title: c.title }, true)));

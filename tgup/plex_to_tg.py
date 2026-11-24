@@ -194,11 +194,17 @@ def _shot_path(rule_id, key):
     return os.path.join(config_store.DATA_DIR, "plex_to_tg_shots", f"{safe}.jpg")
 
 
+def _llm_shot_path(rule_id, key):
+    """LLM 하드섭 판단용 그림: 5분 간격 장면의 아래 25%(자막 자리)만 잘라 위아래로 이어 붙인 것"""
+    return _shot_path(rule_id, key)[:-4] + ".llm.jpg"
+
+
 def drop_shot(rule_id, key):
-    try:
-        os.remove(_shot_path(rule_id, key))
-    except OSError:
-        pass
+    for p in (_shot_path(rule_id, key), _llm_shot_path(rule_id, key)):
+        try:
+            os.remove(p)
+        except OSError:
+            pass
 
 
 class Waiting(Exception):
@@ -688,7 +694,7 @@ def shift_ass(text, start, dur):
 # 돌리기
 # ---------------------------------------------------------------------------
 class Lane:
-    """텔레그램 계정 하나의 올리기 줄 - 같은 계정은 차례로, 다른 계정은 저마다의 줄로 동시에"""
+    """작업 줄 하나 (w1, w2 …) - 항목 하나를 준비(받기·자막·인코딩·나누기)하고, 보낼 때 고른 계정(tg)으로 텔레그램에 보낸다"""
 
     def __init__(self, tg):
         self.tg = tg
@@ -703,8 +709,8 @@ class Lane:
         self.subs_label = ""
         self.resume = None        # 나눠 올리다 멈춘 항목을 이어 올릴 때 {n, done, vids} (서버를 다시 켠 뒤 등)
         self.flood_until = 0      # 텔레그램 요청 제한으로 이때까지 쉼
-        self.sent_any = False     # 이 줄이 방금 텔레그램에 무언가 보냈는지 (다음 항목 전에 UPLOAD_GAP_SEC 쉼)
         self.channel = ""         # 지금 항목을 올릴 채널 (채널별 보내기 차례 - 인코딩 중에는 잡지 않는다)
+        self.rule = None          # 지금 항목의 규칙 (2단계에서 보낼 계정을 고를 때)
         self.started = 0          # 지금 항목을 시작한 때
         self.times = {}           # 지금 항목의 단계별 걸린 초 {받기, 인코딩, 나누기, 올리기, 대기, 준비}
         self.phase_kind = ""      # 지금 단계 칸과 그 시작 시각
@@ -780,6 +786,9 @@ class Mirror:
         self._taken = set()      # 줄이 잡은 항목 id(job) - 다른 줄이 다시 잡지 않게
         self._chan_routes = {}   # 채널 -> 지금 그 채널로 보내는 경로들 ["direct", "socks5://…"] (채널별 동시 올리기 규칙)
         self._chan_cond = None   # 그 표가 바뀔 때 깨우는 조건 (루프 안에서 만든다)
+        self._uploading = {}     # 계정 -> 지금 그 계정으로 보내는 줄 (2단계 - 계정 하나는 한 번에 하나씩 보낸다)
+        self._acc_sent = {}      # 계정 -> 마지막으로 보내기를 끝낸 때 (연달아 보낼 때 UPLOAD_GAP_SEC 쉼)
+        self._acc_last = {}      # 계정 -> 마지막으로 끝낸 항목 {title, ok, at, elapsed} (화면)
         self.offline = {}        # 닿지 못한 원본 드라이브 -> {since, path, last, count, logged} (실패로 세지 않고 다시 시도 중)
         self._queue_event = asyncio.Event()
         self._encoding = 0       # 지금 돌고 있는 인코딩 수 (encode_slots까지)
@@ -858,15 +867,17 @@ class Mirror:
         rules = {r["id"]: r for r in settings["rules"]}
         now = time.time()
         lanes = []
-        for ln in self.lanes.values():
-            if not (ln.current or ln.flood_until > now):
+        for wid, ln in sorted(self.lanes.items()):
+            if not ln.current:
                 continue
             cur = None
             if ln.current:
                 cur = {**ln.current, **(ln.current_job or {}), "started": int(ln.started), "elapsed": int(now - ln.started) if ln.started else 0,
                        "phase_since": int(ln.phase_at), "times": {k: int(v) for k, v in ln.times.items() if v >= 1},
                        "subs": ln.subs_label}
-            lanes.append({"tg": ln.tg, "current": cur, "flood_until": int(ln.flood_until) if ln.flood_until > now else 0})
+            up = self._uploading.get(ln.tg) is ln
+            lanes.append({"tg": ln.tg if up else "", "worker": wid, "stage": "upload" if up else "prepare", "current": cur,
+                          "flood_until": 0})
         first = next((x["current"] for x in lanes if x["current"]), None)
         # 계정마다: 지금 하는 것, 기다리는 수(그 계정이 가져갈 수 있는 것), 성공·실패 수, 쉬는 중이면 까닭
         accounts = {}
@@ -888,13 +899,13 @@ class Mirror:
                 accounts.setdefault(tg, {"queued": 0})
         thr = throttle.all_status(list(accounts))   # 텔레그램 속도 제한 (계정마다)
         for tg, a in accounts.items():
-            ln = self.lanes.get(tg)
+            ln = self._uploading.get(tg)   # (2단계) 지금 이 계정으로 보내는 것
             a["current"] = ({"title": ln.current.get("title", ""), "phase": ln.current.get("phase", ""),
                              "elapsed": int(now - ln.started) if ln.started else 0} if ln and ln.current else None)
             a["down"] = self._is_down(tg)
             a["down_until"] = int(self._down[tg][0]) if a["down"] else 0
             a["throttle"] = thr.get(tg) or throttle.status(tg)
-            a["last"] = ln.last_done if ln else None
+            a["last"] = self._acc_last.get(tg)
         now_t = time.time()
         for d in [d for d, x in self.offline.items() if now_t - x.get("last", 0) > 2 * SOURCE_RETRY_SEC + 60]:
             self.offline.pop(d, None)   # 다시 시도에서 더 끊기지 않았으면 (드라이브가 돌아옴) 표시를 지운다
@@ -962,10 +973,10 @@ class Mirror:
                 v = w.get("llm") or {}
                 if v and not (v.get("error") and time.time() - v.get("at", 0) > hardsub_llm.RETRY_SEC):
                     continue
-                shot = _shot_path(rid, key)
-                if not os.path.exists(shot):
+                if not os.path.exists(_shot_path(rid, key)):   # (사람이 볼 장면을 먼저 만든 뒤에)
                     continue
                 try:
+                    shot = await self.screenshot(rid, key, strips=True)   # 장면마다 아래 25%만 이어 붙인 그림
                     v = {**await hardsub_llm.judge(self.http(), conf, shot), "at": int(time.time()), "model": conf["model"]}
                 except Exception as e:  # noqa: BLE001 - 판단은 덤 (사람이 볼 수 있음)
                     v = {"error": str(e)[:200], "at": int(time.time())}
@@ -1165,11 +1176,11 @@ class Mirror:
         self.wake()
         return item_fields(m)["name"]
 
-    async def screenshot(self, rule_id, key):
+    async def screenshot(self, rule_id, key, strips=False):
         """자막을 기다리는 항목의 5분 간격 장면(5·10·15분 … 한 장으로 이어 붙임)(JPEG 경로) - 자막을 영상에 입힌 하드섭인지 사람이 보고 판단하게.
         prepare_shots가 뒤에서 하나씩 ffmpeg로 뽑아 data/plex_to_tg_shots/에 두고(화면은 만든 파일만 가져감),
         항목이 대기에서 빠지면 지운다"""
-        path = _shot_path(rule_id, key)
+        path = _llm_shot_path(rule_id, key) if strips else _shot_path(rule_id, key)
         if os.path.exists(path):
             return path
         rule = next((r for r in load_settings()["rules"] if r["id"] == rule_id), None)
@@ -1180,7 +1191,7 @@ class Mirror:
                 raise ValueError("rclone 원격 파일은 장면을 뽑지 않습니다 (드라이브를 mount해서 폴더로 적으면 됩니다).")
             local = folder_watch.local_path(rule["folder"], key)
             dur = folder_watch.duration(await folder_watch.probe(local))
-            return await self._grab_sheet(["-i", local], dur, path)
+            return await self._grab_sheet(["-i", local], dur, path, strips)
         cfg, src = self.plex_src(rule["plex"])
         if not src:
             raise ValueError("Plex 소스를 찾을 수 없습니다.")
@@ -1198,10 +1209,11 @@ class Mirror:
             args = ["-headers", f"X-Plex-Token: {src.get('token', '')}\r\n", "-i", f"{src['url']}{part['key']}"]
         else:
             raise ValueError("Plex 항목에 파일 정보가 없습니다.")
-        return await self._grab_sheet(args, duration, path)
+        return await self._grab_sheet(args, duration, path, strips)
 
-    async def _grab_sheet(self, input_args, dur, path):
-        """5분 간격 장면들(5·10·15분 …, 최대 SHOT_MAX장)을 뽑아 한 장으로 이어 붙인다 (4장씩 한 줄). 하나도 못 뽑으면 ValueError"""
+    async def _grab_sheet(self, input_args, dur, path, strips=False):
+        """5분 간격 장면들(5·10·15분 …, 최대 SHOT_MAX장)을 뽑아 한 장으로 이어 붙인다 (사람이 볼 것: 4장씩 한 줄).
+        strips: LLM 하드섭 판단용 - 장면마다 아래 25%(자막 자리)만 잘라 위아래로 (글자가 잘 보이게 가로 960). 하나도 못 뽑으면 ValueError"""
         times = [t for t in range(SHOT_EVERY, int(dur or 0) - 5, SHOT_EVERY)][:SHOT_MAX] if dur else [SHOT_EVERY, SHOT_EVERY * 2]
         if not times:
             times = [max(0, (dur or 0) / 2)]
@@ -1211,7 +1223,8 @@ class Mirror:
             got, err = [], ""
             for t in times:
                 out = os.path.join(tmpd, f"s{len(got):02d}.jpg")
-                ok, err = await self._ffmpeg("-ss", f"{t:.0f}", *input_args, "-frames:v", "1", "-vf", "scale=480:-2", "-q:v", "5", out)
+                vf = "crop=iw:ih*0.25:0:ih*0.75,scale=960:-2" if strips else "scale=480:-2"
+                ok, err = await self._ffmpeg("-ss", f"{t:.0f}", *input_args, "-frames:v", "1", "-vf", vf, "-q:v", "4" if strips else "5", out)
                 if ok and os.path.exists(out):
                     got.append(t)
             if not got:
@@ -1219,7 +1232,7 @@ class Mirror:
             if len(got) == 1:
                 os.replace(os.path.join(tmpd, "s00.jpg"), path)
                 return path
-            cols = min(4, len(got))
+            cols = 1 if strips else min(4, len(got))
             rows = (len(got) + cols - 1) // cols
             ok, err = await self._ffmpeg("-framerate", "1", "-i", os.path.join(tmpd, "s%02d.jpg"), "-frames:v", "1",
                                          "-vf", f"tile={cols}x{rows}:padding=4:color=black", "-q:v", "4", path + ".tmp.jpg")
@@ -1533,7 +1546,6 @@ class Mirror:
         job = self.current_job or {}
         if not msg_id or not job:
             return
-        (_LANE.get() or self._main).sent_any = True
         state = load_state()
         rs = state["rules"].setdefault(job["rule"], {"done": [], "fails": {}})
         rs.setdefault("sending", {}).setdefault(job["key"], []).append(int(msg_id))
@@ -1583,22 +1595,33 @@ class Mirror:
         log.info("자동 올리기: 반쯤 올린 메시지 %s개를 지웠습니다 (%s)", len(ids), key)
         return len(ids)
 
+    # ----- 진행 목록 처리: 1단계(준비 - 받기·자막 판별·인코딩·나누기)는 계정과 상관없이, 2단계(텔레그램으로 보내기)에서 계정을 고른다 -----
+    # 작업 줄(w1, w2 …)이 진행 목록 앞에서부터 항목을 가져가 준비하고(인코딩은 encode_slots개까지), 다 되면 _upload_slot에서
+    # "놀고 있는(쉬는 중·보내는 중이 아닌) 계정" + "그 채널로 보내는 중인 것이 없음"을 함께 만족할 때 그 계정·채널을 잡아 보낸다.
+    def _worker_count(self, st):
+        """작업 줄 수 = 동시 인코딩 수 + 올리는 계정 수 (계정마다 하나는 보내는 중, 나머지는 준비) - 2~8"""
+        accs = {a for r in st["rules"] if r["enabled"] for a in [r["tg"], *(r.get("tg_alt") or [])]}
+        return max(2, min(8, st["encode_slots"] + len(accs)))
+
     async def run_queue(self, st):
-        """올릴 차례를 텔레그램 계정마다 따로 처리한다 - 같은 계정은 차례로, 다른 계정은 동시에.
-        줄이 다 끝날 때까지(또는 올리기 시간대가 끝날 때까지) 돌고, 도는 동안 새 계정의 항목이 들어오면 그 줄도 띄운다."""
+        """작업 줄들을 띄워 진행 목록을 처리한다 - 줄이 다 끝날 때까지(또는 올리기 시간대가 끝날 때까지) 돌고,
+        도는 동안 새 항목이 들어오면 쉬던 줄도 다시 띄운다."""
         rules = {r["id"]: r for r in st["rules"]}
         try:
             while True:
                 if not in_hours(st["hours"]):   # 정한 시간대가 끝나면 남은 것은 다음 시간대에
                     self.off_hours = st["hours"]
-                for tg in self._waiting_accounts(rules):
-                    t = self._lane_tasks.get(tg)
-                    if (t is None or t.done()) and in_hours(st["hours"]):
-                        self._lane_tasks[tg] = asyncio.ensure_future(self._run_lane(tg, st))
+                if in_hours(st["hours"]) and self._takeable(rules):
+                    for n in range(self._worker_count(st)):
+                        wid = f"w{n + 1}"
+                        t = self._lane_tasks.get(wid)
+                        if t is None or t.done():
+                            self._lane_tasks[wid] = asyncio.ensure_future(self._run_lane(wid, st))
+                            if not self._takeable(rules, skip=1):
+                                break
                 running = [t for t in self._lane_tasks.values() if not t.done()]
                 if not running:
-                    if any(self._is_down(tg) == "" for tg in self._waiting_accounts(rules, include_down=True)) \
-                            or not self._waiting_accounts(rules, include_down=True):
+                    if self._takeable(rules) or not self.queue or not in_hours(st["hours"]):
                         break
                     # 남은 항목의 계정이 모두 쉬는 중 - 가장 먼저 풀리는 때까지 기다렸다가 다시
                     until = min((d[0] for d in self._down.values()), default=time.time() + 60)
@@ -1611,7 +1634,7 @@ class Mirror:
                 self._queue_event.clear()
                 ev = asyncio.ensure_future(self._queue_event.wait())
                 try:
-                    # 쉬던 계정이 풀리면 그 줄도 띄우게 1분마다 다시 본다
+                    # 쉬던 계정이 풀리면 그 항목도 가져가게 1분마다 다시 본다
                     await asyncio.wait([*running, ev], return_when=asyncio.FIRST_COMPLETED, timeout=60)
                 finally:
                     ev.cancel()
@@ -1624,9 +1647,22 @@ class Mirror:
                     t.cancel()
             raise
 
+    def _eligible(self, rule, job):
+        """그 항목을 지금 준비해도 되는지: 올릴 수 있는 계정 중 쉬지 않는 계정이 하나라도 있어야 (모두 쉬면 줄을 잡고 기다리지 않게)"""
+        return any(not self._is_down(a) for a in self._accounts_for(rule, job))
+
+    def _takeable(self, rules, skip=0):
+        """아직 아무 줄도 잡지 않았고 지금 준비할 수 있는 항목이 (skip개보다) 있는지"""
+        n = 0
+        for j in self.queue:
+            if id(j) not in self._taken and self._eligible(rules.get(j["rule"]), j):
+                n += 1
+                if n > skip:
+                    return True
+        return False
+
     def _waiting_accounts(self, rules, include_down=False):
-        """아직 아무 줄도 잡지 않은 항목을 가져갈 수 있는 계정들 (규칙이 없어진 항목은 "" - 그 줄이 실패로 정리한다).
-        쉬는 중인 계정은 뺀다 (include_down이면 넣음)"""
+        """아직 아무 줄도 잡지 않은 항목을 가져갈 수 있는 계정들 (화면·시험용). 쉬는 중인 계정은 뺀다 (include_down이면 넣음)"""
         out = []
         for j in self.queue:
             if id(j) in self._taken:
@@ -1637,10 +1673,9 @@ class Mirror:
         return out
 
     # ----- 채널별 동시 올리기 규칙 -----
-    # 1) 같은 채널로는 동시에 보내지 않는다 - 텔레그램으로 보내는 동안만 그 채널을 잡는다 (받기·인코딩은 채널과 상관없이 동시에).
-    # 2) 다른 계정 줄이 처리 중인 채널이면 다른 채널의 항목을 먼저 가져간다.
-    # 4) 그래도 같은 채널이면 연결 경로가 다른 계정만 같이 보낸다 - 한 계정은 그대로(직접), 두 번째는 프록시를 거치는 계정
-    #    (계정마다 프록시는 텔레그램 계정 탭). 경로(직접 / 프록시 주소)마다 한 채널에 하나씩, 같은 경로면 보내기 차례를 기다린다.
+    # 1) 같은 채널로는 동시에 보내지 않는다 - 텔레그램으로 보내는 동안만 그 채널을 잡는다 (받기·인코딩·나누기는 채널과 상관없이 동시에).
+    # 2) 다른 줄이 처리 중인 채널이면 다른 채널의 항목을 먼저 가져간다.
+    # 4) 같은 채널이면 연결 경로가 다른 계정만 같이 보낸다 - 한 계정은 그대로(직접), 두 번째는 프록시를 거치는 계정.
     @staticmethod
     def _channel_of(rule):
         return str((rule or {}).get("channel") or "")
@@ -1648,31 +1683,62 @@ class Mirror:
     def _route(self, tg):
         return telegram_src.route_of(tg) if hasattr(telegram_src, "route_of") else "direct"
 
-    def _channel_busy(self, rule, tg):
-        """다른 계정 줄이 이 채널의 항목을 처리 중인지 (받기·인코딩·보내기 아무 단계든)"""
+    def _channel_busy(self, rule, me=None):
+        """다른 줄이 이 채널의 항목을 처리 중인지 (받기·인코딩·보내기 아무 단계든)"""
         ch = self._channel_of(rule)
-        return bool(ch) and any(ln.channel == ch and ln.tg != tg and ln.current_job for ln in self.lanes.values())
+        return bool(ch) and any(ln is not me and ln.channel == ch and ln.current_job for ln in self.lanes.values())
+
+    def _pick_account(self, rule, job, ch):
+        """지금 보낼 계정: 올릴 수 있는 계정 중 쉬는 중·보내는 중이 아니고, 그 채널에 같은 경로(직접/프록시)가 없는 것.
+        텔레그램이 속도를 늦추지 않는 계정을 먼저. 없으면 "" """
+        used = self._chan_routes.get(ch) or []
+        ok = [a for a in self._accounts_for(rule, job)
+              if a and not self._is_down(a) and a not in self._uploading and self._route(a) not in used]
+        ok.sort(key=lambda a: throttle.throttled(a))
+        return ok[0] if ok else ""
 
     @contextlib.asynccontextmanager
-    async def _channel_gate(self):
-        """텔레그램으로 보내는 동안 이 채널·경로를 잡는다 - 같은 경로가 그 채널로 보내는 중이면 끝날 때까지 기다림"""
+    async def _upload_slot(self):
+        """2단계: 텔레그램으로 보낼 계정·채널을 함께 잡는다 - 놀고 있는 계정이 없거나 그 채널로 보내는 중이면 기다림.
+        돌려주는 값: (계정, 클라이언트, 채널) - 줄에 규칙이 없으면(시험 등) (지금 계정, None, None)"""
         lane = _LANE.get() or self._main
-        ch, route = lane.channel, self._route(lane.tg)
-        if not ch:
-            yield
+        rule, job = lane.rule, lane.job
+        ch = self._channel_of(rule)
+        if not rule or not ch or job is None:
+            yield lane.tg, None, None
             return
         if self._chan_cond is None:
             self._chan_cond = asyncio.Condition()
+        prev = dict(self.current or {})
+        waited = False
         async with self._chan_cond:
-            if route in (self._chan_routes.get(ch) or []):
-                prev = dict(self.current or {})
-                self.current = {**prev, "phase": "같은 채널로 보내는 중인 것이 끝나기를 기다리는 중", "done": 0, "total": 0}
-                await self._chan_cond.wait_for(lambda: route not in (self._chan_routes.get(ch) or []))
+            while True:
+                tg = self._pick_account(rule, job, ch)
+                if tg:
+                    break
+                if not waited:
+                    waited = True
+                    self.current = {**prev, "phase": "올릴 계정·채널 차례 기다리는 중", "done": 0, "total": 0}
+                try:   # (쉬던 계정이 풀리는 것도 보게 30초마다)
+                    await asyncio.wait_for(self._chan_cond.wait(), 30)
+                except asyncio.TimeoutError:
+                    pass
+            route = self._route(tg)
+            self._uploading[tg] = lane
             self._chan_routes.setdefault(ch, []).append(route)
+        lane.tg = tg
         try:
-            yield
+            gap = UPLOAD_GAP_SEC - (time.time() - self._acc_sent.get(tg, 0))
+            if gap > 0:   # 이 계정이 방금 다른 것을 보냈으면 조금 쉬고 (요청 제한에 덜 걸리게)
+                await asyncio.sleep(gap)
+            acc = self.tg_for(tg)
+            client = await acc.authorized_client()
+            peer = await acc.peer(int(ch))
+            yield tg, client, peer
         finally:
+            self._acc_sent[tg] = time.time()
             async with self._chan_cond:
+                self._uploading.pop(tg, None)
                 used = self._chan_routes.get(ch) or []
                 if route in used:
                     used.remove(route)
@@ -1680,46 +1746,42 @@ class Mirror:
                     self._chan_routes.pop(ch, None)
                 self._chan_cond.notify_all()
 
-    def _next_job(self, tg, rules):
-        """이 계정이 가져갈 다음 항목 - 진행 목록의 앞에서부터 (그 계정이 올릴 수 있는 것 중).
-        먼저 다른 계정 줄이 처리하지 않는 채널의 항목, 없으면 같은 채널의 항목 (받기·인코딩은 하고, 보내기는 _channel_gate에서 차례로).
-        이 계정이 텔레그램 속도 제한에 걸려 있으면(tgup/throttle.py) 같이 올릴 수 있는 다른 계정 중 놀고 있고 제한 없는 계정에게 양보한다"""
-        mine_slow = throttle.throttled(tg)
+    def _next_job(self, rules, me=None):
+        """작업 줄이 가져갈 다음 항목 - 진행 목록 앞에서부터. 먼저 다른 줄이 처리하지 않는 채널의 항목, 없으면 같은 채널의 항목
+        (준비는 하고, 보내기는 _upload_slot에서 차례로). 올릴 계정이 모두 쉬는 중인 항목은 건너뛴다"""
         for share in (False, True):
             for j in self.queue:
                 if id(j) in self._taken:
                     continue
                 rule = rules.get(j["rule"])
-                cands = self._accounts_for(rule, j)
-                if tg not in cands or (not share and self._channel_busy(rule, tg)):
+                if not self._eligible(rule, j) and rule:
                     continue
-                if mine_slow and not j.get("pin") and any(
-                        a != tg and not self._is_down(a) and not throttle.throttled(a)
-                        and not (self.lanes.get(a) and self.lanes[a].current) for a in cands):
-                    continue   # 다른 계정이 가져가게 (그 계정 줄이 깨어 있으면 바로 가져간다)
+                if not share and self._channel_busy(rule, me):
+                    continue
                 return j
         return None
 
-    async def _run_lane(self, tg, st):
-        lane = self.lanes.setdefault(tg, Lane(tg))
-        _LANE.set(lane)   # 이 작업(과 그 안에서 만든 작업·스레드)의 self.current 등은 이 계정 줄의 것
+    async def _run_lane(self, wid, st):
+        lane = self.lanes.setdefault(wid, Lane(""))
+        _LANE.set(lane)   # 이 작업(과 그 안에서 만든 작업·스레드)의 self.current 등은 이 줄의 것
         rules = {r["id"]: r for r in st["rules"]}
         try:
-            while in_hours(st["hours"]) and not self._is_down(tg):
-                job = self._next_job(tg, rules)
+            while in_hours(st["hours"]):
+                job = self._next_job(rules, lane)
                 if job is None:
                     break
-                if lane.sent_any:   # 앞 항목을 텔레그램에 보냈으면 조금 쉬고 (연달아 보내 요청 제한에 걸리지 않게)
-                    lane.sent_any = False
-                    await asyncio.sleep(UPLOAD_GAP_SEC)
                 self._taken.add(id(job))
-                lane.channel = self._channel_of(rules.get(job["rule"]))
+                rule = rules.get(job["rule"])
+                # 준비(1단계)는 쉬지 않는 첫 계정으로 (채널 정보·중복 확인 등 읽기만) - 보낼 계정은 2단계에서 다시 고른다
+                lane.tg = next((a for a in self._accounts_for(rule, job) if not self._is_down(a)), (rule or {}).get("tg", ""))
+                lane.channel, lane.rule = self._channel_of(rule), rule
                 try:
-                    await self._run_job(lane, job, rules.get(job["rule"]), st)
+                    await self._run_job(lane, job, rule, st)
                 finally:
                     self._taken.discard(id(job))
-                    lane.channel = ""
-                    throttle.stopped(tg)
+                    if lane.tg:
+                        throttle.stopped(lane.tg)
+                    lane.channel, lane.rule = "", None
         finally:
             lane.current = lane.current_job = lane.job = None
             lane.cur_ep = None
@@ -1798,7 +1860,7 @@ class Mirror:
         elapsed, times = lane.summary()
         lane.current = lane.current_job = None
         state = load_state()
-        tg = (rule or {}).get("tg", "")
+        tg = lane.tg or (rule or {}).get("tg", "")
         if (rule or {}).get("media") == "youtube" and cancelled:   # 유튜브: 받아 둔 것은 지운다
             youtube.cleanup(rule["folder"], job["key"], youtube.find_file(rule["folder"], job["key"]))
         if cancelled:   # 올리던 중에 직접 취소
@@ -1883,6 +1945,8 @@ class Mirror:
                                           **({"handover": job["avoid"]} if job.get("avoid") else {})}, *state["history"]])
         save_state(state)
         lane.last_done = {"title": job["title"], "ok": ok, "at": int(time.time()), "elapsed": elapsed}
+        if tg:
+            self._acc_last[tg] = lane.last_done
         lane.cur_ep = None
 
     def _hand_over(self, lane, job, rule, problem):
@@ -2181,6 +2245,23 @@ class Mirror:
         self._poster_found(tg_id, mkey)
         return data
 
+    async def _rule_gb(self, rule, client):
+        """준비(1단계)에서 나눌 크기: 이 항목을 올릴 수 있는 계정 중 가장 작은 한도 (보낼 계정은 나중에 고르므로).
+        아직 모르는 계정은 그 계정 클라이언트로 알아보고, 못 알아보면 2GB"""
+        job = self._job or {}
+        gbs = []
+        for a in self._accounts_for(rule, job):
+            hit = self._gb_cache.get(a)
+            if hit and time.time() - hit[0] < 3600:
+                gbs.append(hit[1])
+                continue
+            try:
+                c = client if a == rule.get("tg") else await self.tg_for(a).authorized_client()
+                gbs.append(await self._account_gb(a, c))
+            except Exception:  # noqa: BLE001 - 로그인 안 된 계정 등은 빼고 (보낼 때도 못 고름)
+                continue
+        return min(gbs) if gbs else 2
+
     async def _account_gb(self, tg_id, client):
         """올리는 텔레그램 계정의 파일 한도(GB): 프리미엄 4, 일반 2 (한 시간 기억)"""
         hit = self._gb_cache.get(tg_id)
@@ -2236,7 +2317,7 @@ class Mirror:
         if soft is None:   # ffprobe가 없거나 못 열었으면 Plex 정보로
             soft = [{"codec": x.get("codec", ""), "lang": x.get("languageCode") or x.get("languageTag") or "",
                      "title": x.get("title") or x.get("displayTitle") or "", "forced": bool(x.get("forced"))} for x in subs if not x.get("key")]
-        else:   # 자막 글자를 5분 간격으로 조금씩 읽어 한국어인지 (언어 표시가 없거나 잘못 붙은 트랙)
+        elif rule["wait_subs"]:   # 자막대기 규칙만: 자막 글자를 5분 간격으로 조금씩 읽어 한국어인지 (대기없음이면 건너뜀)
             await folder_watch.detect_sub_langs(local_file if local_ok else f"{src['url']}{part['key']}", soft,
                                                 (m.get("duration") or media.get("duration") or 0) / 1000,
                                                 None if local_ok else f"X-Plex-Token: {src.get('token', '')}\r\n")
@@ -2249,7 +2330,7 @@ class Mirror:
             self._wait_subs(rule, key, soft_kind["why"])
         tg = self.tg_for(rule["tg"])
         client = await tg.authorized_client()
-        max_gb = max_gb or await self._account_gb(rule["tg"], client)   # 자동: 그 계정이 프리미엄이면 4GB, 아니면 2GB
+        max_gb = max_gb or await self._rule_gb(rule, client)   # 자동: 그 계정이 프리미엄이면 4GB, 아니면 2GB
         limit = int(max_gb * PART_LIMIT * 0.97)
         duration = (m.get("duration") or media.get("duration") or 0) / 1000
         if size > limit and not transcode.ffmpeg_path():
@@ -2443,7 +2524,8 @@ class Mirror:
                 # (rclone mount에서 못 읽으면 그 파일만 vfs/forget 후 다시 - 받기는 아래 서버로 복사할 때)
                 _p, info, mount_note = await self._probe_safe(local, tmp, fields["name"], "video", fetch=False)
             tracks = folder_watch.stream_tracks(info)
-            if not remote and tracks:   # 자막 글자를 5분 간격으로 조금씩 읽어 한국어인지 (원격은 앞부분만 받아 봐서 못 함)
+            if rule["wait_subs"] and not remote and tracks:
+                # 자막대기 규칙만: 자막 글자를 5분 간격으로 조금씩 읽어 한국어인지 (대기없음이면 건너뜀, 원격은 앞부분만 받아 봐서 못 함)
                 await folder_watch.detect_sub_langs(local, tracks, folder_watch.duration(info))
             sub_det = {t["index"]: t["detected"] for t in tracks if t.get("detected") and t.get("index") is not None}
             soft_kind = folder_watch.classify_subs(tracks)
@@ -2453,7 +2535,7 @@ class Mirror:
                 self._wait_subs(rule, key, soft_kind["why"] or ("파일을 읽지 못해 자막 확인 못 함" if remote and not info else ""))
             tg = self.tg_for(rule["tg"])
             client = await tg.authorized_client()
-            max_gb = max_gb or await self._account_gb(rule["tg"], client)
+            max_gb = max_gb or await self._rule_gb(rule, client)
             limit = int(max_gb * PART_LIMIT * 0.97)
             peer = await tg.peer(int(rule["channel"]))
             # 2) 원격이면 통째로 받기 (자막 파일도)
@@ -2654,7 +2736,7 @@ class Mirror:
             title = " - ".join(x for x in (m.get("artist"), m.get("title")) if x) or title0
             tg = self.tg_for(rule["tg"])
             client = await tg.authorized_client()
-            max_gb = max_gb or await self._account_gb(rule["tg"], client)
+            max_gb = max_gb or await self._rule_gb(rule, client)
             if os.path.getsize(local) > int(max_gb * PART_LIMIT * 0.97):
                 raise RuntimeError(f"파일이 {max_gb}GB 한도보다 커서 올릴 수 없습니다 (음악은 나누지 않음).")
             peer = await tg.peer(int(rule["channel"]))
@@ -2693,7 +2775,8 @@ class Mirror:
                 if self.current:
                     self.current.update(done=int(done), total=int(total))
                 throttle.progress(tg_now, done)
-            async with self._channel_gate():   # 그 채널 보내기 차례 (곡 + 가사)
+            async with self._upload_slot() as (_tg, c, p):   # 2단계: 놀고 있는 계정·빈 채널을 잡고 (곡 + 가사)
+                client, peer = c or client, p or peer
                 t_send = time.time()
                 sent = await self._send(client, peer, local, progress, caption=cap, thumb=thumb, attributes=attrs,
                                         force_document=False)
@@ -2746,10 +2829,10 @@ class Mirror:
         kw.setdefault("mime_type", mimetypes.guess_type(path)[0] or "application/octet-stream")
         return await client.send_file(peer, handle, **kw)
 
-    async def _send_pieces(self, *args):
-        """조각들을 텔레그램으로 - 그 채널 보내기 차례를 잡고 (나눈 조각은 한 번에 이어서)"""
-        async with self._channel_gate():
-            return await self._send_pieces_now(*args)
+    async def _send_pieces(self, client, peer, *args):
+        """조각들을 텔레그램으로 - 2단계: 놀고 있는 계정과 빈 채널을 잡고 그 계정으로 (나눈 조각은 한 번에 이어서)"""
+        async with self._upload_slot() as (_tg, c, p):
+            return await self._send_pieces_now(c or client, p or peer, *args)
 
     async def _send_pieces_now(self, client, peer, pieces, name, caption, width, height, thumb, sub_files, title, tmp, msgs):
         """영상 조각들을 차례로 올리고(나눴으면 이름 끝에 _0000, _0001…, 캡션에 (i/n)) 그 뒤에 자막 파일. 올린 메시지 id는 msgs에.

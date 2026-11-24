@@ -70,8 +70,9 @@ class JudgeTest(unittest.TestCase):
             m.save_state(st)
             shot = m._shot_path("r1", "a.mkv")
             os.makedirs(os.path.dirname(shot), exist_ok=True)
-            with open(shot, "wb") as f:
-                f.write(b"\xff\xd8jpeg")
+            for p in (shot, m._llm_shot_path("r1", "a.mkv")):   # 사람이 볼 장면 + LLM용(아래 25% 띠)
+                with open(p, "wb") as f:
+                    f.write(b"\xff\xd8jpeg")
             async with aiohttp.ClientSession() as http:
                 mir = m.Mirror(None, None, lambda *a: None, lambda: http)
                 mir.queue, mir.wake = [], lambda: None

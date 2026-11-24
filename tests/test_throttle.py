@@ -55,13 +55,13 @@ class ThrottleTest(unittest.TestCase):
         except ImportError:
             self.skipTest("aiohttp 없음")
         mir = m.Mirror(None, None, lambda *a: None, None)
-        rules = {"r": {"id": "r", "tg": "tg", "tg_alt": ["a2"]}}
-        mir.queue = [{"rule": "r", "key": "k1", "title": "t"}]
+        mir._route = lambda tg: "direct:" + tg
+        rule = {"id": "r", "tg": "tg", "tg_alt": ["a2"], "channel": "-1"}
+        job = {"rule": "r", "key": "k1", "title": "t"}
         throttle.flood("tg", 60, "SaveBigFilePartRequest")
-        self.assertIsNone(mir._next_job("tg", rules))             # tg는 제한 - a2가 가져가게
-        self.assertEqual(mir._next_job("a2", rules)["key"], "k1")
+        self.assertEqual(mir._pick_account(rule, job, "-1"), "a2")   # tg는 제한 - 보낼 때 a2를 먼저
         throttle.flood("a2", 60, "SaveBigFilePartRequest")
-        self.assertEqual(mir._next_job("tg", rules)["key"], "k1")  # 둘 다 제한이면 그냥 가져감
+        self.assertEqual(mir._pick_account(rule, job, "-1"), "tg")   # 둘 다 제한이면 규칙 순서대로
 
 
 if __name__ == "__main__":

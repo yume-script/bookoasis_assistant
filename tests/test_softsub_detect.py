@@ -98,6 +98,13 @@ class FfmpegTest(unittest.TestCase):
                            capture_output=True, text=True).stdout.strip()
         self.assertGreater(int(w), 480)   # 가로로 두 장 이어 붙음
         self.assertFalse(os.path.exists(out + ".parts"))
+        strips = os.path.join(self.d, "strips.jpg")   # LLM용: 장면마다 아래 25%만 위아래로
+        asyncio.run(mir._grab_sheet(["-i", self.mkv], 700, strips, strips=True))
+        wh = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "stream=width,height", "-of", "csv=p=0", strips],
+                            capture_output=True, text=True).stdout.strip().split(",")
+        w, hgt = int(wh[0]), int(wh[1])
+        self.assertEqual(w, 960)
+        self.assertLess(hgt, 960 * 90 / 160 * 0.25 * 2 + 20)   # 띠 두 개 (원본 높이의 25%씩)
 
 
 if __name__ == "__main__":
