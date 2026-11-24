@@ -85,42 +85,62 @@ class ChannelRuleTest(unittest.TestCase):
         self.mir.queue.append(j)
         return j
 
-    def busy(self, tg, rule):
-        """그 계정 줄이 그 규칙의 항목을 처리 중 (받기·인코딩·보내기 어느 단계든)"""
-        ln = self.mir.lanes.setdefault(tg, self.m.Lane(tg))
+    def busy(self, wid, rule):
+        """작업 줄 wid가 그 규칙의 항목을 처리 중 (받기·인코딩·보내기 어느 단계든)"""
+        ln = self.mir.lanes.setdefault(wid, self.m.Lane(""))
         ln.channel, ln.current_job = self.rules[rule]["channel"], {"rule": rule, "key": "?"}
 
     def test_other_channel_first(self):
         x1, x2, y1 = self.job("x", "x1"), self.job("x", "x2"), self.job("y", "y1")
         self.mir._taken.add(id(x1))
-        self.busy("A", "x")
-        self.assertIs(self.mir._next_job("B", self.rules), y1)   # -100은 A가 처리 중 -> 다른 채널(-200)을 먼저
+        self.busy("w1", "x")
+        me = self.m.Lane("")
+        self.assertIs(self.mir._next_job(self.rules, me), y1)   # -100은 w1이 처리 중 -> 다른 채널(-200)을 먼저
         self.mir._taken.add(id(y1))
-        self.assertIs(self.mir._next_job("B", self.rules), x2)   # 다른 채널이 없으면 같은 채널도 가져가 받기·인코딩은 한다
-        self.assertEqual(self.mir._waiting_accounts(self.rules), ["A", "B", "P"])   # 줄은 막지 않는다 (보내기에서 차례)
+        self.assertIs(self.mir._next_job(self.rules, me), x2)   # 다른 채널이 없으면 같은 채널도 가져가 준비(받기·인코딩)는 한다
+        self.mir._down["A"] = (time.time() + 60, "x")
+        self.mir._down["B"] = (time.time() + 60, "x")
+        self.mir._down["P"] = (time.time() + 60, "x")
+        self.assertIsNone(self.mir._next_job(self.rules, me))   # 올릴 계정이 모두 쉬면 준비도 하지 않음 (줄을 잡고 기다리지 않게)
 
-    def test_send_gate_same_route_waits_other_route_shares(self):
+    def test_upload_slot_picks_idle_account_and_free_channel(self):
+        """2단계: 놀고 있는 계정 + 그 채널로 보내는 중이 아님 - 같은 경로면 기다리고, 경로가 다르면(프록시) 같이"""
         m, mir = self.m, self.mir
+        m.UPLOAD_GAP_SEC, gap0 = 0, m.UPLOAD_GAP_SEC
+        self.addCleanup(setattr, m, "UPLOAD_GAP_SEC", gap0)
+
+        class Acc:
+            async def authorized_client(self):
+                return object()
+
+            async def peer(self, ch):
+                return ch
+        mir.tg_for = lambda tg: Acc()
         order = []
 
-        async def send(tg, name, hold):
-            lane = mir.lanes.setdefault(tg, m.Lane(tg))
-            lane.channel = "-100"
+        async def send(wid, rule_tgs, hold):
+            lane = mir.lanes.setdefault(wid, m.Lane(""))
+            lane.rule = {"id": wid, "tg": rule_tgs[0], "tg_alt": rule_tgs[1:], "channel": "-100"}
+            lane.job, lane.channel = {"rule": wid, "key": wid}, "-100"
             m._LANE.set(lane)
-            async with mir._channel_gate():
-                order.append(("start", name))
+            async with mir._upload_slot() as (tg, client, peer):
+                order.append(("start", wid, tg))
                 await asyncio.sleep(hold)
-                order.append(("end", name))
+                order.append(("end", wid, tg))
 
         async def run():
-            a = asyncio.ensure_future(send("A", "A", 0.2))
+            a = asyncio.ensure_future(send("w1", ["A"], 0.2))
             await asyncio.sleep(0.02)
-            b = asyncio.ensure_future(send("B", "B", 0.01))   # A와 같은 경로(직접) -> A가 끝날 때까지 기다림
-            p = asyncio.ensure_future(send("P", "P", 0.01))   # 프록시 경로 -> 바로 같이
+            b = asyncio.ensure_future(send("w2", ["A", "B"], 0.01))   # A는 보내는 중, B는 직접 경로 -> 그 채널에 직접이 있어 기다림
+            p = asyncio.ensure_future(send("w3", ["A", "P"], 0.01))   # P는 프록시 경로 -> 바로 같이
             await asyncio.gather(a, b, p)
         asyncio.run(run())
-        self.assertLess(order.index(("start", "P")), order.index(("end", "A")))
-        self.assertGreater(order.index(("start", "B")), order.index(("end", "A")))
+        starts = {w: (i, tg) for i, (k, w, tg) in enumerate(order) if k == "start"}
+        end_a = order.index(("end", "w1", "A"))
+        self.assertEqual(starts["w3"][1], "P")
+        self.assertLess(starts["w3"][0], end_a)
+        self.assertGreater(starts["w2"][0], end_a)
+        self.assertEqual(mir._uploading, {})
         self.assertEqual(mir._chan_routes, {})
 
     def test_flood_wait_rests_account_and_keeps_job(self):

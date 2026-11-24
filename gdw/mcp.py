@@ -309,7 +309,9 @@ def tgup_status(limit=30):
         if not cur:
             continue
         total, done = int(cur.get("total") or 0), int(cur.get("done") or 0)
-        running.append({"account": names.get(ln["tg"], ln["tg"]), "title": cur.get("title", ""), "phase": cur.get("phase", ""),
+        running.append({"account": names.get(ln["tg"], ln["tg"]) if ln.get("tg") else "(준비 중 - 계정은 보낼 때 고름)",
+                        "stage": "올리는 중" if ln.get("stage") == "upload" else "준비 중",
+                        "title": cur.get("title", ""), "phase": cur.get("phase", ""),
                         "percent": round(done * 100 / total, 1) if total else None, "elapsed_min": round((cur.get("elapsed") or 0) / 60, 1),
                         "channel": chan(cur.get("rule")), "subs": cur.get("subs") or ""})
     queue = [q for q in st.get("queue") or [] if not q.get("running")]
