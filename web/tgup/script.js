@@ -418,16 +418,21 @@
             const chSel = h('select', { class: 'select' }, r.channel ? opt(r.channel, r.channel_title || r.channel, true) : opt('', '채널 고르기', true));
             // 올릴 텔레그램 계정 (로그인한 계정들 - 규칙의 계정이 지금 로그인 안 돼 있어도 그대로 보여 준다)
             const accIds = opts.telegram.map((t) => t.id);
-            const accSel = h('select', { class: 'select' }, ...opts.telegram.map((t) => opt(t.id, t.name, (r.tg || 'tg') === t.id)),
+            const accSel = h('select', { class: 'select' }, opt('auto', '텔레그램 (자동 - 놀고 있는 계정)', !!r.tg_auto),
+                ...opts.telegram.map((t) => opt(t.id, t.name, !r.tg_auto && (r.tg || 'tg') === t.id)),
                 ...(r.tg && !accIds.includes(r.tg) ? [opt(r.tg, `${r.tg} (로그인 안 됨)`, true)] : []));
             const burnIn = h('input', { type: 'checkbox', checked: r.burn_subs !== false });
             const minIn = h('input', { class: 'input mirror-days', type: 'number', min: '0', max: '525600', step: '10',
                 value: String(r.wait_min ?? (r.wait_hours !== undefined ? r.wait_hours * 60 : 720)) });
             // 같이 올릴 다른 계정 (놀고 있는 계정이 가져가고, 한 계정에 문제가 생기면 다른 계정이 이어 올림)
             const altBox = h('div', { class: 'toolbar mirror-alt' });
+            const altField = field('같이 올릴 다른 계정', altBox, '고른 계정도 이 채널에 글을 쓸 수 있어야 합니다. 놀고 있는 계정이 보낼 차례에 가져가고, '
+                + '한 계정에 문제(로그아웃·세션 만료·채널 권한·요청 제한·연결 끊김)가 생기면 다른 계정이 이어 올립니다. (계정을 "자동"으로 고르면 모든 계정)');
             const altChecks = {};
+            const baseAcc = () => (accSel.value === 'auto' ? ((opts.telegram.find((t) => t.id === r.tg) || opts.telegram[0] || {}).id || 'tg') : accSel.value || r.tg || 'tg');
             const fillAlt = () => {
-                const main = accSel.value || r.tg || 'tg';
+                altField.classList.toggle('hidden', accSel.value === 'auto');   // 자동이면 모든 계정이라 따로 고를 것 없음
+                const main = baseAcc();
                 const keep = new Set(Object.entries(altChecks).filter(([, c]) => c.checked).map(([k]) => k));
                 if (!Object.keys(altChecks).length) (r.tg_alt || []).forEach((a) => keep.add(a));
                 clear(altBox);
@@ -446,7 +451,7 @@
             const fillChannels = async () => {
                 const keep = chSel.value;
                 try {
-                    const list = await loadChannels(accSel.value || 'tg');
+                    const list = await loadChannels(baseAcc());
                     clear(chSel).append(opt('', '채널 고르기', !keep),
                         ...list.map((c) => opt(String(c.id), `${c.title}${c.kind === 'group' ? ' (그룹)' : ''}`, String(c.id) === keep, c.title)));
                 } catch (e) { toast(`텔레그램 채널 목록을 못 받았습니다: ${e.message}`, 'error'); }
@@ -526,8 +531,7 @@
                 h('div', { class: 'toolbar' }, h('label', { class: 'check' }, enabledIn, ' 켜기'), kindSel),
                 h('div', { class: 'row-2 mirror-pick' }, plexField, folderField, field('올릴 텔레그램 계정 · 채널', h('div', { class: 'toolbar' }, opts.telegram.length > 1 || (r.tg && r.tg !== 'tg') ? accSel : null, chSel))),
                 musicNote, ytNote, existRow, heightRow,
-                field('같이 올릴 다른 계정', altBox, '고른 계정도 이 채널에 글을 쓸 수 있어야 합니다. 놀고 있는 계정이 진행 목록 앞에서부터 가져가고, '
-                    + '한 계정에 문제(로그아웃·세션 만료·채널 권한·요청 제한·연결 끊김)가 생기면 다른 계정이 이어 올립니다.'),
+                altField,
                 modeRow, capRow,
                 h('div', { class: 'toolbar' }, test, del));
             syncKind();
@@ -535,7 +539,7 @@
                 const [plex, section] = plexSel.value.split('|');
                 return { id: row.id, enabled: enabledIn.checked, kind: kindSel.value, folder: folderIn.value.trim(),
                     height: Number(heightSel.value), plex, section, section_title: ((plexSel.selectedOptions[0] || {}).dataset || {}).name || '',
-                    tg: accSel.value || r.tg || 'tg', channel: chSel.value, channel_title: ((chSel.selectedOptions[0] || {}).dataset || {}).name || '', caption: capIn.value,
+                    tg: baseAcc(), tg_auto: accSel.value === 'auto', channel: chSel.value, channel_title: ((chSel.selectedOptions[0] || {}).dataset || {}).name || '', caption: capIn.value,
                     wait_subs: modeWait.checked, wait_min: Math.max(0, Math.round(Number(minIn.value) || 0)),
                     burn_subs: kindSel.value === 'youtube' ? burnIn.checked : modeWait.checked && burnIn.checked,
                     tg_alt: Object.entries(altChecks).filter(([, c]) => c.checked).map(([k]) => k), upload_existing: existIn.checked };

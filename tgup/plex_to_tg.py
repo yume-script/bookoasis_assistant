@@ -238,6 +238,8 @@ def clean_settings(raw):
                 # 이 규칙을 같이 올릴 수 있는 다른 텔레그램 계정 (그 채널에 글을 쓸 수 있어야 함) - 놀고 있는 계정이 가져가고,
                 # 한 계정에 문제가 생기면 다른 계정이 이어 올린다
                 "tg_alt": [],
+                # 계정 자동: 넣어 둔 텔레그램 계정 모두 중 놀고 있는 계정이 보낸다 (tg는 채널 목록·준비용 기본 계정)
+                "tg_auto": bool(r.get("tg_auto")),
                 "burn_subs": bool(r.get("burn_subs", True)),
                 # 폴더 규칙 (rclone 드라이브 등): kind "folder", folder = 절대 경로 또는 rclone "원격:경로"
                 "kind": "folder" if r.get("kind") in ("folder", "music", "youtube") else "plex",
@@ -406,6 +408,15 @@ def drive_of(path):
 
 
 FLOOD_ERRORS = ("FloodWaitError", "FloodPremiumWaitError", "SlowModeWaitError")
+
+
+def _all_accounts():
+    """넣어 둔 텔레그램 계정 id들 (규칙의 계정이 '자동'일 때 - 놀고 있는 계정 아무나)"""
+    fn = getattr(telegram_src, "accounts", None)
+    try:
+        return [a["id"] for a in fn()] if fn else []
+    except Exception:  # noqa: BLE001
+        return []
 
 
 def account_problem(e):
@@ -853,7 +864,8 @@ class Mirror:
             return [""]
         if job.get("pin"):
             return [job["pin"]]
-        allx = [rule["tg"], *[a for a in rule.get("tg_alt") or [] if a != rule["tg"]]]
+        alt = _all_accounts() if rule.get("tg_auto") else rule.get("tg_alt") or []   # 자동: 넣어 둔 텔레그램 계정 모두
+        allx = [rule["tg"], *[a for a in alt if a != rule["tg"]]]
         avoid = set(job.get("avoid") or [])
         return [a for a in allx if a not in avoid] or allx
 
@@ -1600,7 +1612,8 @@ class Mirror:
     # "놀고 있는(쉬는 중·보내는 중이 아닌) 계정" + "그 채널로 보내는 중인 것이 없음"을 함께 만족할 때 그 계정·채널을 잡아 보낸다.
     def _worker_count(self, st):
         """작업 줄 수 = 동시 인코딩 수 + 올리는 계정 수 (계정마다 하나는 보내는 중, 나머지는 준비) - 2~8"""
-        accs = {a for r in st["rules"] if r["enabled"] for a in [r["tg"], *(r.get("tg_alt") or [])]}
+        accs = {a for r in st["rules"] if r["enabled"]
+                for a in [r["tg"], *(_all_accounts() if r.get("tg_auto") else r.get("tg_alt") or [])]}
         return max(2, min(8, st["encode_slots"] + len(accs)))
 
     async def run_queue(self, st):

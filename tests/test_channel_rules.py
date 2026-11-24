@@ -143,6 +143,18 @@ class ChannelRuleTest(unittest.TestCase):
         self.assertEqual(mir._uploading, {})
         self.assertEqual(mir._chan_routes, {})
 
+    def test_auto_account_uses_all_accounts(self):
+        """규칙의 계정이 '자동'이면 넣어 둔 계정 모두가 후보 (기본 계정 먼저), 문제 있던 계정(avoid)은 빼고"""
+        m = self.m
+        old = getattr(m.telegram_src, "accounts", None)
+        m.telegram_src.accounts = lambda: [{"id": "A"}, {"id": "B"}, {"id": "C"}]
+        self.addCleanup(setattr, m.telegram_src, "accounts", old)
+        rule = m.clean_settings({"rules": [{"id": "z", "kind": "folder", "folder": "/tmp", "tg": "B", "tg_auto": True, "channel": "-1"}]})["rules"][0]
+        self.assertTrue(rule["tg_auto"])
+        self.assertEqual(self.mir._accounts_for(rule, {}), ["B", "A", "C"])
+        self.assertEqual(self.mir._accounts_for(rule, {"avoid": ["B"]}), ["A", "C"])
+        self.assertEqual(self.mir._accounts_for({**rule, "tg_auto": False}, {}), ["B"])
+
     def test_flood_wait_rests_account_and_keeps_job(self):
         m = self.m
         rule = {"id": "x", "tg": "A", "tg_alt": [], "channel": "-100", "channel_title": "c", "kind": "folder"}
