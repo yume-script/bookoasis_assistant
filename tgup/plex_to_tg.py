@@ -413,8 +413,8 @@ FLOOD_ERRORS = ("FloodWaitError", "FloodPremiumWaitError", "SlowModeWaitError")
 
 
 def direct_upload(rule):
-    """[자막 없이 바로 올리기] 영상 규칙: 자막 판별·자막 입히기·인코딩(화질 줄이기·mp4 바꾸기) 없이 원본 그대로,
-    파일 크기만 보고 나눠서(텔레그램 한도) 바로 올린다. 자막 파일도 붙이지 않는다"""
+    """[자막 없이 바로 올리기] 영상 규칙: 자막 판별·자막 입히기를 하지 않고 자막 파일도 붙이지 않는다.
+    화질 줄이기·mp4(H.264/AAC)로 바꾸기는 다른 규칙과 같이 (텔레그램 앱에서 바로 재생되게), 크면 나눠서 올린다"""
     return bool(rule) and rule.get("media", "video") == "video" and not rule.get("wait_subs", True)
 
 
@@ -2413,8 +2413,8 @@ class Mirror:
             # 있으면 옆의 한국어 자막 파일을 입히지 않았다
             burn_name = None
             direct = direct_upload(rule)
-            if direct:   # 자막 없이 바로 올리기: 자막 파일도 붙이지 않고, 인코딩 없이 원본 그대로 (크기만 보고 나눔)
-                sub_files, embedded, scale = [], False, False
+            if direct:   # 자막 없이 바로 올리기: 자막 판별·입히기 없이, 자막 파일도 붙이지 않음 (화질 줄이기·mp4 바꾸기는 함)
+                sub_files, embedded = [], False
             if rule["burn_subs"] and not direct and (sub_files or inside) and transcode.ffmpeg_path():
                 if not has_korean_font():
                     burn_skip = "한글 글꼴이 없어 자막을 입히지 않고 파일로 올림 (sudo apt install fonts-nanum)"
@@ -2433,7 +2433,7 @@ class Mirror:
             # 텔레그램 앱에서 바로 재생되게 언제나 MP4(H.264 + AAC)로 - 이미 그런 파일이면 손대지 않는다 (plan None)
             out = os.path.join(tmp, f"{stem}.enc.mp4")
             plan, did_burn = None, False
-            if transcode.ffmpeg_path() and info and not direct:
+            if transcode.ffmpeg_path() and info:
                 plan, did_burn, why = await self._encode_burn(
                     local, lambda enc, b: folder_watch.encode_plan(info, ext, rule["height"], b, enc), out, duration, fields["name"], tmp, burn_name)
                 burn_skip = burn_skip or why
@@ -2469,7 +2469,7 @@ class Mirror:
         log.info("자동 올리기: %s -> %s", fields["name"], rule["channel_title"] or rule["channel"])
         self.subs_label = ("바로 올림" if direct else "화면에 입힘" if burned else f"파일 {sent_subs}개" if sent_subs
                            else "옮기지 못함" if soft_lost else "소프트 자막" if embedded else "없음")
-        notes = ["자막 없이 바로 올림 (원본 그대로, 인코딩 없음)"] if direct else []
+        notes = ["자막 없이 바로 올림"] if direct else []
         if copied:
             notes.append("서버로 복사 후 처리")
         if burned:
@@ -2590,7 +2590,7 @@ class Mirror:
             # 3) 화면에 입힐 자막: 한국어 먼저 (자막 파일 > 파일 안의 글자 자막 > 다른 언어)
             burn, burn_skip, inside = None, "", folder_watch.text_subs(info, sub_det)
             direct = direct_upload(rule)
-            if direct:   # 자막 없이 바로 올리기: 자막 파일도 붙이지 않고, 인코딩 없이 원본 그대로 (크기만 보고 나눔)
+            if direct:   # 자막 없이 바로 올리기: 자막 판별·입히기 없이, 자막 파일도 붙이지 않음 (화질 줄이기·mp4 바꾸기는 함)
                 sub_files = []
             self.subs_label = ("바로 올림" if direct else f"파일 {len(sub_files)}개" if sub_files else "소프트 자막" if inside else "없음")
             if rule["burn_subs"] and not direct and (sub_files or inside):
@@ -2600,7 +2600,7 @@ class Mirror:
                     burn = await self._burn_source(local, sub_files, inside, tmp, fields["name"])
             # 4) 인코딩 (필요할 때만)
             out = os.path.join(tmp, f"{stem}.mp4")
-            plan, did_burn, why = (None, False, "") if direct else await self._encode_burn(
+            plan, did_burn, why = await self._encode_burn(
                 local, lambda enc, b: folder_watch.encode_plan(info, ext, rule["height"], b, enc), out, duration, fields["name"], tmp, burn)
             burn_skip = burn_skip or why
             burn = burn if did_burn else None
@@ -2635,7 +2635,9 @@ class Mirror:
         poster = "" if extra_fields else await self._find_poster(rule, fields["name"], os.path.basename(key))
         self.subs_label = "바로 올림" if direct else "화면에 입힘" if burn else f"파일 {sent_subs}개" if sent_subs else "없음"
         if not plan:
-            notes = ["자막 없이 바로 올림 (원본 그대로, 인코딩 없음)" if direct else "그대로 올림 (바로 재생되는 mp4)"]
+            notes = ["그대로 올림 (바로 재생되는 mp4)"]
+        if direct:
+            notes.insert(0, "자막 없이 바로 올림")
         if copied:
             notes.insert(0, "서버로 복사 후 처리")
         if burn_skip:

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""[자막 없이 바로 올리기] 규칙: 자막 판별·자막 입히기·인코딩 없이 원본 그대로, 크기만 보고 나눠 바로 올림 - 진짜 ffmpeg로"""
+"""[자막 없이 바로 올리기] 규칙: 자막 판별·자막 입히기 없이(자막 파일도 안 붙임), 화질 줄이기·mp4 바꾸기는 함 - 진짜 ffmpeg로"""
 import asyncio
 import os
 import shutil
@@ -33,7 +33,7 @@ class DirectUploadTest(unittest.TestCase):
         srt = os.path.join(root, "s.srt")
         with open(srt, "w", encoding="utf-8") as f:
             f.write("1\n00:00:00,500 --> 00:00:01,500\n안녕하세요\n")
-        video = os.path.join(root, "Show.S01E01.mkv")   # mpeg4 영상 + 소프트 자막 (예전이면 H.264로 인코딩·자막 입힘)
+        video = os.path.join(root, "Show.S01E01.mkv")   # mpeg4 영상 + 소프트 자막 (예전엔 자막까지 입혀 인코딩)
         subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "testsrc=s=320x240:r=10:d=3", "-f", "lavfi", "-i", "sine=d=3",
                         "-i", srt, "-map", "0", "-map", "1", "-map", "2", "-c:v", "mpeg4", "-c:a", "mp3", "-c:s", "srt", video], check=True)
         shutil.copy(srt, os.path.join(root, "Show.S01E01.ko.srt"))   # 옆 자막 파일도 있음
@@ -69,9 +69,10 @@ class DirectUploadTest(unittest.TestCase):
             note = asyncio.run(run())
         finally:
             shutil.rmtree(root, ignore_errors=True)
-        self.assertEqual([n for n, _ in sent], ["Show.S01E01.mkv"])   # 원본 그대로 하나 (자막 파일 없음, mp4로 안 바꿈)
+        self.assertEqual([n for n, _ in sent], ["Show.S01E01.mp4"])   # mp4로 바꿔 하나만 (자막 파일 없음)
         self.assertIn("자막 없이 바로 올림", note)
-        self.assertNotIn("인코딩", note.replace("인코딩 없음", ""))
+        self.assertNotIn("자막 입힘", note)
+        self.assertIn("H.264", note)                                    # mpeg4 -> H.264 (mp4 바꾸기는 함)
 
 
 if __name__ == "__main__":
