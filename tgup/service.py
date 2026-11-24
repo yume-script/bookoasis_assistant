@@ -34,6 +34,20 @@ CALL_TIMEOUT = 120
 _ACC_FAIL = {}   # 계정 id -> {"at": 텔레그램에 닿지 않았던 때, "status": 그때 돌려준 상태}
 
 
+def new_loop():
+    """자동 올리기 이벤트 루프 - 리눅스·맥에 uvloop가 있으면 그것으로 (업로드·처리 오버헤드가 조금 줄어듦), 없거나 안 되면 기본.
+    .env의 TGUP_UVLOOP=false로 끌 수 있다"""
+    if os.name != "nt" and compat.config.env_bool("TGUP_UVLOOP", True):
+        try:
+            import uvloop
+            loop = uvloop.new_event_loop()
+            log.info("자동 올리기: uvloop 이벤트 루프를 씁니다.")
+            return loop
+        except Exception:  # noqa: BLE001 - 없거나 이 환경에서 안 되면 기본 루프
+            pass
+    return asyncio.new_event_loop()
+
+
 class _Runner:
     def __init__(self):
         self.loop = None
@@ -54,7 +68,7 @@ class _Runner:
             threading.Thread(target=lambda: (stop_event.wait(), self.stop()), name="tgup-stop", daemon=True).start()
 
     def _run(self):
-        self.loop = asyncio.new_event_loop()
+        self.loop = new_loop()
         asyncio.set_event_loop(self.loop)
         self.loop.run_until_complete(self._setup())
         self._ready.set()
