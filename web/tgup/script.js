@@ -511,14 +511,19 @@
                 h('span', { class: 'muted', text: '분 (0이면 자막이 생길 때까지 계속. 파일 안에 한국어 자막(소프트 자막)이 있으면 기다리지 않고 바로, 하드섭은 진행 상태에서 [지금 올리기])' }));
             const burnRow = h('label', { class: 'check', title: '다시 인코딩하느라 시간이 걸립니다.' }, burnIn, burnText);
             const waitBox = h('div', { class: 'mirror-subs-wait' }, waitRow, h('div', { class: 'mirror-wait' }, h('span', { class: 'muted', text: '인코딩:' }), burnRow));
+            const directNote = h('p', { class: 'field-hint', text: '자막 판별·자막 입히기·인코딩(화질 줄이기·mp4 바꾸기) 없이 원본 그대로, 파일 크기만 보고 텔레그램 한도에 맞춰 나눠서 바로 올립니다 (자막 파일도 붙이지 않음). mp4(H.264)가 아니면 텔레그램 앱에서 받은 뒤 재생될 수 있습니다.' });
             const modeRow = h('div', { class: 'mirror-subs' },
                 h('span', { class: 'field-label', text: '자막' }),
                 h('label', { class: 'check' }, modeNow, ' 자막 없이 바로 올리기', h('span', { class: 'muted', text: ' (자막이 필요 없는 채널 - 기다리지 않고, 자막을 입히지 않음)' })),
+                directNote,
                 h('label', { class: 'check' }, modeWait, ' 자막 기다리기'),
                 waitBox);
             const syncMode = () => {
                 const yt = kindSel.value === 'youtube';
                 waitBox.classList.toggle('hidden', !modeWait.checked);
+                // 자막 없이 바로 올리기: 인코딩 없이 원본 그대로 (크기만 보고 나눔) - 화질 칸은 쓰지 않으니 숨김
+                heightRow.classList.toggle('hidden', kindSel.value === 'music' || (!yt && modeNow.checked));
+                directNote.classList.toggle('hidden', yt || kindSel.value === 'music' || !modeNow.checked);
                 if (yt) modeRow.after(burnRow); else waitBox.lastChild.append(burnRow);   // 유튜브는 자막 입히기만 따로
                 burnRow.classList.toggle('hidden', kindSel.value === 'music');
             };

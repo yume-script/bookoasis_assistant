@@ -260,6 +260,8 @@ def clean_settings(raw):
             rule["media"], rule["upload_existing"] = "video", False
         if rule["media"] == "music":   # (자막 기다리기·입히기는 영상만)
             rule["wait_subs"], rule["burn_subs"] = False, False
+        if rule["media"] == "video" and not rule["wait_subs"]:   # 자막 없이 바로 올리기: 자막을 입히지 않는다 (예전에 저장한 규칙도)
+            rule["burn_subs"] = False
         if rule["media"] == "youtube":   # 폴더는 이 서버 안 (받은 파일을 잠깐 두는 곳), 자막은 기다리지 않음
             rule["folder"] = youtube.rule_folder(rule["id"])
             rule["wait_subs"], rule["upload_existing"] = False, False
@@ -408,6 +410,12 @@ def drive_of(path):
 
 
 FLOOD_ERRORS = ("FloodWaitError", "FloodPremiumWaitError", "SlowModeWaitError")
+
+
+def direct_upload(rule):
+    """[자막 없이 바로 올리기] 영상 규칙: 자막 판별·자막 입히기·인코딩(화질 줄이기·mp4 바꾸기) 없이 원본 그대로,
+    파일 크기만 보고 나눠서(텔레그램 한도) 바로 올린다. 자막 파일도 붙이지 않는다"""
+    return bool(rule) and rule.get("media", "video") == "video" and not rule.get("wait_subs", True)
 
 
 def _all_accounts():
@@ -2371,7 +2379,7 @@ class Mirror:
                 copied = True
             # 외부 자막 파일 (내장 자막은 영상 안에 그대로 들어 있다)
             sub_files, seen, sub_fail = [], set(), 0
-            for x in subs:
+            for x in ([] if direct_upload(rule) else subs):   # (자막 없이 바로 올리기면 Plex 자막도 받지 않음)
                 sext = SUB_EXT.get(str(x.get("codec") or x.get("format") or "").lower())
                 if x.get("key") and sext:
                     path = os.path.join(tmp, f"sub{len(sub_files)}.{sext}")
@@ -2404,7 +2412,10 @@ class Mirror:
             # 자막 파일이나 글자 자막이 있으면 화면에 입힌다 (한국어 먼저). 전에는 영상 안에 아무 자막(영어·그림 자막 포함)이
             # 있으면 옆의 한국어 자막 파일을 입히지 않았다
             burn_name = None
-            if rule["burn_subs"] and (sub_files or inside) and transcode.ffmpeg_path():
+            direct = direct_upload(rule)
+            if direct:   # 자막 없이 바로 올리기: 자막 파일도 붙이지 않고, 인코딩 없이 원본 그대로 (크기만 보고 나눔)
+                sub_files, embedded, scale = [], False, False
+            if rule["burn_subs"] and not direct and (sub_files or inside) and transcode.ffmpeg_path():
                 if not has_korean_font():
                     burn_skip = "한글 글꼴이 없어 자막을 입히지 않고 파일로 올림 (sudo apt install fonts-nanum)"
                 else:
@@ -2422,7 +2433,7 @@ class Mirror:
             # 텔레그램 앱에서 바로 재생되게 언제나 MP4(H.264 + AAC)로 - 이미 그런 파일이면 손대지 않는다 (plan None)
             out = os.path.join(tmp, f"{stem}.enc.mp4")
             plan, did_burn = None, False
-            if transcode.ffmpeg_path() and info:
+            if transcode.ffmpeg_path() and info and not direct:
                 plan, did_burn, why = await self._encode_burn(
                     local, lambda enc, b: folder_watch.encode_plan(info, ext, rule["height"], b, enc), out, duration, fields["name"], tmp, burn_name)
                 burn_skip = burn_skip or why
@@ -2456,9 +2467,9 @@ class Mirror:
             shutil.rmtree(tmp, ignore_errors=True)
             memtrim.release()   # 큰 작업 뒤 쓰고 난 메모리를 OS에 (스왑 줄이기)
         log.info("자동 올리기: %s -> %s", fields["name"], rule["channel_title"] or rule["channel"])
-        self.subs_label = ("화면에 입힘" if burned else f"파일 {sent_subs}개" if sent_subs
+        self.subs_label = ("바로 올림" if direct else "화면에 입힘" if burned else f"파일 {sent_subs}개" if sent_subs
                            else "옮기지 못함" if soft_lost else "소프트 자막" if embedded else "없음")
-        notes = []
+        notes = ["자막 없이 바로 올림 (원본 그대로, 인코딩 없음)"] if direct else []
         if copied:
             notes.append("서버로 복사 후 처리")
         if burned:
@@ -2482,7 +2493,7 @@ class Mirror:
             notes.append("내장 자막")
         if sub_fail:
             notes.append(f"Plex 자막 {sub_fail}개를 받지 못함")
-        if not subs and not side and not soft:
+        if not subs and not side and not soft and not direct:
             notes.append("자막 없음")
         if mount_note:
             notes.insert(0, mount_note)
@@ -2578,15 +2589,18 @@ class Mirror:
             duration = folder_watch.duration(info)
             # 3) 화면에 입힐 자막: 한국어 먼저 (자막 파일 > 파일 안의 글자 자막 > 다른 언어)
             burn, burn_skip, inside = None, "", folder_watch.text_subs(info, sub_det)
-            self.subs_label = f"파일 {len(sub_files)}개" if sub_files else "소프트 자막" if inside else "없음"   # (진행 상태 화면, 올리는 동안)
-            if rule["burn_subs"] and (sub_files or inside):
+            direct = direct_upload(rule)
+            if direct:   # 자막 없이 바로 올리기: 자막 파일도 붙이지 않고, 인코딩 없이 원본 그대로 (크기만 보고 나눔)
+                sub_files = []
+            self.subs_label = ("바로 올림" if direct else f"파일 {len(sub_files)}개" if sub_files else "소프트 자막" if inside else "없음")
+            if rule["burn_subs"] and not direct and (sub_files or inside):
                 if not has_korean_font():
                     burn_skip = "한글 글꼴이 없어 자막을 입히지 않고 파일로 올림 (sudo apt install fonts-nanum)"
                 else:
                     burn = await self._burn_source(local, sub_files, inside, tmp, fields["name"])
             # 4) 인코딩 (필요할 때만)
             out = os.path.join(tmp, f"{stem}.mp4")
-            plan, did_burn, why = await self._encode_burn(
+            plan, did_burn, why = (None, False, "") if direct else await self._encode_burn(
                 local, lambda enc, b: folder_watch.encode_plan(info, ext, rule["height"], b, enc), out, duration, fields["name"], tmp, burn)
             burn_skip = burn_skip or why
             burn = burn if did_burn else None
@@ -2619,9 +2633,9 @@ class Mirror:
         log.info("자동 올리기(폴더): %s -> %s", key, rule["channel_title"] or rule["channel"])
         # Plex 정보가 없으니 TMDB에서 작품을 찾아 둔다 (목록 카드의 포스터) - 같은 드라마는 처음 찾은 것을 그대로
         poster = "" if extra_fields else await self._find_poster(rule, fields["name"], os.path.basename(key))
-        self.subs_label = "화면에 입힘" if burn else f"파일 {sent_subs}개" if sent_subs else "없음"
+        self.subs_label = "바로 올림" if direct else "화면에 입힘" if burn else f"파일 {sent_subs}개" if sent_subs else "없음"
         if not plan:
-            notes = ["그대로 올림 (바로 재생되는 mp4)"]
+            notes = ["자막 없이 바로 올림 (원본 그대로, 인코딩 없음)" if direct else "그대로 올림 (바로 재생되는 mp4)"]
         if copied:
             notes.insert(0, "서버로 복사 후 처리")
         if burn_skip:
@@ -2630,7 +2644,7 @@ class Mirror:
             notes.append(f"{len(msgs)}개로 나눠 올림 ({max_gb}GB 한도)")
         if sent_subs:
             notes.append(f"자막 파일 {sent_subs}개 첨부")
-        if not side and not any_inside:
+        if not side and not any_inside and not direct:
             notes.append(f"자막 없음 ({soft_kind['why']})" if soft_kind["why"] else "자막 없음")
         if poster:
             notes.append(poster)
