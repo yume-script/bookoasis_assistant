@@ -104,6 +104,7 @@ STREAMABLE = {".mp4", ".m4v", ".mov"}   # 텔레그램 앱에서 받기 전에 �
 SUB_EXT = {"srt": "srt", "subrip": "srt", "ass": "ass", "ssa": "ass", "smi": "smi", "sami": "smi", "vtt": "vtt", "webvtt": "vtt"}
 MAX_PARTS = 10
 UPLOAD_PARALLEL = (0, 1, 2, 4, 8)   # 동시 조각 수 (0 = 자동: 프리미엄 4, 일반 2 - 텔레그램이 속도를 늦추는 중이면 1)
+ENCODE_BACKLOG = 4                  # 인코딩 차례를 기다리는 줄은 작업 줄 수에서 빼고 이만큼까지 더 띄운다 (그동안 다른 항목을 처리하게)
 UPLOAD_GAP_SEC = 3                  # 한 계정이 파일을 연달아 올릴 때 사이에 쉬는 초 (요청 제한에 덜 걸리게)
 PART_LIMIT = 1000 * 1024 * 1024   # 텔레그램 한도 1GB 단위 (2GB = 2000MiB = 4000조각 x 512KB) - max_gb를 곱해 쓴다
 
@@ -730,6 +731,7 @@ class Lane:
         self.flood_until = 0      # 텔레그램 요청 제한으로 이때까지 쉼
         self.channel = ""         # 지금 항목을 올릴 채널 (채널별 보내기 차례 - 인코딩 중에는 잡지 않는다)
         self.rule = None          # 지금 항목의 규칙 (2단계에서 보낼 계정을 고를 때)
+        self.enc_wait = False     # 인코딩 차례를 기다리는 중 (작업 줄 수에서 빼고 다른 줄이 다음 항목을 처리)
         self.started = 0          # 지금 항목을 시작한 때
         self.times = {}           # 지금 항목의 단계별 걸린 초 {받기, 인코딩, 나누기, 올리기, 대기, 준비}
         self.phase_kind = ""      # 지금 단계 칸과 그 시작 시각
@@ -1633,13 +1635,16 @@ class Mirror:
                 if not in_hours(st["hours"]):   # 정한 시간대가 끝나면 남은 것은 다음 시간대에
                     self.off_hours = st["hours"]
                 if in_hours(st["hours"]) and self._takeable(rules):
-                    for n in range(self._worker_count(st)):
+                    # 일하는 줄(인코딩 차례를 기다리는 줄은 빼고)이 작업 줄 수보다 적으면 더 띄운다 - 기다리는 줄은 ENCODE_BACKLOG개까지 더
+                    base = self._worker_count(st)
+                    for n in range(base + ENCODE_BACKLOG):
+                        if self._active_workers() >= base or not self._takeable(rules):
+                            break
                         wid = f"w{n + 1}"
                         t = self._lane_tasks.get(wid)
                         if t is None or t.done():
                             self._lane_tasks[wid] = asyncio.ensure_future(self._run_lane(wid, st))
-                            if not self._takeable(rules, skip=1):
-                                break
+                            await asyncio.sleep(0)   # (그 줄이 항목을 가져가게)
                 running = [t for t in self._lane_tasks.values() if not t.done()]
                 if not running:
                     if self._takeable(rules) or not self.queue or not in_hours(st["hours"]):
@@ -1667,6 +1672,16 @@ class Mirror:
                 if not t.done():
                     t.cancel()
             raise
+
+    def _active_workers(self, me=None):
+        """돌고 있는 작업 줄 중 인코딩 차례를 기다리지 않는 줄 수 (항목을 잡았거나 막 띄운 줄)"""
+        n = 0
+        for wid, t in self._lane_tasks.items():
+            ln = self.lanes.get(wid)
+            if t.done() or ln is me or (ln is not None and ln.enc_wait):
+                continue
+            n += 1
+        return n
 
     def _eligible(self, rule, job):
         """그 항목을 지금 준비해도 되는지: 올릴 수 있는 계정 중 쉬지 않는 계정이 하나라도 있어야 (모두 쉬면 줄을 잡고 기다리지 않게)"""
@@ -1788,6 +1803,8 @@ class Mirror:
         rules = {r["id"]: r for r in st["rules"]}
         try:
             while in_hours(st["hours"]):
+                if self._active_workers(lane) >= self._worker_count(st):   # (기다리던 줄들이 다시 일하면 넘치는 줄은 그만)
+                    break
                 job = self._next_job(rules, lane)
                 if job is None:
                     break
@@ -2047,13 +2064,20 @@ class Mirror:
 
     async def _encode_slot(self):
         """인코딩 차례 - 동시에 encode_slots개까지 (계정 줄이 여럿이어도 CPU를 다 쓰지 않게)"""
-        while self._encoding >= load_settings()["encode_slots"]:
-            self._set_phase(f"인코딩 차례 기다리는 중 (동시에 {load_settings()['encode_slots']}개까지 - 앞 인코딩이 끝나면)")
-            self._encode_free.clear()
-            try:
-                await asyncio.wait_for(self._encode_free.wait(), 5)
-            except asyncio.TimeoutError:
-                pass
+        lane = _LANE.get() or self._main
+        try:
+            while self._encoding >= load_settings()["encode_slots"]:
+                if not lane.enc_wait:   # 이 줄은 작업 줄 수에서 빠진다 - 그동안 다른 줄이 다음 항목을 처리하게 깨운다
+                    lane.enc_wait = True
+                    self._queue_event.set()
+                self._set_phase(f"인코딩 차례 기다리는 중 (동시에 {load_settings()['encode_slots']}개까지 - 앞 인코딩이 끝나면)")
+                self._encode_free.clear()
+                try:
+                    await asyncio.wait_for(self._encode_free.wait(), 5)
+                except asyncio.TimeoutError:
+                    pass
+        finally:
+            lane.enc_wait = False
         self._encoding += 1
 
     def _encode_done(self):

@@ -718,8 +718,10 @@
             const pct = c.total ? Math.min(100, (c.done / c.total) * 100) : 0;
             // 1단계(준비: 받기·자막·인코딩·나누기 - 계정과 상관없이) / 2단계(그 계정으로 텔레그램에 보내는 중)
             const prep = l.stage === 'prepare';
-            const waitSlot = /차례 기다리는/.test(c.phase || '');
-            const r = row(c.title, chip(waitSlot ? 'wait' : 'run', prep ? (waitSlot ? '올릴 차례 기다림' : '준비 중') : '올리는 중'), c.subs ? subsTag(c.subs) : '확인 중',
+            const waitSlot = /계정·채널 차례/.test(c.phase || '');   // 다 준비됨 - 놀고 있는 계정·빈 채널을 기다림
+            const encWait = /인코딩 차례/.test(c.phase || '');       // 받기는 끝남 - 인코딩 차례를 기다림 (그동안 다른 줄이 다음 항목을 처리)
+            const r = row(c.title, chip(waitSlot || encWait ? 'wait' : 'run',
+                prep ? (waitSlot ? '올릴 차례 기다림' : encWait ? '인코딩 대기' : '준비 중') : '올리는 중'), c.subs ? subsTag(c.subs) : '확인 중',
                 [many && !prep ? `[${accName(l.tg)}]` : '', `${c.phase}${c.speed && /인코딩/.test(c.phase) ? ` · ${c.speed}` : ''}${c.total && /올리는|받는|복사/.test(c.phase) ? ` · ${fmtB(c.done)} / ${fmtB(c.total)}` : ''}`,
                     c.elapsed ? `시작 ${when(c.started)} · ${fmtDur(c.elapsed)} 지남` : '', fmtTimes(c.times)].filter(Boolean).join(' · '),
                 h('div', { class: 'cache-bar mirror-bar' }, h('div', { style: { width: `${pct}%` } })));
