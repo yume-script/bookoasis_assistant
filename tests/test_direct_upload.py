@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""[자막 없이 바로 올리기] 규칙: 자막 판별·자막 입히기 없이(자막 파일도 안 붙임), 화질 줄이기·mp4 바꾸기는 함 - 진짜 ffmpeg로"""
+"""[자막 없이 바로 올리기] 규칙: 자막을 기다리지 않고 자막 판별도 안 하지만, 있는 자막은 입히고 mp4로 - 진짜 ffmpeg로"""
 import asyncio
 import os
 import shutil
@@ -54,8 +54,8 @@ class DirectUploadTest(unittest.TestCase):
             async def peer(self, ch):
                 return ch
         rule = m.clean_settings({"rules": [{"id": "d1", "kind": "folder", "folder": root, "tg": "tg", "channel": "-100",
-                                            "wait_subs": False, "burn_subs": True, "height": 720}]})["rules"][0]
-        self.assertFalse(rule["burn_subs"])   # 예전에 자막 입히기가 켜진 채 저장된 규칙도 끈다
+                                            "wait_subs": False, "burn_subs": False, "height": 720}]})["rules"][0]
+        self.assertTrue(rule["burn_subs"])   # 바로 올리기는 있는 자막을 입힌다
 
         async def run():
             mir = m.Mirror(None, None, lambda *a: Tg(), None)
@@ -69,10 +69,9 @@ class DirectUploadTest(unittest.TestCase):
             note = asyncio.run(run())
         finally:
             shutil.rmtree(root, ignore_errors=True)
-        self.assertEqual([n for n, _ in sent], ["Show.S01E01.mp4"])   # mp4로 바꿔 하나만 (자막 파일 없음)
-        self.assertIn("자막 없이 바로 올림", note)
-        self.assertNotIn("자막 입힘", note)
-        self.assertIn("H.264", note)                                    # mpeg4 -> H.264 (mp4 바꾸기는 함)
+        self.assertEqual([n for n, _ in sent], ["Show.S01E01.mp4"])   # 자막을 입혀 mp4 하나 (자막 파일은 따로 안 올림)
+        self.assertIn("자막 기다리지 않고 바로 올림", note)
+        self.assertIn("자막 입힘", note)
 
 
 if __name__ == "__main__":

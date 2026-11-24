@@ -511,10 +511,10 @@
                 h('span', { class: 'muted', text: '분 (0이면 자막이 생길 때까지 계속. 파일 안에 한국어 자막(소프트 자막)이 있으면 기다리지 않고 바로, 하드섭은 진행 상태에서 [지금 올리기])' }));
             const burnRow = h('label', { class: 'check', title: '다시 인코딩하느라 시간이 걸립니다.' }, burnIn, burnText);
             const waitBox = h('div', { class: 'mirror-subs-wait' }, waitRow, h('div', { class: 'mirror-wait' }, h('span', { class: 'muted', text: '인코딩:' }), burnRow));
-            const directNote = h('p', { class: 'field-hint', text: '자막 판별·자막 입히기를 하지 않고 자막 파일도 붙이지 않습니다. 화질 줄이기와 mp4(H.264/AAC) 바꾸기는 그대로 하고, 크면 텔레그램 한도에 맞춰 나눠 올립니다.' });
+            const directNote = h('p', { class: 'field-hint', text: '자막을 기다리지 않고 자막 판별(글자 읽기·LLM)도 하지 않습니다. 그때 있는 자막(옆 자막 파일 > 파일 안의 자막)은 화면에 입히고, 화질 줄이기·mp4(H.264/AAC) 바꾸기·나누기는 그대로 합니다.' });
             const modeRow = h('div', { class: 'mirror-subs' },
                 h('span', { class: 'field-label', text: '자막' }),
-                h('label', { class: 'check' }, modeNow, ' 자막 없이 바로 올리기', h('span', { class: 'muted', text: ' (자막이 필요 없는 채널 - 기다리지 않고, 자막을 입히지 않음)' })),
+                h('label', { class: 'check' }, modeNow, ' 자막 없이 바로 올리기', h('span', { class: 'muted', text: ' (자막을 기다리지 않음 - 있는 자막은 입힘)' })),
                 directNote,
                 h('label', { class: 'check' }, modeWait, ' 자막 기다리기'),
                 waitBox);
@@ -544,7 +544,7 @@
                     height: Number(heightSel.value), plex, section, section_title: ((plexSel.selectedOptions[0] || {}).dataset || {}).name || '',
                     tg: baseAcc(), tg_auto: accSel.value === 'auto', channel: chSel.value, channel_title: ((chSel.selectedOptions[0] || {}).dataset || {}).name || '', caption: capIn.value,
                     wait_subs: modeWait.checked, wait_min: Math.max(0, Math.round(Number(minIn.value) || 0)),
-                    burn_subs: kindSel.value === 'youtube' ? burnIn.checked : modeWait.checked && burnIn.checked,
+                    burn_subs: kindSel.value === 'youtube' ? burnIn.checked : modeNow.checked || burnIn.checked,
                     tg_alt: Object.entries(altChecks).filter(([, c]) => c.checked).map(([k]) => k), upload_existing: existIn.checked };
             } };
             rows.push(row);
