@@ -63,6 +63,8 @@ textarea.input { resize: vertical; }
 .mirror-chip.run { background: rgba(var(--accent-rgb), 0.2); color: var(--accent); }
 .mirror-chip.queue { background: var(--bg-elev2); color: var(--text-soft); }
 .mirror-chip.wait { background: rgba(120, 140, 255, 0.18); color: #9fb0ff; }
+.mirror-chip.enc { background: rgba(190, 110, 240, 0.2); color: #d39bff; }
+.mirror-chip.up { background: rgba(60, 170, 230, 0.2); color: #6cc4f5; }
 .mirror-chip.ok { background: rgba(60, 190, 110, 0.18); color: #5fd38d; }
 .mirror-chip.fail { background: rgba(240, 80, 70, 0.18); color: #ff8a80; }
 .mirror-chip.skip { background: rgba(200, 160, 60, 0.18); color: #e0b85a; }
