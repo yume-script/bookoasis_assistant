@@ -298,6 +298,10 @@ def drop_shot(rule_id, key):
             pass
 
 
+class SkipEncode(Exception):
+    """[인코딩 없이 올리기]를 눌렀다 - 돌던(기다리던) 인코딩을 멈추고 영상은 그대로 복사해서 (소리 AAC·mp4로만)"""
+
+
 class Waiting(Exception):
     """자막이 아직 없음 - 나중에 다시 (str: 기다리는 까닭 - "영어 자막만" 등, 진행 상태의 자막 칸)"""
 _lock = threading.Lock()
@@ -824,6 +828,7 @@ class Lane:
         self.channel = ""         # 지금 항목을 올릴 채널 (채널별 보내기 차례 - 인코딩 중에는 잡지 않는다)
         self.rule = None          # 지금 항목의 규칙 (2단계에서 보낼 계정을 고를 때)
         self.enc_wait = False     # 인코딩 차례를 기다리는 중 (작업 줄 수에서 빼고 다른 줄이 다음 항목을 처리)
+        self.copy_run = False     # 영상을 그대로 복사하는 중 ([인코딩 없이 올리기])
         self.started = 0          # 지금 항목을 시작한 때
         self.times = {}           # 지금 항목의 단계별 걸린 초 {받기, 인코딩, 나누기, 올리기, 대기, 준비}
         self.phase_kind = ""      # 지금 단계 칸과 그 시작 시각
@@ -887,6 +892,7 @@ class Mirror:
     _cur_tmdb = _lane_attr("cur_tmdb")
     _cancel_req = _lane_attr("cancel_req")
     _resume = _lane_attr("resume")
+    _copy_run = _lane_attr("copy_run")
 
     def __init__(self, plex_json, plex_src, tg_for, http, playing=None):
         """plex_json(src, path, params) -> dict, plex_src(id) -> (cfg, src), tg_for(id) -> TelegramSource, http() -> ClientSession,
@@ -990,7 +996,7 @@ class Mirror:
             if ln.current:
                 cur = {**ln.current, **(ln.current_job or {}), "started": int(ln.started), "elapsed": int(now - ln.started) if ln.started else 0,
                        "phase_since": int(ln.phase_at), "times": {k: int(v) for k, v in ln.times.items() if v >= 1},
-                       "subs": ln.subs_label}
+                       "subs": ln.subs_label, "no_encode": bool((ln.job or {}).get("no_encode"))}
             up = self._uploading.get(ln.tg) is ln
             lanes.append({"tg": ln.tg if up else "", "worker": wid, "stage": "upload" if up else "prepare", "current": cur,
                           "flood_until": 0})
@@ -1007,6 +1013,7 @@ class Mirror:
                     accounts.setdefault(a, {"queued": 0})["queued"] += 1
             queue.append({"title": j["title"], "rule": j["rule"], "key": j["key"], "tg": running or cands[0], "tgs": cands,
                           "pin": j.get("pin", ""), "avoid": j.get("avoid") or [], "running": bool(running), "pos": n,
+                          "no_encode": bool(j.get("no_encode")),
                           "added": j.get("added", 0)})
         for tg, a in (st.get("accounts") or {}).items():
             accounts.setdefault(tg, {"queued": 0}).update(ok=a.get("ok", 0), fail=a.get("fail", 0))
@@ -1410,6 +1417,17 @@ class Mirror:
         self._queue_changed()
         self.wake()
         return w.get("title", key)
+
+    def no_encode_item(self, rule_id, key):
+        """[인코딩 없이 올리기]: 인코딩 중이면 멈추고, 영상은 그대로 복사해(줄이기·자막 입히기 없이) 소리만 AAC·mp4로 담아,
+        크면 나눠서 올린다. 아직 차례가 안 온 항목도 그렇게 표시해 둔다"""
+        job = next((j for j in self.queue if j["rule"] == rule_id and j["key"] == key), None)
+        if job is None:
+            raise ValueError("진행 목록에 없는 항목입니다.")
+        job["no_encode"] = True
+        self._encode_free.set()   # (인코딩 차례를 기다리던 줄이 바로 알아채게)
+        self._queue_changed()
+        return job.get("title", key)
 
     def drop_item(self, rule_id, key):
         """자막 기다리는 항목을 올리지 않고 뺀다 (다시 들어오지 않게)"""
@@ -2192,6 +2210,8 @@ class Mirror:
         self._enc_waiting.add(lane)
         try:
             while True:
+                if (lane.job or {}).get("no_encode") and not self._copy_run:
+                    raise SkipEncode()
                 free = load_settings()["encode_slots"] - self._encoding
                 if free > 0:
                     me = self._job_prio(lane.job)
@@ -3288,11 +3308,13 @@ class Mirror:
                     sub = hashlib.sha1(f.read()).hexdigest()[:12]
             except OSError:
                 sub = str(burn_name)
-        return enc_cache_key(job["rule"], job["key"], f"{size}|{sub}|{rule.get('height')}")
+        nb = "|copy" if (self._job or {}).get("no_encode") else ""
+        return enc_cache_key(job["rule"], job["key"], f"{size}|{sub}|{rule.get('height')}{nb}")
 
     async def _encode_burn_run(self, local, make, out, duration, title, tmp, burn_name):
         try:
-            return await self._encode_plan(local, lambda enc: make(enc, burn_name), out, duration, title, tmp), bool(burn_name), ""
+            plan = await self._encode_plan(local, lambda enc: make(enc, burn_name), out, duration, title, tmp)
+            return plan, bool(burn_name) and plan is not None and plan.encoder != "copy", ""
         except RuntimeError as e:
             if not burn_name:
                 raise
@@ -3329,23 +3351,41 @@ class Mirror:
         st = load_settings()
         enc = await folder_watch.pick_encoder(st["encoder"], st["cpu_preset"])
         enc = {**(enc or {}), "hw_decode": st.get("hw_decode", True)}   # (그래픽 카드로 원본 풀기 - 설정에서 끌 수 있음)
+        copy_enc = {"name": "cpu", "video_copy": True}
+        if (self._job or {}).get("no_encode"):   # [인코딩 없이 올리기]: 영상은 복사, 소리 AAC·mp4로만
+            enc = copy_enc
         plan = make(enc)
         if plan is None:
             return None
-        for attempt in (1, 2):
+        for attempt in (1, 2, 3):
             label = ", ".join(plan[1]) + (f" · {folder_watch.ENCODER_NAMES[plan.encoder]}" if plan.encoder in folder_watch.ENCODER_NAMES else "")
             try:
-                await self._encode(src_path, plan[0], out, duration, title, f"인코딩 중 ({label})", cwd, pre=plan.pre)
+                await self._encode(src_path, plan[0], out, duration, title,
+                                   "영상 그대로 담는 중" if plan.encoder == "copy" else f"인코딩 중 ({label})", cwd, pre=plan.pre,
+                                   slot=plan.encoder != "copy")
                 return plan
+            except SkipEncode:   # 인코딩 중(또는 차례 기다리는 중)에 [인코딩 없이 올리기] - 영상은 그대로 복사해서 다시
+                log.info("자동 올리기: %s - 인코딩 없이 올립니다 (영상 그대로, 소리 AAC·mp4로만)", title)
+                plan = make(copy_enc)
+                if plan is None:
+                    return None
+                continue
             except RuntimeError as e:
-                if attempt == 2 or plan.encoder in ("cpu", "copy"):
+                if attempt >= 2 or plan.encoder in ("cpu", "copy"):
                     raise
                 log.warning("자동 올리기: %s 인코더 실패 - CPU로 다시 합니다: %s", plan.encoder, e)
                 folder_watch._HW_OK[plan.encoder] = False
                 plan = make({"name": "cpu", "preset": st["cpu_preset"]})
 
-    async def _encode(self, src_path, args, out, duration, title, phase, cwd, pre=()):
-        """ffmpeg (pre) -i src args out (진행률·속도는 ffmpeg -progress로 self.current에). 동시에 encode_slots개까지"""
+    async def _encode(self, src_path, args, out, duration, title, phase, cwd, pre=(), slot=True):
+        """ffmpeg (pre) -i src args out (진행률·속도는 ffmpeg -progress로 self.current에). 동시에 encode_slots개까지.
+        slot=False: 영상을 그대로 복사만 하는 것 (가벼워서 인코딩 차례를 기다리지 않는다)"""
+        if not slot:
+            self._copy_run = True
+            try:
+                return await self._encode_run(src_path, args, out, duration, title, phase, cwd, pre)
+            finally:
+                self._copy_run = False
         await self._encode_slot()
         try:
             await self._encode_run(src_path, args, out, duration, title, phase, cwd, pre)
@@ -3373,6 +3413,8 @@ class Mirror:
         err_task = asyncio.ensure_future(read_err())
         try:
             async for line in proc.stdout:   # out_time_ms=12345678 (이름과 달리 마이크로초)
+                if (self._job or {}).get("no_encode") and not self._copy_run:   # [인코딩 없이 올리기] - 이 인코딩은 멈춘다
+                    raise SkipEncode()
                 k, _, v = line.decode("utf-8", "replace").strip().partition("=")
                 if k == "out_time_ms" and v.isdigit() and self.current:
                     self.current["done"] = int(v) // 1000

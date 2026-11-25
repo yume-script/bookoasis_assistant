@@ -417,7 +417,7 @@ def api_post(path, body):
         return {"success": True, **RUNNER.run(m.requeue_skipped, days or None, str(body.get("rule") or "") or None)}
     if path == "/api/tgup/item":
         rule, key, action = str(body.get("rule") or ""), str(body.get("key") or ""), body.get("action")
-        fns = {"upload": m.force_item, "drop": m.drop_item, "cancel": m.cancel_item}
+        fns = {"upload": m.force_item, "drop": m.drop_item, "cancel": m.cancel_item, "noencode": m.no_encode_item}
         try:
             if action == "cancel_all":
                 return {"success": True, "count": RUNNER.run(m.cancel_all, rule or None)}
@@ -429,7 +429,7 @@ def api_post(path, body):
                     raise ApiError(400, "없는 텔레그램 계정입니다.")
                 return {"success": True, "title": RUNNER.run(m.assign_item, rule, key, acc)}
             if action not in fns:
-                raise ApiError(400, "action은 upload, drop, cancel, cancel_all, move, assign 중 하나입니다.")
+                raise ApiError(400, "action은 upload, drop, cancel, noencode, cancel_all, move, assign 중 하나입니다.")
             return {"success": True, "title": RUNNER.run(fns[action], rule, key)}
         except ValueError as e:
             raise ApiError(400, str(e))

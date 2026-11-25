@@ -688,7 +688,8 @@
             e.currentTarget.disabled = true;
             try {
                 await post('api/tgup/item', { rule: w.rule, key: w.key, action, ...extra.body });
-                if (action !== 'move') toast(action === 'upload' ? `"${w.title}"을(를) 지금 올립니다.` : action === 'cancel' ? `"${w.title}"을(를) 취소했습니다.` : `"${w.title}"을(를) 뺐습니다.`);
+                if (action !== 'move') toast(action === 'upload' ? `"${w.title}"을(를) 지금 올립니다.` : action === 'cancel' ? `"${w.title}"을(를) 취소했습니다.`
+                    : action === 'noencode' ? `"${w.title}"을(를) 인코딩 없이 올립니다 (영상 그대로).` : `"${w.title}"을(를) 뺐습니다.`);
             } catch (err) { toast(err.message, 'error'); }
             renderStatus(pane);
         } } }, label);
@@ -731,7 +732,14 @@
                 [many && !prep ? `[${accName(l.tg)}]` : '', `${c.phase}${c.speed && /인코딩/.test(c.phase) ? ` · ${c.speed}` : ''}${c.total && /올리는|받는|복사/.test(c.phase) ? ` · ${fmtB(c.done)} / ${fmtB(c.total)}` : ''}`,
                     c.elapsed ? `시작 ${when(c.started)} · ${fmtDur(c.elapsed)} 지남` : '', fmtTimes(c.times)].filter(Boolean).join(' · '),
                 h('div', { class: 'cache-bar mirror-bar' }, h('div', { style: { width: `${pct}%` } })));
-            if (c.rule) r.lastChild.append(h('span', { class: 'mirror-actions' }, cancelBtn({ rule: c.rule, key: c.key, title: c.title }, true)));
+            // [인코딩 없이 올리기]: 준비 중(인코딩·인코딩 대기 등)인 영상 - 영상은 그대로 복사, 소리만 AAC·mp4로, 크면 나눠서
+            const noEnc = c.rule && prep && !c.no_encode && !/그대로 담는|나누는|올리는/.test(c.phase || '')
+                ? act({ rule: c.rule, key: c.key, title: c.title }, 'noencode', '인코딩 없이 올리기',
+                    `"${c.title}"을(를) 인코딩하지 않고 올릴까요?\n\n돌고 있는 인코딩(자막 입히기·화질 줄이기)을 멈추고 영상은 그대로 복사합니다. `
+                    + '소리가 AAC가 아니면 AAC로 바꾸고, 크면 나눠서 올립니다. (자막 파일이 있으면 파일로 같이 올림)',
+                    { title: '인코딩(자막 입히기·화질 줄이기) 없이 영상 그대로 - 소리 AAC·mp4로 담기와 나누기는 함' }) : null;
+            if (c.rule) r.lastChild.append(h('span', { class: 'mirror-actions' }, noEnc, c.no_encode ? h('span', { class: 'chip', text: '인코딩 없이' }) : null,
+                cancelBtn({ rule: c.rule, key: c.key, title: c.title }, true)));
             live.push(r);
         }
         let n = 0;
