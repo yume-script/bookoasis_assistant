@@ -123,13 +123,16 @@ _KO_FONT = None
 PAUSE_CHECK_SEC = 2   # 재생 중인지 이만큼마다 보고 인코딩을 멈추거나 잇는다
 
 
-ENCODE_NICE = {"low": 19, "normal": 10}   # 인코딩 CPU 우선순위 (설정 encode_priority) - low: 다른 일이 다 쓰고 남은 것만
+ENCODE_NICE = {"low": 19, "normal": 10, "high": 0}   # 인코딩 CPU 우선순위 (설정 encode_priority) - low: 다른 일이 다 쓰고 남은 것만, high: 다른 프로그램과 같게
+ENCODE_IONICE = {"low": 7, "normal": 7, "high": 4}   # 디스크 우선순위 (ionice best-effort 단계, 4가 보통)
 
 
 def _lowest_priority():
-    """(ffmpeg 자식 프로세스에서) CPU 우선순위를 낮게 (리눅스·맥) - 설정의 인코딩 우선순위대로"""
+    """(ffmpeg 자식 프로세스에서) CPU 우선순위를 낮게 (리눅스·맥) - 설정의 인코딩 우선순위대로 (high면 그대로)"""
     try:
-        os.nice(ENCODE_NICE.get(_encode_priority(), 19))
+        n = ENCODE_NICE.get(_encode_priority(), 19)
+        if n:
+            os.nice(n)
     except (OSError, AttributeError):
         pass
 
@@ -145,6 +148,8 @@ def low_priority_kwargs():
     """낮은 우선순위로 자식 프로세스를 띄우는 인자 - 윈도우는 preexec_fn을 못 써서 우선순위 클래스로"""
     if os.name == "nt":
         import subprocess
+        if _encode_priority() == "high":
+            return {}
         return {"creationflags": getattr(subprocess, "IDLE_PRIORITY_CLASS", 0x40)}
     return {"preexec_fn": _lowest_priority}
 
@@ -3400,7 +3405,7 @@ class Mirror:
         # (예전의 idle(-c 3)은 다른 줄이 원본을 복사하는 동안 디스크를 거의 못 받아 0.1배속까지 느려졌다)
         ionice = shutil.which("ionice") if os.name != "nt" else None
         if ionice:
-            cmd = [ionice, "-c", "2", "-n", "7", *cmd]
+            cmd = [ionice, "-c", "2", "-n", str(ENCODE_IONICE.get(_encode_priority(), 7)), *cmd]
         proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, cwd=cwd,
                                                     **low_priority_kwargs())
         errs = []
