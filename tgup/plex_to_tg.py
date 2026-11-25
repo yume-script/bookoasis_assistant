@@ -3309,7 +3309,7 @@ class Mirror:
             except OSError:
                 sub = str(burn_name)
         nb = "|copy" if (self._job or {}).get("no_encode") else ""
-        return enc_cache_key(job["rule"], job["key"], f"{size}|{sub}|{rule.get('height')}{nb}")
+        return enc_cache_key(job["rule"], job["key"], f"{size}|{sub}|{rule.get('height')}{nb}|ako")   # ako: 한국어 음성 고정 뒤 결과
 
     async def _encode_burn_run(self, local, make, out, duration, title, tmp, burn_name):
         try:
