@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""[자막 없이 바로 올리기] 규칙: 자막을 기다리지 않고 자막 판별도 안 하지만, 있는 자막은 입히고 mp4로 - 진짜 ffmpeg로"""
+"""[자막 없이 바로 올리기] 규칙: 자막을 기다리지 않고 자막 판별도 안 함. 있는 자막은 [자막 입히기] 체크박스대로 입히거나 파일로 - 진짜 ffmpeg로"""
 import asyncio
 import os
 import shutil
@@ -26,7 +26,19 @@ HAVE_FFMPEG = bool(shutil.which("ffmpeg") and shutil.which("ffprobe"))
 
 @unittest.skipUnless(HAVE and HAVE_FFMPEG, "aiohttp·telethon·ffmpeg 필요")
 class DirectUploadTest(unittest.TestCase):
-    def test_no_wait_uploads_original_without_encoding(self):
+    def test_burn_on(self):
+        names, note = self.run_direct(True)
+        self.assertEqual(names, ["Show.S01E01.mp4"])   # 자막을 입혀 mp4 하나 (자막 파일은 따로 안 올림)
+        self.assertIn("자막 기다리지 않고 바로 올림", note)
+        self.assertIn("자막 입힘", note)
+
+    def test_burn_off(self):
+        names, note = self.run_direct(False)   # [자막 입히기] 끔: 입히지 않고 자막 파일만 같이
+        self.assertEqual(names[0], "Show.S01E01.mp4")
+        self.assertIn("Show.S01E01.ko.srt", names)
+        self.assertNotIn("자막 입힘", note)
+
+    def run_direct(self, burn):
         from tgup import compat, plex_to_tg as m
         compat.DATA_DIR = tempfile.mkdtemp(prefix="direct-data-")
         root = tempfile.mkdtemp(prefix="direct-src-")
@@ -54,8 +66,8 @@ class DirectUploadTest(unittest.TestCase):
             async def peer(self, ch):
                 return ch
         rule = m.clean_settings({"rules": [{"id": "d1", "kind": "folder", "folder": root, "tg": "tg", "channel": "-100",
-                                            "wait_subs": False, "burn_subs": False, "height": 720}]})["rules"][0]
-        self.assertTrue(rule["burn_subs"])   # 바로 올리기는 있는 자막을 입힌다
+                                            "wait_subs": False, "burn_subs": burn, "height": 720}]})["rules"][0]
+        self.assertEqual(rule["burn_subs"], burn)   # 바로 올리기도 자막 입히기는 체크박스대로
 
         async def run():
             mir = m.Mirror(None, None, lambda *a: Tg(), None)
@@ -69,9 +81,7 @@ class DirectUploadTest(unittest.TestCase):
             note = asyncio.run(run())
         finally:
             shutil.rmtree(root, ignore_errors=True)
-        self.assertEqual([n for n, _ in sent], ["Show.S01E01.mp4"])   # 자막을 입혀 mp4 하나 (자막 파일은 따로 안 올림)
-        self.assertIn("자막 기다리지 않고 바로 올림", note)
-        self.assertIn("자막 입힘", note)
+        return [n for n, _ in sent], note
 
 
 if __name__ == "__main__":
