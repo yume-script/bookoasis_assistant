@@ -26,6 +26,8 @@ GAP_SEC = 3           # 묶음 사이 쉬는 시간
 FLOOD_MAX = 6 * 3600  # 이보다 길게 기다리라고 하면 멈춤 (나중에 [다시 시작])
 KINDS = {"video": "영상만", "media": "사진·영상·파일", "all": "모든 글"}
 KEEP_JOBS = 50
+FILES_PAGE = 300      # 파일 고르기 목록 한 쪽
+PICK_MAX = 5000       # 한 작업에 고를 수 있는 수
 ACTIVE = ("waiting", "running", "flood")
 
 
@@ -84,12 +86,31 @@ def matches(msg, kind):
 
 
 def public(job):
-    out = {k: v for k, v in job.items() if not k.startswith("_")}
+    out = {k: v for k, v in job.items() if not k.startswith("_") and k != "ids"}
+    if job.get("range") == "pick":
+        n = len(job.get("ids") or [])
+        out["count"] = n
+        out["percent"] = 100 if job.get("status") == "done" else (min(99, int(int(job.get("done_n") or 0) * 100 / n)) if n else 0)
+        out["kind_label"] = KINDS.get(job.get("kind"), "")
+        return out
     span = max(0, int(job.get("to_id") or 0) - int(job.get("from_id") or 0))
     done = max(0, int(job.get("last_id") or 0) - int(job.get("from_id") or 0))
     out["percent"] = 100 if job.get("status") == "done" else (min(99, int(done * 100 / span)) if span else 0)
     out["kind_label"] = KINDS.get(job.get("kind"), "")
     return out
+
+
+def item_name(msg):
+    """목록에 보일 이름: 파일 이름 > 캡션 첫 줄 > 종류 #번호"""
+    doc = getattr(msg, "document", None)
+    name = next((getattr(a, "file_name", "") for a in getattr(doc, "attributes", None) or [] if getattr(a, "file_name", "")), "") if doc else ""
+    if name:
+        return name
+    cap = str(getattr(msg, "message", "") or "").strip().split("\n", 1)[0][:120]
+    if cap:
+        return cap
+    kind = "영상" if getattr(msg, "video", None) else "사진" if getattr(msg, "photo", None) else "파일" if doc else "글"
+    return f"{kind} #{msg.id}"
 
 
 def _error_text(e):
@@ -160,6 +181,32 @@ class Copier:
                 "videos": await total(InputMessagesFilterVideo), "photos_videos": await total(InputMessagesFilterPhotoVideo),
                 "files": await total(InputMessagesFilterDocument)}
 
+    async def files(self, account, src, kind="video", offset_id=0, limit=FILES_PAGE):
+        """원본 채널의 고를 수 있는 항목 (새 것부터) -> {"items": [{id, name, size, date, album}], "next": 다음 offset_id 또는 0}"""
+        acc = self.tg_for(account)
+        client = await acc.authorized_client()
+        try:
+            ent = await self._source(acc, client, src)
+        except ValueError:
+            raise
+        except Exception as e:  # noqa: BLE001
+            raise ValueError(_error_text(e)) from None
+        kind = kind if kind in KINDS else "video"
+        items, last, scanned = [], 0, 0
+        async for msg in client.iter_messages(ent, offset_id=int(offset_id or 0)):
+            last, scanned = int(msg.id), scanned + 1
+            if matches(msg, kind):
+                doc = getattr(msg, "document", None)
+                date = getattr(msg, "date", None)
+                items.append({"id": int(msg.id), "name": item_name(msg), "size": int(getattr(doc, "size", 0) or 0) if doc else 0,
+                              "date": int(date.timestamp()) if date else 0, "album": int(getattr(msg, "grouped_id", 0) or 0)})
+                if len(items) >= limit:
+                    break
+            if scanned >= limit * 20:   # 고를 것이 드문 채널: 너무 오래 훑지 않게 (다음 쪽에서 이어서)
+                break
+        more = bool(last) and (len(items) >= limit or scanned >= limit * 20) and last > 1
+        return {"items": items, "next": last if more else 0}
+
     def add(self, body):
         """복사 작업 더하기 -> job"""
         account = str(body.get("account") or tgaccount.ACCOUNT_ID)
@@ -172,7 +219,17 @@ class Copier:
         except ValueError:
             raise ValueError("올릴 채널을 골라 주세요.") from None
         kind = body.get("kind") if body.get("kind") in KINDS else "video"
-        rng = body.get("range") if body.get("range") in ("all", "recent", "ids") else "all"
+        rng = body.get("range") if body.get("range") in ("all", "recent", "ids", "pick") else "all"
+        ids = []
+        if rng == "pick":
+            try:
+                ids = sorted({int(x) for x in body.get("ids") or [] if int(x) > 0})
+            except (TypeError, ValueError):
+                raise ValueError("고른 파일 목록이 잘못됐습니다.") from None
+            if not ids:
+                raise ValueError("옮길 파일을 골라 주세요.")
+            if len(ids) > PICK_MAX:
+                raise ValueError(f"한 번에 {PICK_MAX}개까지 고를 수 있습니다.")
 
         def num(k):
             try:
@@ -188,6 +245,7 @@ class Copier:
                "src_title": str(body.get("src_title") or src)[:120], "dst": dst, "dst_title": str(body.get("dst_title") or dst)[:120],
                "kind": kind, "range": rng, "limit": limit if rng == "recent" else 0,
                "from_id": from_id if rng == "ids" else 0, "to_id": to_id if rng == "ids" else 0,
+               "ids": ids, "done_n": 0, "first_name": str(body.get("first_name") or "")[:120], "last_name": str(body.get("last_name") or "")[:120],
                "drop_author": bool(body.get("drop_author", True)), "drop_captions": bool(body.get("drop_captions")),
                "status": "waiting", "last_id": 0, "copied": 0, "error": "", "created": int(time.time()),
                "started": 0, "finished": 0, "flood_until": 0, "prepared": False}
@@ -294,6 +352,9 @@ class Copier:
         dst = await acc.peer(job["dst"])
         job["src_id"], job["src_title"] = int(src.id), str(getattr(src, "title", "") or job["src_title"])
         job["status"], job["started"] = "running", job.get("started") or int(time.time())
+        if job["range"] == "pick":
+            await self._run_pick(client, job, src, dst)
+            return
         if not job.get("prepared"):
             await self._prepare(client, src, job)
         batch, group, scanned = [], None, job["last_id"]
@@ -320,3 +381,21 @@ class Copier:
         await flush()
         job["status"], job["finished"] = "done", int(time.time())
         log.info("채널 복사 %s -> %s: %d개 옮김", job.get("src_title"), job.get("dst_title"), job["copied"])
+
+    async def _run_pick(self, client, job, src, dst):
+        """고른 파일만 (오래된 것부터). 지워진 메시지는 건너뜀"""
+        ids = job.get("ids") or []
+        while job["done_n"] < len(ids):
+            chunk = ids[job["done_n"]:job["done_n"] + BATCH]
+            msgs = await client.get_messages(src, ids=chunk)
+            alive = [int(m.id) for m in msgs or [] if m is not None and getattr(m, "action", None) is None]
+            if alive:
+                await self._forward(client, job, src, dst, alive)
+                job["copied"] += len(alive)
+            job["skipped"] = int(job.get("skipped") or 0) + len(chunk) - len(alive)
+            job["done_n"] += len(chunk)
+            self._save()
+            if alive and job["done_n"] < len(ids):
+                await asyncio.sleep(GAP_SEC)
+        job["status"], job["finished"] = "done", int(time.time())
+        log.info("채널 복사 %s -> %s: 고른 %d개 중 %d개 옮김", job.get("src_title"), job.get("dst_title"), len(ids), job["copied"])

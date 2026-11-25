@@ -450,11 +450,14 @@ def _copy(body):
     try:
         if action == "preview":
             return {"success": True, "source": RUNNER.call(c.preview(str(body.get("account") or tgaccount.ACCOUNT_ID), body.get("src")), 60)}
+        if action == "files":
+            return {"success": True, **RUNNER.call(c.files(str(body.get("account") or tgaccount.ACCOUNT_ID), body.get("src"),
+                                                           body.get("kind") or "video", body.get("offset_id") or 0), 120)}
         if action == "start":
             return {"success": True, "job": chcopy.public(RUNNER.run(c.add, body))}
         fns = {"cancel": c.cancel, "retry": c.retry, "remove": c.remove}
         if action not in fns:
-            raise ApiError(400, "action은 preview, start, cancel, retry, remove 중 하나입니다.")
+            raise ApiError(400, "action은 preview, files, start, cancel, retry, remove 중 하나입니다.")
         RUNNER.run(fns[action], str(body.get("id") or ""))
         return {"success": True, "jobs": RUNNER.run(c.status)}
     except tgaccount.TgError as e:

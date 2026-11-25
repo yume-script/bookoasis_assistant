@@ -48,14 +48,17 @@ class Client:
     async def get_entity(self, x):
         return self.src
 
-    async def get_messages(self, ent, limit=0, filter=None):
+    async def get_messages(self, ent, limit=0, filter=None, ids=None):
+        if ids is not None:
+            by = {m.id: m for m in self.msgs}
+            return [by.get(i) for i in ids]
         if limit == 0:
             return types.SimpleNamespace(total=len(self.msgs))
         return sorted(self.msgs, key=lambda m: -m.id)[:limit]
 
-    async def iter_messages(self, ent, reverse=False, min_id=0, max_id=0):
+    async def iter_messages(self, ent, reverse=False, min_id=0, max_id=0, offset_id=0):
         for m in sorted(self.msgs, key=lambda m: m.id, reverse=not reverse):
-            if m.id > min_id and (not max_id or m.id < max_id):
+            if m.id > min_id and (not max_id or m.id < max_id) and (not offset_id or m.id < offset_id):
                 yield m
 
     async def forward_messages(self, dst, ids, from_peer=None, drop_author=None, drop_media_captions=None):
@@ -142,6 +145,25 @@ class CopyTest(unittest.TestCase):
         self.client.msgs = [msg(1), msg(2), msg(3, gid=9), msg(4, "photo", gid=9), msg(5)]
         self.run_job({"kind": "media"})
         self.assertEqual([b for b, *_ in self.client.sent], [[1, 2], [3, 4], [5]])
+
+    def test_files_list_and_pick(self):
+        cp = chcopy.Copier(lambda a: Acc(self.client))
+        page = asyncio.run(cp.files("tg", "@srcchan", "video", 0, limit=5))
+        self.assertEqual([f["id"] for f in page["items"]], [60, 59, 58, 57, 56])     # 새 것부터
+        self.assertEqual(page["items"][-1]["name"], "m56")                          # 파일 이름 없으면 캡션 첫 줄
+        self.assertEqual(page["next"], 56)
+        page2 = asyncio.run(cp.files("tg", "@srcchan", "video", page["next"], limit=100))
+        self.assertEqual(page2["items"][-2:], [{"id": 4, "name": "4.mkv", "size": 0, "date": 0, "album": 0}, page2["items"][-1]])
+        self.assertEqual((page2["items"][-1]["id"], page2["next"]), (2, 0))
+        with self.assertRaises(ValueError):
+            cp.add({"account": "tg", "src": "@srcchan", "dst": "-100777", "range": "pick", "ids": []})
+        self.msgs.remove(next(m for m in self.msgs if m.id == 6))          # 고른 뒤 원본에서 지워진 것
+        _cp, job = self.run_job({"range": "pick", "ids": [59, 4, 6, 2, 4], "first_name": "2", "last_name": "59"})
+        self.assertEqual([b for b, *_ in self.client.sent], [[2, 4, 59]])  # 오래된 것부터, 지워진 것은 건너뜀
+        self.assertEqual((job["status"], job["copied"], job["skipped"]), ("done", 3, 1))
+        pub = chcopy.public(job)
+        self.assertEqual((pub["count"], pub["percent"]), (4, 100))
+        self.assertNotIn("ids", pub)
 
     def test_flood_wait_then_continue(self):
         self.client.flood = 1

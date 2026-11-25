@@ -138,3 +138,6 @@ textarea.input { resize: vertical; }
 .copy-row { grid-template-columns: minmax(0, 1fr) 10rem 14rem; }
 .copy-acts { display: flex; flex-wrap: wrap; gap: 0.35rem; justify-content: flex-end; }
 @media (max-width: 720px) { .copy-row { grid-template-columns: minmax(0, 1fr) auto; } .copy-acts { justify-content: flex-start; } }
+/* 채널 복사 - 파일 골라서 */
+.copy-files { max-height: 45vh; margin: 0.5rem 0; }
+.copy-files .send-row { user-select: none; }
