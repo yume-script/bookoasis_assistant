@@ -360,8 +360,6 @@ def clean_settings(raw):
             rule["media"], rule["upload_existing"] = "video", False
         if rule["media"] == "music":   # (자막 기다리기·입히기는 영상만)
             rule["wait_subs"], rule["burn_subs"] = False, False
-        if rule["media"] == "video" and not rule["wait_subs"]:   # 자막 없이 바로 올리기: 기다리지 않지만 있는 자막은 입힌다
-            rule["burn_subs"] = True
         if rule["media"] == "youtube":   # 폴더는 이 서버 안 (받은 파일을 잠깐 두는 곳), 자막은 기다리지 않음
             rule["folder"] = youtube.rule_folder(rule["id"])
             rule["wait_subs"], rule["upload_existing"] = False, False
@@ -516,7 +514,8 @@ FLOOD_ERRORS = ("FloodWaitError", "FloodPremiumWaitError", "SlowModeWaitError")
 
 def direct_upload(rule):
     """[자막 없이 바로 올리기] 영상 규칙: 자막을 기다리지 않고 자막 판별(글자 읽기·LLM)도 하지 않는다.
-    그때 있는 자막(옆 자막 파일 > 파일 안의 글자 자막)은 화면에 입히고, 화질 줄이기·mp4 바꾸기·나누기는 다른 규칙과 같다"""
+    그때 있는 자막(옆 자막 파일 > 파일 안의 글자 자막)은 burn_subs(체크박스)가 켜져 있으면 화면에 입히고, 꺼져 있으면 자막 파일로 같이 올린다.
+    화질 줄이기·mp4 바꾸기·나누기는 다른 규칙과 같다"""
     return bool(rule) and rule.get("media", "video") == "video" and not rule.get("wait_subs", True)
 
 
@@ -2593,8 +2592,8 @@ class Mirror:
             # 자막 파일이나 글자 자막이 있으면 화면에 입힌다 (한국어 먼저). 전에는 영상 안에 아무 자막(영어·그림 자막 포함)이
             # 있으면 옆의 한국어 자막 파일을 입히지 않았다
             burn_name = None
-            direct = direct_upload(rule)   # (자막 없이 바로 올리기도 그때 있는 자막은 입힌다)
-            if (rule["burn_subs"] or direct) and (sub_files or inside) and transcode.ffmpeg_path():
+            direct = direct_upload(rule)   # (자막 없이 바로 올리기도 [자막 입히기]가 켜져 있으면 그때 있는 자막을 입힌다)
+            if rule["burn_subs"] and (sub_files or inside) and transcode.ffmpeg_path():
                 if not has_korean_font():
                     burn_skip = "한글 글꼴이 없어 자막을 입히지 않고 파일로 올림 (sudo apt install fonts-nanum)"
                 else:
@@ -2768,9 +2767,9 @@ class Mirror:
             duration = folder_watch.duration(info)
             # 3) 화면에 입힐 자막: 한국어 먼저 (자막 파일 > 파일 안의 글자 자막 > 다른 언어)
             burn, burn_skip, inside = None, "", folder_watch.text_subs(info, sub_det)
-            direct = direct_upload(rule)   # (자막 없이 바로 올리기도 그때 있는 자막은 입힌다)
+            direct = direct_upload(rule)   # (자막 없이 바로 올리기도 [자막 입히기]가 켜져 있으면 그때 있는 자막을 입힌다)
             self.subs_label = f"파일 {len(sub_files)}개" if sub_files else "소프트 자막" if inside else "없음"
-            if (rule["burn_subs"] or direct) and (sub_files or inside):
+            if rule["burn_subs"] and (sub_files or inside):
                 if not has_korean_font():
                     burn_skip = "한글 글꼴이 없어 자막을 입히지 않고 파일로 올림 (sudo apt install fonts-nanum)"
                 else:
