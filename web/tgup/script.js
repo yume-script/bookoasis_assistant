@@ -738,19 +738,20 @@
                 h('span', { class: 'muted', text: '분 (0이면 자막이 생길 때까지 계속. 파일 안에 한국어 자막(소프트 자막)이 있으면 기다리지 않고 바로, 하드섭은 진행 상태에서 [지금 올리기])' }));
             const burnRow = h('label', { class: 'check', title: '다시 인코딩하느라 시간이 걸립니다.' }, burnIn, burnText);
             const waitBox = h('div', { class: 'mirror-subs-wait' }, waitRow, h('div', { class: 'mirror-wait' }, h('span', { class: 'muted', text: '인코딩:' }), burnRow));
-            const directNote = h('p', { class: 'field-hint', text: '자막을 기다리지 않고 자막 판별(글자 읽기·LLM)도 하지 않습니다. 그때 있는 자막(옆 자막 파일 > 파일 안의 자막)은 아래 체크박스가 켜져 있으면 화면에 입히고, 끄면 입히지 않고 자막 파일만 같이 올립니다. 화질 줄이기·mp4(H.264/AAC) 바꾸기·나누기는 그대로 합니다.' });
+            const directNote = h('p', { class: 'field-hint', text: '자막을 기다리지 않고 자막 판별(글자 읽기·LLM)도 하지 않습니다. 그때 있는 자막(옆 자막 파일 > 파일 안의 자막)은 위 체크박스가 켜져 있으면 화면에 입히고, 끄면 입히지 않고 자막 파일만 같이 올립니다. 화질 줄이기·mp4(H.264/AAC) 바꾸기·나누기는 그대로 합니다.' });
+            const directBox = h('div', { class: 'mirror-subs-wait' }, directNote);   // [자막 없이 바로 올리기]의 하위 조건 (자막 입히기 체크박스)
             const modeRow = h('div', { class: 'mirror-subs' },
                 h('span', { class: 'field-label', text: '자막' }),
                 h('label', { class: 'check' }, modeNow, ' 자막 없이 바로 올리기', h('span', { class: 'muted', text: ' (자막을 기다리지 않음)' })),
-                directNote,
+                directBox,
                 h('label', { class: 'check' }, modeWait, ' 자막 기다리기'),
                 waitBox);
             const syncMode = () => {
                 const yt = kindSel.value === 'youtube';
                 waitBox.classList.toggle('hidden', !modeWait.checked);
-                directNote.classList.toggle('hidden', yt || kindSel.value === 'music' || !modeNow.checked);
+                directBox.classList.toggle('hidden', yt || kindSel.value === 'music' || !modeNow.checked);
                 // 자막 입히기 체크박스: 유튜브는 자막 칸 아래, 바로 올리기는 그 설명 아래, 자막 기다리기는 대기 칸 안
-                if (yt) modeRow.after(burnRow); else if (modeNow.checked) directNote.after(burnRow); else waitBox.lastChild.append(burnRow);
+                if (yt) modeRow.after(burnRow); else if (modeNow.checked) directBox.prepend(burnRow); else waitBox.lastChild.append(burnRow);
                 burnRow.classList.toggle('hidden', kindSel.value === 'music');
             };
             modeNow.addEventListener('change', syncMode);
