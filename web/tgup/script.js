@@ -387,6 +387,9 @@
             field('키', llmKey, '.env의 HARDSUB_LLM_API_KEY(또는 LITELLM_API_KEY)가 있으면 그것을 씁니다.'),
             h('label', { class: 'check' }, llmAuto, ' "한국어 하드섭"(확신 70% 이상)으로 판단하면 기다리지 않고 바로 올리기 (끄면 판단만 표시)'),
             h('div', { class: 'toolbar' }, llmTestBtn, llmTestOut));
+        const prioSel = h('select', { class: 'select' }, [['low', '낮게 (Plex 재생 등이 먼저 - 바쁘면 느림)'], ['normal', '조금 낮게 (바쁜 서버에서도 꾸준히)']].map(([v, t]) =>
+            h('option', { value: v, text: t, selected: (st.encode_priority || 'low') === v })));
+        const hwDecIn = h('input', { type: 'checkbox', checked: st.hw_decode !== false });
         const parSel = h('select', { class: 'select' }, [[0, '자동 (프리미엄 4 · 일반 2)'], [1, '1 (예전처럼 하나씩)'], [2, '2'], [4, '4'], [8, '8']].map(([v, t]) =>
             h('option', { value: String(v), text: t, selected: (st.upload_parallel || 0) === v })));
         const slotsSel = h('select', { class: 'select' }, [1, 2, 3, 4].map((v) => h('option', { value: String(v), text: `${v}개${v === 1 ? ' (기본)' : ''}`, selected: (st.encode_slots || 1) === v })));
@@ -558,7 +561,7 @@
             save.disabled = true;
             try {
                 const r = await post('api/tgup/settings', { interval: Number(intervalIn.value), max_gb: Number(maxSel.value), max_gb_v: 1, encoder: encSel.value,
-                    cpu_preset: presetSel.value, hours: hoursSel.value, encode_slots: Number(slotsSel.value), upload_parallel: Number(parSel.value),
+                    cpu_preset: presetSel.value, encode_priority: prioSel.value, hw_decode: hwDecIn.checked, hours: hoursSel.value, encode_slots: Number(slotsSel.value), upload_parallel: Number(parSel.value),
                     exclude: excludeIn.value.split('\n').map((x) => x.trim()).filter(Boolean), rules: rows.map((x) => x.get()),
                     hardsub_llm: { enabled: llmOn.checked, url: llmUrl.value.trim(), model: llmModel.value.trim(), auto: llmAuto.checked },
                     ...(llmKey.value.trim() ? { hardsub_llm_key: llmKey.value.trim() } : {}) });
@@ -606,6 +609,9 @@
                 field('CPU 인코딩 빠르기', presetSel, 'CPU로 할 때만. 빠를수록 같은 화질에 파일이 조금 커집니다.')),
             h('div', { class: 'row-2' }, field('올리기 시간대', hoursSel, '받기·인코딩·올리기를 이 시간에만 합니다. 새 항목 찾기는 늘 하고, 쌓아 두었다가 이 시간에 올립니다.'),
                 field('동시 인코딩 개수', slotsSel, '계정이 여럿이면 올리기는 계정마다 동시에 하지만, 인코딩은 CPU·그래픽 카드를 많이 써서 이만큼만 동시에 합니다. 나머지는 "인코딩 차례 기다리는 중".')),
+            h('div', { class: 'row-2' }, field('인코딩 우선순위', prioSel, '인코딩이 너무 느리면 "조금 낮게"로. 그래도 재생용 변환보다는 뒤에 섭니다.'),
+                field('그래픽 카드로 원본 풀기', h('label', { class: 'check' }, hwDecIn, ' 하드웨어 인코더(Intel·NVIDIA)를 쓸 때 원본 디코딩도 그래픽 카드로 (CPU를 크게 아낌)'),
+                    '그래픽 카드가 그 코덱을 못 풀면 저절로 CPU로 풉니다. 문제가 있으면 끄세요.')),
             field('업로드 동시 조각 수', parSel, '파일을 512KB 조각으로 나눠 텔레그램에 연결 여러 개로 동시에 올립니다 (같은 회선에서 보통 몇 배 빠름). '
                 + '텔레그램이 속도를 늦추면(속도 제한 감지) 그 계정은 자동으로 1로. 너무 크게 하면 일반 계정은 요청 제한에 더 자주 걸릴 수 있습니다.'),
             field('제외할 파일 (정규식, 한 줄에 하나)', excludeIn, '파일 이름·제목·경로에 맞으면 올리지 않고 최근 기록에 "제외"로 남깁니다. 예: S101, S201, Featurettes 폴더 아래는 (?i)(^|[\\\\/])featurettes[\\\\/] (대소문자 무시는 (?i)를 앞에).'),
