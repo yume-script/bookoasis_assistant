@@ -125,6 +125,80 @@ class PipelineTest(unittest.TestCase):
         self.assertLess(events.index(("sent", "n1")), events.index(("enc", "e2")))
         self.assertLessEqual(len(mir._lane_tasks), 2 + m.ENCODE_BACKLOG)
 
+    def _mirror(self, m):
+        mir = m.Mirror(None, None, lambda *a: None, None)
+        mir._route = lambda tg: "direct"
+
+        class Acc:
+            async def authorized_client(self):
+                return object()
+
+            async def peer(self, ch):
+                return ch
+        mir.tg_for = lambda tg: Acc()
+        return mir
+
+    def test_encode_slot_in_queue_order(self):
+        """인코딩 자리가 나면 기다리는 항목 중 진행 목록 앞에 있는 것부터 (나중에 와서 먼저 확인한 항목이 가로채지 않게)"""
+        from tgup import compat, plex_to_tg as m
+        compat.DATA_DIR = tempfile.mkdtemp(prefix="pipeline-fifo-")
+        data = compat.load()
+        data["plex_to_tg"] = m.clean_settings({"encode_slots": 1})
+        compat.save(data)
+        mir = self._mirror(m)
+        jobs = [{"rule": "r", "key": k, "title": k} for k in ("first", "second", "third")]
+        mir.queue = list(jobs)
+        order = []
+
+        async def worker(job, delay):
+            lane = m.Lane("")
+            m._LANE.set(lane)
+            lane.job = job
+            await asyncio.sleep(delay)
+            await mir._encode_slot()
+            order.append(job["key"])
+            await asyncio.sleep(0.05)
+            mir._encode_done()
+
+        async def run():
+            mir._encoding = 1   # 앞 인코딩이 돌고 있다
+            ts = [asyncio.ensure_future(worker(jobs[2], 0)), asyncio.ensure_future(worker(jobs[1], 0.01)),
+                  asyncio.ensure_future(worker(jobs[0], 0.02))]   # 늦게 들어온 것이 먼저 기다리기 시작
+            await asyncio.sleep(0.1)
+            mir._encode_done()
+            await asyncio.gather(*ts)
+        asyncio.run(run())
+        self.assertEqual(order, ["first", "second", "third"])
+
+    def test_upload_slot_in_queue_order(self):
+        """올릴 차례도 진행 목록 앞 항목부터 - 앞 항목이 그 채널로 못 가는 동안에는 뒤 항목이 먼저"""
+        from tgup import compat, plex_to_tg as m
+        compat.DATA_DIR = tempfile.mkdtemp(prefix="pipeline-upfifo-")
+        m.UPLOAD_GAP_SEC, gap0 = 0, m.UPLOAD_GAP_SEC
+        self.addCleanup(setattr, m, "UPLOAD_GAP_SEC", gap0)
+        mir = self._mirror(m)
+        rule = {"id": "r", "tg": "A", "tg_alt": [], "channel": "-1"}
+        jobs = [{"rule": "r", "key": k, "title": k} for k in ("old", "new")]
+        mir.queue = list(jobs)
+        order = []
+
+        async def sender(job, delay, hold):
+            lane = m.Lane("")
+            m._LANE.set(lane)
+            lane.job, lane.rule, lane.channel = job, rule, "-1"
+            await asyncio.sleep(delay)
+            async with mir._upload_slot():
+                order.append(job["key"])
+                await asyncio.sleep(hold)
+
+        async def run():
+            first = asyncio.ensure_future(sender({"rule": "r", "key": "busy"}, 0, 0.1))   # 계정 A가 보내는 중
+            await asyncio.sleep(0.02)
+            ts = [asyncio.ensure_future(sender(jobs[1], 0, 0.01)), asyncio.ensure_future(sender(jobs[0], 0.01, 0.01))]
+            await asyncio.gather(first, *ts)
+        asyncio.run(run())
+        self.assertEqual(order, ["busy", "old", "new"])   # new가 먼저 기다렸어도 목록 앞인 old가 먼저
+
 
 if __name__ == "__main__":
     unittest.main()

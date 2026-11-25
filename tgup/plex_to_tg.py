@@ -900,6 +900,8 @@ class Mirror:
         self._chan_routes = {}   # 채널 -> 지금 그 채널로 보내는 경로들 ["direct", "socks5://…"] (채널별 동시 올리기 규칙)
         self._chan_cond = None   # 그 표가 바뀔 때 깨우는 조건 (루프 안에서 만든다)
         self._uploading = {}     # 계정 -> 지금 그 계정으로 보내는 줄 (2단계 - 계정 하나는 한 번에 하나씩 보낸다)
+        self._enc_waiting = set()   # 인코딩 차례를 기다리는 줄들 (진행 목록 순서대로 차례를 준다)
+        self._up_waiting = {}       # 올릴 차례를 기다리는 줄 -> (규칙, 항목, 채널) (진행 목록 순서대로)
         self._acc_sent = {}      # 계정 -> 마지막으로 보내기를 끝낸 때 (연달아 보낼 때 UPLOAD_GAP_SEC 쉼)
         self._acc_last = {}      # 계정 -> 마지막으로 끝낸 항목 {title, ok, at, elapsed} (화면)
         self.offline = {}        # 닿지 못한 원본 드라이브 -> {since, path, last, count, logged} (실패로 세지 않고 다시 시도 중)
@@ -1840,20 +1842,29 @@ class Mirror:
         prev = dict(self.current or {})
         waited = False
         async with self._chan_cond:
-            while True:
-                tg = self._pick_account(rule, job, ch)
-                if tg:
-                    break
-                if not waited:
-                    waited = True
-                    self.current = {**prev, "phase": "올릴 계정·채널 차례 기다리는 중", "done": 0, "total": 0}
-                try:   # (쉬던 계정이 풀리는 것도 보게 30초마다)
-                    await asyncio.wait_for(self._chan_cond.wait(), 30)
-                except asyncio.TimeoutError:
-                    pass
+            self._up_waiting[lane] = (rule, job, ch)
+            try:
+                while True:
+                    tg = self._pick_account(rule, job, ch)
+                    if tg and self._better_waiter(lane, job):
+                        # 진행 목록에서 더 앞에 있고 지금 바로 보낼 수 있는 항목이 기다린다 - 그쪽이 먼저 (깨워서 가져가게)
+                        tg = ""
+                        self._chan_cond.notify_all()
+                    if tg:
+                        break
+                    if not waited:
+                        waited = True
+                        self.current = {**prev, "phase": "올릴 계정·채널 차례 기다리는 중", "done": 0, "total": 0}
+                    try:   # (쉬던 계정이 풀리는 것도 보게 30초마다)
+                        await asyncio.wait_for(self._chan_cond.wait(), 30)
+                    except asyncio.TimeoutError:
+                        pass
+            finally:
+                self._up_waiting.pop(lane, None)
             route = self._route(tg)
             self._uploading[tg] = lane
             self._chan_routes.setdefault(ch, []).append(route)
+            self._chan_cond.notify_all()   # (양보하고 기다리던 뒤 항목도 다른 계정·채널로 갈 수 있는지 다시 보게)
         lane.tg = tg
         try:
             gap = UPLOAD_GAP_SEC - (time.time() - self._acc_sent.get(tg, 0))
@@ -1873,6 +1884,15 @@ class Mirror:
                 if not used:
                     self._chan_routes.pop(ch, None)
                 self._chan_cond.notify_all()
+
+    def _better_waiter(self, lane, job):
+        """올릴 차례를 기다리는 다른 줄 중 진행 목록에서 더 앞에 있고 지금 바로 보낼 수 있는 것이 있나
+        (앞 항목이 그 채널·계정으로 못 가는 동안에는 뒤 항목이 먼저 간다)"""
+        me = self._job_prio(job)
+        for ln, (r, j, c) in list(self._up_waiting.items()):
+            if ln is not lane and self._job_prio(j) < me and self._pick_account(r, j, c):
+                return True
+        return False
 
     def _next_job(self, rules, me=None):
         """작업 줄이 가져갈 다음 항목 - 진행 목록 앞에서부터. 먼저 다른 줄이 처리하지 않는 채널의 항목, 없으면 같은 채널의 항목
@@ -2157,21 +2177,38 @@ class Mirror:
         self.wake()
         return job["title"]
 
+    def _job_prio(self, job):
+        """진행 목록에서의 자리 (앞일수록 작음) - 인코딩 차례·올릴 차례를 먼저 들어온 항목부터 주는 데 쓴다. 목록에 없으면 맨 뒤"""
+        if job is not None:
+            for i, j in enumerate(self.queue):
+                if j is job:
+                    return i
+        return len(self.queue) + 1
+
     async def _encode_slot(self):
-        """인코딩 차례 - 동시에 encode_slots개까지 (계정 줄이 여럿이어도 CPU를 다 쓰지 않게)"""
+        """인코딩 차례 - 동시에 encode_slots개까지 (계정 줄이 여럿이어도 CPU를 다 쓰지 않게).
+        자리가 나면 기다리는 항목 중 진행 목록에서 앞에 있는 것부터 (먼저 확인한 쪽이 가져가 오래 기다린 항목이 밀리지 않게)"""
         lane = _LANE.get() or self._main
+        self._enc_waiting.add(lane)
         try:
-            while self._encoding >= load_settings()["encode_slots"]:
+            while True:
+                free = load_settings()["encode_slots"] - self._encoding
+                if free > 0:
+                    me = self._job_prio(lane.job)
+                    ahead = sum(1 for ln in self._enc_waiting if ln is not lane and self._job_prio(ln.job) < me)
+                    if ahead < free:
+                        break
                 if not lane.enc_wait:   # 이 줄은 작업 줄 수에서 빠진다 - 그동안 다른 줄이 다음 항목을 처리하게 깨운다
                     lane.enc_wait = True
                     self._queue_event.set()
-                self._set_phase(f"인코딩 차례 기다리는 중 (동시에 {load_settings()['encode_slots']}개까지 - 앞 인코딩이 끝나면)")
+                self._set_phase(f"인코딩 차례 기다리는 중 (동시에 {load_settings()['encode_slots']}개까지 - 앞 인코딩이 끝나면, 진행 목록 순서대로)")
                 self._encode_free.clear()
                 try:
                     await asyncio.wait_for(self._encode_free.wait(), 5)
                 except asyncio.TimeoutError:
                     pass
         finally:
+            self._enc_waiting.discard(lane)
             lane.enc_wait = False
         self._encoding += 1
 
