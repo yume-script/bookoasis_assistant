@@ -733,12 +733,28 @@ async def pick_encoder(setting="auto", preset="superfast"):
     return {"name": "cpu", "preset": preset}
 
 
+def is_korean_audio(s):
+    tags = s.get("tags") or {}
+    lang = str(tags.get("language") or "").strip().lower()
+    return lang in _KO_LANGS or bool(_KO_TITLE.search(str(tags.get("title") or "")))
+
+
+def pick_audio(info):
+    """올릴 음성 트랙: 한국어(언어 표시 kor/ko 또는 제목에 한국어)가 있으면 그것, 없으면 첫 트랙 -> (트랙, 한국어인지, 음성 트랙 수)"""
+    auds = streams(info, "audio")
+    if not auds:
+        return None, False, 0
+    ko = next((s for s in auds if is_korean_audio(s)), None)
+    return (ko or auds[0]), ko is not None, len(auds)
+
+
 def encode_plan(info, ext, height_cap, burn_sub=None, enc=None):
     """텔레그램에서 바로 재생되게 할 ffmpeg 인자 (출력 파일 앞까지) - 손댈 것이 없으면 None.
     height_cap보다 높은 영상은 용량과 상관없이 그 높이로 줄인다 (0이면 줄이지 않음). burn_sub: 화면에 입힐 자막 파일 이름
     (ffmpeg를 그 폴더에서 돌린다). enc: pick_encoder 결과 (없으면 CPU). 돌려주는 값: Plan((인자, 설명들), pre, encoder)"""
     v = (streams(info, "video") or [None])[0]
-    a = (streams(info, "audio") or [None])[0]
+    a, a_ko, n_audio = pick_audio(info)   # 한국어 음성으로 고정 (음성이 여럿이면 한국어 하나만 담는다)
+    first_audio = (streams(info, "audio") or [None])[0]
     if not v:
         raise FolderError("영상 트랙이 없는 파일입니다.")
     if (enc or {}).get("video_copy"):   # [인코딩 없이 올리기]: 영상은 그대로 복사 (줄이기·자막 입히기 없음) - 소리 AAC·mp4로 담기만
@@ -749,10 +765,12 @@ def encode_plan(info, ext, height_cap, burn_sub=None, enc=None):
             and "10" not in str(v.get("profile") or "") and "4:4" not in str(v.get("profile") or "")
             and not scale and not burn_sub) or bool((enc or {}).get("video_copy"))
     a_ok = a is None or str(a.get("codec_name")) == "aac"   # 텔레그램 앱은 AAC여야 소리가 끊기지 않는다 (MP3·AC3·DTS 등은 AAC로)
-    if v_ok and a_ok and ext.lower() in (".mp4", ".m4v"):
+    a_first = a is first_audio   # 텔레그램은 첫 음성 트랙을 튼다 - 한국어가 뒤에 있으면 다시 담아야 함
+    if v_ok and a_ok and a_first and ext.lower() in (".mp4", ".m4v"):
         return None
     notes, pre = [], []
-    args = ["-map", "0:v:0", "-map", "0:a:0?", "-sn", "-dn"]
+    a_map = f"0:{int(a['index'])}" if a is not None and a.get("index") is not None else "0:a:0?"
+    args = ["-map", "0:v:0", "-map", a_map, "-sn", "-dn"]
     if v_ok:
         args += ["-c:v", "copy"]
     else:
@@ -776,6 +794,12 @@ def encode_plan(info, ext, height_cap, burn_sub=None, enc=None):
     else:
         args += ["-c:a", "aac", "-ac", "2", "-b:a", "192k"]
         notes.append("소리 AAC로")
-    if v_ok and a_ok:
+    if a is not None:
+        args += ["-disposition:a:0", "default"]
+        if a_ko:
+            args += ["-metadata:s:a:0", "language=kor"]
+        if n_audio > 1:
+            notes.append("한국어 음성만" if a_ko else "첫 음성만 (한국어 음성 없음)")
+    if v_ok and a_ok and a_first:
         notes.append("mp4로 다시 담음")
     return Plan(args + ["-movflags", "+faststart"], notes, pre, "copy" if v_ok else (enc or {}).get("name", "cpu"))
