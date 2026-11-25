@@ -44,7 +44,7 @@ class PrioritySettingTest(unittest.TestCase):
         self.assertEqual((st["encode_priority"], st["hw_decode"]), ("normal", False))
         st = m.clean_settings({"encode_priority": "realtime"})
         self.assertEqual((st["encode_priority"], st["hw_decode"]), ("low", True))
-        self.assertEqual(m.ENCODE_NICE, {"low": 19, "normal": 10})
+        self.assertEqual(m.ENCODE_NICE, {"low": 19, "normal": 10, "high": 0})
 
 
 if __name__ == "__main__":
