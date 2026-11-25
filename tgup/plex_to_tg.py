@@ -458,7 +458,7 @@ def phase_kind(phase):
         return "대기"
     if "받는" in p or "복사" in p:
         return "받기"
-    if "인코딩" in p:
+    if "인코딩" in p or "담는" in p:   # (인코딩 없이 올리기: 영상 그대로 담는 중)
         return "인코딩"
     if "나누는" in p:
         return "나누기"

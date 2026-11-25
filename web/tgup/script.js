@@ -907,6 +907,21 @@
         const now = Date.now() / 1000;
         const when = (t) => (t ? new Date(t * 1000).toLocaleString([], { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '');
         const chip = (cls, text) => h('span', { class: `mirror-chip ${cls}`, text });
+        // 상태 칸: 지금 단계 문구(c.phase)대로 - 받는 중 / 자막 확인·준비 중 / 인코딩 대기 / 인코딩 중 / 잠시 멈춤 / 나누는 중 /
+        // 올릴 차례 기다림 / 올리는 중 / 요청 제한으로 쉼. (예전엔 1단계는 모두 '준비 중'이라 인코딩 중인지 알 수 없었다)
+        const stageChip = (l, c) => {
+            const p = c.phase || '';
+            if (/요청 제한|FLOOD/.test(p)) return ['wait', '요청 제한으로 쉼'];
+            if (/계정·채널 차례/.test(p)) return ['wait', '올릴 차례 기다림'];
+            if (l.stage === 'upload' || /올리는/.test(p)) return ['up', '올리는 중'];
+            if (/인코딩 차례/.test(p)) return ['wait', '인코딩 대기'];
+            if (/재생 중이라 잠시 멈춤/.test(p)) return ['wait', '잠시 멈춤'];
+            if (/인코딩해 둔/.test(p)) return ['enc', '인코딩 끝'];
+            if (/인코딩 중|담는 중/.test(p)) return ['enc', '인코딩 중'];
+            if (/나누는/.test(p)) return ['run', '나누는 중'];
+            if (/받는|복사/.test(p)) return ['run', '받는 중'];
+            return ['run', '준비 중'];
+        };
         const row = (title, status, subs, note, extra = null) => h('div', { class: 'mirror-row', role: 'row' },
             h('span', { class: 'mirror-title', title, text: title }), h('span', {}, status, extra), h('span', { class: 'mirror-subs' }, subs),
             h('span', { class: 'mirror-note muted', title: note, text: note }));
@@ -968,8 +983,6 @@
             const pct = c.total ? Math.min(100, (c.done / c.total) * 100) : 0;
             // 1단계(준비: 받기·자막·인코딩·나누기 - 계정과 상관없이) / 2단계(그 계정으로 텔레그램에 보내는 중)
             const prep = l.stage === 'prepare';
-            const waitSlot = /계정·채널 차례/.test(c.phase || '');   // 다 준비됨 - 놀고 있는 계정·빈 채널을 기다림
-            const encWait = /인코딩 차례/.test(c.phase || '');       // 받기는 끝남 - 인코딩 차례를 기다림 (그동안 다른 줄이 다음 항목을 처리)
             // 줄마다 한 가지: 지금 하는 일 / 진행률·남은 시간 / 시작·지난 시간 / 공정별 걸린 시간 (한 줄에 하나씩)
             const prog = progressInfo(`${c.rule}/${c.key}`, c);
             const bytes = c.total && /올리는|받는|복사/.test(c.phase || '');
@@ -980,13 +993,13 @@
                 c.elapsed ? `시작 ${when(c.started)} · ${fmtDur(c.elapsed)} 지남` : '',
                 ...timeLines(c.times),
             ].filter(Boolean);
-            const r = row(c.title, chip(waitSlot || encWait ? 'wait' : 'run',
-                prep ? (waitSlot ? '올릴 차례 기다림' : encWait ? '인코딩 대기' : '준비 중') : '올리는 중'), c.subs ? subsTag(c.subs) : '확인 중',
+            const [stCls, stText] = stageChip(l, c);
+            const r = row(c.title, chip(stCls, stText), c.subs ? subsTag(c.subs) : '확인 중',
                 lines.join('\n'),
                 h('div', { class: 'cache-bar mirror-bar' }, h('div', { style: { width: `${pct}%` } })));
             r.lastChild.classList.add('mirror-lines');
             // [인코딩 없이 올리기]: 준비 중(인코딩·인코딩 대기 등)인 영상 - 영상은 그대로 복사, 소리만 AAC·mp4로, 크면 나눠서
-            const noEnc = c.rule && prep && !c.no_encode && !/그대로 담는|나누는|올리는/.test(c.phase || '')
+            const noEnc = c.rule && prep && !c.no_encode && !/그대로 담는|나누는|올리는|계정·채널 차례|인코딩해 둔/.test(c.phase || '')
                 ? act({ rule: c.rule, key: c.key, title: c.title }, 'noencode', '인코딩 없이 올리기',
                     `"${c.title}"을(를) 인코딩하지 않고 올릴까요?\n\n돌고 있는 인코딩(자막 입히기·화질 줄이기)을 멈추고 영상은 그대로 복사합니다. `
                     + '소리가 AAC가 아니면 AAC로 바꾸고, 크면 나눠서 올립니다. (자막 파일이 있으면 파일로 같이 올림)',
