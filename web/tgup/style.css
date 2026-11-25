@@ -141,3 +141,6 @@ textarea.input { resize: vertical; }
 /* 채널 복사 - 파일 골라서 */
 .copy-files { max-height: 45vh; margin: 0.5rem 0; }
 .copy-files .send-row { user-select: none; }
+/* 진행 중 항목: 지금 하는 일 / 진행률·남은 시간 / 시작 / 공정별 시간을 한 줄에 하나씩 */
+.mirror-note.mirror-lines { white-space: pre-line; overflow: visible; text-overflow: clip; line-height: 1.55; }
+.mirror-note.mirror-lines .mirror-actions { display: flex; flex-wrap: wrap; gap: 0.3rem; margin-top: 0.35rem; white-space: normal; }
