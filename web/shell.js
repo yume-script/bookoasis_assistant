@@ -81,6 +81,7 @@
         { tab: 'status', label: '진행 상태', icon: 'list-check' },
         { tab: 'send', label: '파일 골라 보내기', icon: 'hand-pointer' },
         { tab: 'youtube', label: '유튜브 보내기', icon: 'tv-play' },
+        { tab: 'copy', label: '채널 복사', icon: 'clone' },
         { tab: 'rules', label: '규칙', icon: 'sliders' },
         { tab: 'account', label: '텔레그램 계정', icon: 'paper-plane' }
       ] },

@@ -27,7 +27,7 @@ import os
 import threading
 import time
 
-from . import compat, folder_watch, hardsub_llm, notify, plex_to_tg, tgaccount, youtube
+from . import chcopy, compat, folder_watch, hardsub_llm, notify, plex_to_tg, tgaccount, youtube
 
 log = logging.getLogger("tgup")
 CALL_TIMEOUT = 120
@@ -107,9 +107,11 @@ class _Runner:
         self.mirror = plex_to_tg.Mirror(plex_json, plex_src, tg_for, lambda: self.http)
         self._task = asyncio.ensure_future(self.mirror.loop())
         self._notify_task = asyncio.ensure_future(notify.watch(self.http, plex_to_tg.load_state))   # 디스코드 알림
+        self.copier = chcopy.Copier(tg_for)   # 다른 채널 영상 복사 (한 번만)
+        self._copy_task = asyncio.ensure_future(self.copier.loop())
 
     async def _teardown(self):
-        for task in (self._task, getattr(self, "_notify_task", None)):
+        for task in (self._task, getattr(self, "_notify_task", None), getattr(self, "_copy_task", None)):
             if task:
                 task.cancel()
                 try:
@@ -251,6 +253,8 @@ def api_get(path, query):
             return {"success": True, "channels": RUNNER.call(acc.list_channels(), 60)}
         except tgaccount.TgError as e:
             raise ApiError(400, str(e))
+    if path == "/api/tgup/copy":
+        return {"success": True, "jobs": RUNNER.run(RUNNER.copier.status)}
     if path == "/api/tgup/folders":
         return RUNNER.call(_folders(query.get("path", "").strip()), 60)
     if path == "/api/tgup/files":
@@ -435,7 +439,28 @@ def api_post(path, body):
             raise ApiError(400, str(e))
     if path == "/api/tgup/account":
         return _account(body)
+    if path == "/api/tgup/copy":
+        return _copy(body)
     raise ApiError(404, "없는 주소입니다.")
+
+
+def _copy(body):
+    """다른 채널 영상 복사 {action: preview|start|cancel|retry|remove}"""
+    c, action = RUNNER.copier, body.get("action")
+    try:
+        if action == "preview":
+            return {"success": True, "source": RUNNER.call(c.preview(str(body.get("account") or tgaccount.ACCOUNT_ID), body.get("src")), 60)}
+        if action == "start":
+            return {"success": True, "job": chcopy.public(RUNNER.run(c.add, body))}
+        fns = {"cancel": c.cancel, "retry": c.retry, "remove": c.remove}
+        if action not in fns:
+            raise ApiError(400, "action은 preview, start, cancel, retry, remove 중 하나입니다.")
+        RUNNER.run(fns[action], str(body.get("id") or ""))
+        return {"success": True, "jobs": RUNNER.run(c.status)}
+    except tgaccount.TgError as e:
+        raise ApiError(400, str(e))
+    except ValueError as e:
+        raise ApiError(400, str(e))
 
 
 def _account(body):

@@ -134,3 +134,7 @@ textarea.input { resize: vertical; }
 .send-row .chip { display: inline-block; padding: 0.1rem 0.5rem; border-radius: 999px; font-size: 0.78rem; font-weight: 600; white-space: nowrap;
   background: rgba(127, 127, 127, 0.18); }
 .send-row .chip-ok { background: rgba(46, 160, 67, 0.18); color: #3fb950; }
+/* 채널 복사 작업 목록 */
+.copy-row { grid-template-columns: minmax(0, 1fr) 10rem 14rem; }
+.copy-acts { display: flex; flex-wrap: wrap; gap: 0.35rem; justify-content: flex-end; }
+@media (max-width: 720px) { .copy-row { grid-template-columns: minmax(0, 1fr) auto; } .copy-acts { justify-content: flex-start; } }
