@@ -123,12 +123,22 @@ _KO_FONT = None
 PAUSE_CHECK_SEC = 2   # 재생 중인지 이만큼마다 보고 인코딩을 멈추거나 잇는다
 
 
+ENCODE_NICE = {"low": 19, "normal": 10}   # 인코딩 CPU 우선순위 (설정 encode_priority) - low: 다른 일이 다 쓰고 남은 것만
+
+
 def _lowest_priority():
-    """(ffmpeg 자식 프로세스에서) CPU 우선순위를 가장 낮게 (리눅스·맥)"""
+    """(ffmpeg 자식 프로세스에서) CPU 우선순위를 낮게 (리눅스·맥) - 설정의 인코딩 우선순위대로"""
     try:
-        os.nice(19)
+        os.nice(ENCODE_NICE.get(_encode_priority(), 19))
     except (OSError, AttributeError):
         pass
+
+
+def _encode_priority():
+    try:
+        return load_settings().get("encode_priority") or "low"
+    except Exception:  # noqa: BLE001
+        return "low"
 
 
 def low_priority_kwargs():
@@ -369,6 +379,8 @@ def clean_settings(raw):
     # cpu_preset: CPU(libx264)로 할 때 빠르기 - 빠를수록 같은 화질에 파일이 조금 커진다
     encoder = raw.get("encoder") if raw.get("encoder") in folder_watch.ENCODERS else "auto"
     preset = raw.get("cpu_preset") if raw.get("cpu_preset") in folder_watch.CPU_PRESETS else "superfast"
+    # 인코딩 CPU 우선순위: low(가장 낮게 - Plex 등이 먼저) / normal(조금 낮게 - 바쁜 서버에서도 인코딩이 꾸준히)
+    prio = raw.get("encode_priority") if raw.get("encode_priority") in ENCODE_NICE else "low"
     # 올리기(받기·인코딩·올리기)를 할 시간대 "1-7"(1시~7시) - 비우면 언제나. 새 항목 확인은 늘 한다
     hours = str(raw.get("hours") or "").strip()
     m = re.fullmatch(r"(\d{1,2})-(\d{1,2})", hours)
@@ -379,7 +391,7 @@ def clean_settings(raw):
     par = num(raw.get("upload_parallel"), 0, 8, 0)
     par = par if par in UPLOAD_PARALLEL else 0
     return {"interval": num(raw.get("interval"), 2, 1440, 10), "max_gb": max_gb, "max_gb_v": 1, "encoder": encoder,
-            "cpu_preset": preset, "hours": hours, "encode_slots": slots, "exclude": clean_exclude(raw.get("exclude")), "rules": rules,
+            "cpu_preset": preset, "encode_priority": prio, "hw_decode": bool(raw.get("hw_decode", True)), "hours": hours, "encode_slots": slots, "exclude": clean_exclude(raw.get("exclude")), "rules": rules,
             "upload_parallel": par,
             # 하드섭 자동 판단 (선택): 자막 기다리는 항목의 5분 간격 장면을 LLM(이미지를 보는 모델)에게 보여 판단 - tgup/hardsub_llm.py
             "hardsub_llm": hardsub_llm.settings(raw.get("hardsub_llm"))}
@@ -3279,6 +3291,7 @@ class Mirror:
         하드웨어 인코더가 실패하면 그 인코더는 빼고 CPU로 한 번 더"""
         st = load_settings()
         enc = await folder_watch.pick_encoder(st["encoder"], st["cpu_preset"])
+        enc = {**(enc or {}), "hw_decode": st.get("hw_decode", True)}   # (그래픽 카드로 원본 풀기 - 설정에서 끌 수 있음)
         plan = make(enc)
         if plan is None:
             return None

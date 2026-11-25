@@ -691,6 +691,18 @@ def video_encoder(enc, crf, vf):
                     "-profile:v", "high", "-level:v", "4.1", "-pix_fmt", "yuv420p"]
 
 
+def hw_decode_args(enc):
+    """하드웨어 인코더를 쓸 때 원본 디코딩(HEVC 등 - CPU를 가장 많이 씀)도 그래픽 카드로. 프레임은 메모리로 내려 받아
+    자막 입히기·줄이기는 그대로 CPU에서 (그래픽 카드가 그 코덱을 못 풀면 ffmpeg가 알아서 CPU로)"""
+    name = (enc or {}).get("name")
+    dev = (enc or {}).get("device") or VAAPI_DEVICE
+    if name in ("qsv", "vaapi") and os.path.exists(dev):
+        return ["-hwaccel", "vaapi", "-hwaccel_device", dev]
+    if name == "nvenc":
+        return ["-hwaccel", "cuda"]
+    return []
+
+
 _HW_OK = {}
 
 
@@ -752,6 +764,8 @@ def encode_plan(info, ext, height_cap, burn_sub=None, enc=None):
         if not scale and not burn_sub:
             notes.append("H.264로 인코딩")
         pre, vf, codec = video_encoder(enc, 23 if scale else 21, vf)
+        if (enc or {}).get("hw_decode", True):
+            pre = hw_decode_args(enc) + pre
         args += (["-vf", ",".join(vf)] if vf else []) + codec
     if a is None:
         pass
