@@ -1290,12 +1290,14 @@ class WebtoonManagerMetadataProvider(BaseMetadataProvider):
             # 파일명 집합을 만들고, 회차별로는 메모리에서만 접두어 매칭한다.
             series_dir = downloader.title_dir(download_root, title_for_check, title_id)
             existing_files = set(os.listdir(series_dir)) if os.path.isdir(series_dir) else set()
+            received = ss.received_nos("naver", title_id)   # 받았다가 지우거나 옮긴 회차도 받은 것으로
             for ep in episodes:
                 no = ep.get("no")
                 if isinstance(no, int):
                     prefix = downloader._archive_prefix(title_for_check, no, folder_zero_fill) + "#"
-                    ep["downloaded"] = any(
-                        f.startswith(prefix) and f.lower().endswith(".zip") for f in existing_files)
+                    on_disk = any(f.startswith(prefix) and f.lower().endswith(".zip") for f in existing_files)
+                    ep["downloaded"] = on_disk or no in received
+                    ep["moved"] = no in received and not on_disk
                 else:
                     ep["downloaded"] = False
 
@@ -1377,7 +1379,9 @@ class WebtoonManagerMetadataProvider(BaseMetadataProvider):
                         delay_seconds=float(cfg.get("DELAY_SECONDS", 1.0)),
                         timeout=int(cfg.get("REQUEST_TIMEOUT_SECONDS", 10)),
                         log=ss.append_log, force=force)
-                    if ok:
+                    if ok and dl.is_received_skip(err):   # 받은 기록 있음 (파일은 옮겼거나 지움) - 압축할 것 없음
+                        consecutive_fail = 0
+                    elif ok:
                         consecutive_fail = 0
                         ok_count += 1 if not skipped else 0
                         ss.append_history({"type": "manual_download", "source": "manual",

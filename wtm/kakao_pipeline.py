@@ -1239,6 +1239,8 @@ def download_series(cfg, session, sid, log=print, full=False, cancel_check=None,
         _renumber_existing_files(root, title, sid, episodes,
                                  _num(cfg, "FOLDER_ZERO_FILL", 4), log=log, old_map=old_map)
         done = _existing_nos(downloader.title_dir(root, title, sid))
+        ss.forget_received("kakao", sid)   # 회차 번호 매기는 방식이 바뀜 - 받은 기록도 새 번호(폴더의 파일)로 다시
+        ss.mark_received("kakao", sid, done)
         real = [n for n in done if n < kakao_api.SPECIAL_EP_BASE]
         renum = {"ep_numbering": EP_NUMBERING, "checked_no": 0,
                  "last_downloaded_no": max(real) if real else None}
@@ -1258,7 +1260,12 @@ def download_series(cfg, session, sid, log=print, full=False, cancel_check=None,
 
     series_dir = downloader.title_dir(root, title, sid)
     # 동영상만 있는 회차는 받은 것으로 친다 (파일은 없지만 빠진 회차로 보지 않음)
-    have = _existing_nos(series_dir) | _outbox_nos(temp_root, sid) | set(int(n) for n in t.get("video_nos") or [])
+    on_disk = _existing_nos(series_dir)
+    if on_disk:
+        ss.mark_received("kakao", sid, on_disk)   # 폴더에 있는 회차도 기록에 (나중에 지우거나 옮겨도 다시 안 받게)
+    # 받은 기록: 받았다가 사용자가 지우거나 다른 곳으로 옮긴 회차도 받은 것으로 본다 (강제 다시 받기만 예외)
+    have = (on_disk | _outbox_nos(temp_root, sid) | set(int(n) for n in t.get("video_nos") or [])
+            | ss.received_nos("kakao", sid))
     checked_no = int(t.get("checked_no") or 0)
     use_waitfree = bool(cfg.get("KAKAO_USE_WAITFREE", False))
 
@@ -1928,13 +1935,16 @@ def lookup_episodes(cfg, sid):
         t = dict(t, **_info_patch(info)) if info else t
     title = t.get("title") or str(sid)
     eps = kakao_api.fetch_episode_list(session, sid, series_title=title)
-    have = _existing_nos(downloader.title_dir(series_root(cfg, t), title, sid))
+    on_disk = _existing_nos(downloader.title_dir(series_root(cfg, t), title, sid))
+    received = ss.received_nos("kakao", sid)   # 받았다가 지우거나 옮긴 회차도 받은 것으로
+    have = on_disk | received
     out = []
     for ep in eps:
         out.append({
             "no": ep["no"], "order": ep.get("order"), "subtitle": ep.get("subtitle", ""),
             "charge": not (ep.get("free") or ep.get("rented")),
             "rented": bool(ep.get("rented")), "downloaded": ep["no"] in have,
+            "moved": ep["no"] in received and ep["no"] not in on_disk,
             "special": ep["no"] >= kakao_api.SPECIAL_EP_BASE,
         })
     return {"titleId": str(sid), "title": title, "platform": "kakao", "episodes": out}
