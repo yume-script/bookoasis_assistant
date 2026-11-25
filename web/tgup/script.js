@@ -859,6 +859,23 @@
     };
     // 단계별 시간 {받기, 인코딩, 나누기, 올리기, 대기} -> "받기 2분 · 인코딩 10분 · 올리기 3분"
     const fmtTimes = (t) => ['준비', '받기', '인코딩', '나누기', '올리기', '대기'].filter((k) => t && t[k] >= 1).map((k) => `${k} ${fmtDur(t[k])}`).join(' · ');
+    // 진행 중 화면: 공정마다 한 줄 ("· 받기 4분 56초")
+    const timeLines = (t) => ['준비', '받기', '인코딩', '나누기', '올리기', '대기'].filter((k) => t && t[k] >= 1).map((k) => `· ${k} ${fmtDur(t[k])}`);
+    const clock = (ts) => new Date(ts * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    // 진행률과 남은 시간: 인코딩은 ffmpeg 속도(영상 길이 기준 몇 배속), 받기·올리기·나누기는 이 화면이 본 진행 속도로
+    const rateMemo = new Map();
+    function progressInfo(key, c) {
+        if (!c || !c.total) return null;
+        const pct = Math.min(100, Math.max(0, (c.done / c.total) * 100));
+        const left = Math.max(0, c.total - c.done);
+        const sp = parseFloat(String(c.speed || ''));
+        if (/인코딩|담는/.test(c.phase || '') && sp > 0) return { pct, eta: left / 1000 / sp };   // done·total은 영상 시간(ms)
+        const now = Date.now() / 1000;
+        let m = rateMemo.get(key);
+        if (!m || m.phase !== c.phase || c.done < m.d) { m = { phase: c.phase, t: now, d: c.done }; rateMemo.set(key, m); }
+        const dt = now - m.t;
+        return { pct, eta: dt >= 4 && c.done > m.d ? left / ((c.done - m.d) / dt) : null };
+    }
     // 취소·건너뛴 항목 다시 올리기 (최근 7일 / 30일 / 전체) - 이미 올린 같은 파일·같은 회차는 빼고 까닭을 보여 줌
     function againBox(s, pane) {
         if (!s.skipped) return null;
@@ -951,11 +968,21 @@
             const prep = l.stage === 'prepare';
             const waitSlot = /계정·채널 차례/.test(c.phase || '');   // 다 준비됨 - 놀고 있는 계정·빈 채널을 기다림
             const encWait = /인코딩 차례/.test(c.phase || '');       // 받기는 끝남 - 인코딩 차례를 기다림 (그동안 다른 줄이 다음 항목을 처리)
+            // 줄마다 한 가지: 지금 하는 일 / 진행률·남은 시간 / 시작·지난 시간 / 공정별 걸린 시간 (한 줄에 하나씩)
+            const prog = progressInfo(`${c.rule}/${c.key}`, c);
+            const bytes = c.total && /올리는|받는|복사/.test(c.phase || '');
+            const lines = [
+                `${many && !prep ? `[${accName(l.tg)}] ` : ''}${c.phase}${c.speed && /인코딩|담는/.test(c.phase) ? ` · ${c.speed}` : ''}`,
+                prog ? [`진행 ${prog.pct.toFixed(1)}%`, bytes ? `${fmtB(c.done)} / ${fmtB(c.total)}` : '',
+                    prog.eta != null ? `남은 시간 약 ${fmtDur(prog.eta)} (${clock(Date.now() / 1000 + prog.eta)}쯤 끝)` : '남은 시간 계산 중'].filter(Boolean).join(' · ') : '',
+                c.elapsed ? `시작 ${when(c.started)} · ${fmtDur(c.elapsed)} 지남` : '',
+                ...timeLines(c.times),
+            ].filter(Boolean);
             const r = row(c.title, chip(waitSlot || encWait ? 'wait' : 'run',
                 prep ? (waitSlot ? '올릴 차례 기다림' : encWait ? '인코딩 대기' : '준비 중') : '올리는 중'), c.subs ? subsTag(c.subs) : '확인 중',
-                [many && !prep ? `[${accName(l.tg)}]` : '', `${c.phase}${c.speed && /인코딩/.test(c.phase) ? ` · ${c.speed}` : ''}${c.total && /올리는|받는|복사/.test(c.phase) ? ` · ${fmtB(c.done)} / ${fmtB(c.total)}` : ''}`,
-                    c.elapsed ? `시작 ${when(c.started)} · ${fmtDur(c.elapsed)} 지남` : '', fmtTimes(c.times)].filter(Boolean).join(' · '),
+                lines.join('\n'),
                 h('div', { class: 'cache-bar mirror-bar' }, h('div', { style: { width: `${pct}%` } })));
+            r.lastChild.classList.add('mirror-lines');
             // [인코딩 없이 올리기]: 준비 중(인코딩·인코딩 대기 등)인 영상 - 영상은 그대로 복사, 소리만 AAC·mp4로, 크면 나눠서
             const noEnc = c.rule && prep && !c.no_encode && !/그대로 담는|나누는|올리는/.test(c.phase || '')
                 ? act({ rule: c.rule, key: c.key, title: c.title }, 'noencode', '인코딩 없이 올리기',
