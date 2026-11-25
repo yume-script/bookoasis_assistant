@@ -2998,8 +2998,8 @@ class Mirror:
                     try:
                         if remote:
                             await folder_watch.fetch(folder, rel, lpath)
-                        lm = await client.send_file(peer, lpath, force_document=True,
-                                                    attributes=[DocumentAttributeFilename(os.path.splitext(name)[0] + ".lrc")])
+                        lm = await self._sent_anyway(client.send_file(peer, lpath, force_document=True,
+                                                    attributes=[DocumentAttributeFilename(os.path.splitext(name)[0] + ".lrc")]), lrc)
                         self._note_sent(getattr(lm, "id", None))
                         notes.append("가사(.lrc) 첨부")
                     except Exception as e:  # noqa: BLE001 - 가사는 못 올려도 곡은 올라감
@@ -3023,17 +3023,29 @@ class Mirror:
             return par
         return 4 if (self._gb_cache.get(tg) or (0, 2))[1] >= 4 else 2
 
+    @staticmethod
+    async def _sent_anyway(coro, what):
+        """보내기 요청의 '답'을 Telethon이 읽지 못한 경우(TypeNotFoundError - 텔레그램이 이 Telethon이 모르는 형식을 섞어 보냄):
+        텔레그램은 이미 받아 채널에 올렸으므로 보낸 것으로 친다 (다시 올리면 같은 영상이 두 번 올라감). 메시지 번호만 모른다"""
+        try:
+            return await coro
+        except Exception as e:  # noqa: BLE001
+            if type(e).__name__ != "TypeNotFoundError":
+                raise
+            log.warning("자동 올리기: %s - 텔레그램이 보낸 답을 읽지 못했지만 올라간 것으로 봅니다 (Telethon 업데이트 필요): %s", what, str(e)[:160])
+            return None
+
     async def _send(self, client, peer, path, progress=None, gap=False, **kw):
         """파일 하나를 텔레그램으로: 512KB 조각을 여러 연결로 동시에 올리고(fastupload) 보낸다.
         gap: 앞에 보낸 것이 있으면 UPLOAD_GAP_SEC 쉬고 (연달아 보내 요청 제한에 걸리지 않게)"""
         if not hasattr(client, "_sender"):   # (진짜 TelegramClient가 아님 - 시험용 가짜 등)
-            return await client.send_file(peer, path, progress_callback=progress, **kw)
+            return await self._sent_anyway(client.send_file(peer, path, progress_callback=progress, **kw), os.path.basename(path))
         if gap:
             await asyncio.sleep(UPLOAD_GAP_SEC)
         tg = (_LANE.get() or self._main).tg
         handle = await fastupload.upload(client, path, self._upload_conns(tg), progress)
         kw.setdefault("mime_type", mimetypes.guess_type(path)[0] or "application/octet-stream")
-        return await client.send_file(peer, handle, **kw)
+        return await self._sent_anyway(client.send_file(peer, handle, **kw), os.path.basename(path))
 
     async def _send_pieces(self, client, peer, *args):
         """조각들을 텔레그램으로 - 2단계: 놀고 있는 계정과 빈 채널을 잡고 그 계정으로 (나눈 조각은 한 번에 이어서)"""
@@ -3095,7 +3107,7 @@ class Mirror:
                     if not out:
                         continue
                 sname = f"{os.path.splitext(vname)[0]}{'.' + lang if lang else ''}.{'srt' if many and sext == 'smi' else sext}"
-                sub_msg = await client.send_file(peer, out, force_document=True, attributes=[DocumentAttributeFilename(sname)])
+                sub_msg = await self._sent_anyway(client.send_file(peer, out, force_document=True, attributes=[DocumentAttributeFilename(sname)]), sname)
                 self._note_sent(getattr(sub_msg, "id", None))
                 sent_subs += 1
             self._note_part(i, len(pieces), getattr(sent, "id", None))

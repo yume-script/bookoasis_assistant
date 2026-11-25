@@ -326,6 +326,9 @@ class Copier:
                 return await client.forward_messages(dst, ids, from_peer=src, drop_author=job["drop_author"] or None,
                                                      drop_media_captions=job["drop_captions"] or None)
             except Exception as e:  # noqa: BLE001
+                if type(e).__name__ == "TypeNotFoundError":   # 옮겨졌지만 답을 Telethon이 못 읽음 - 다시 보내면 두 번 올라감
+                    log.warning("채널 복사 %s: 텔레그램 답을 읽지 못했지만 옮겨진 것으로 봅니다: %s", job.get("src_title"), str(e)[:160])
+                    return ids
                 if type(e).__name__ not in ("FloodWaitError", "FloodPremiumWaitError", "SlowModeWaitError"):
                     raise
                 sec = getattr(e, "seconds", None)
