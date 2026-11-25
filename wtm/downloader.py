@@ -509,10 +509,34 @@ def find_existing_episode_archive(download_root, title, title_id, episode_no, fo
     return None
 
 
+RECEIVED_PREFIX = "받은 기록: "
+
+
+def _received_has(platform, title_id, episode_no):
+    try:
+        from . import state_store
+        return int(episode_no) in state_store.received_nos(platform, title_id)
+    except Exception:  # noqa: BLE001 - 기록을 못 읽으면 예전처럼 파일만 본다
+        return False
+
+
+def _received_mark(platform, title_id, episode_no):
+    try:
+        from . import state_store
+        state_store.mark_received(platform, title_id, [int(episode_no)])
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def is_received_skip(err):
+    """download_episode가 '받은 기록이 있어 건너뜀'으로 돌려준 것인가 (압축할 것 없음)"""
+    return bool(err) and str(err).startswith(RECEIVED_PREFIX)
+
+
 def download_episode(session, download_root, temp_root, title, title_id, episode_no,
                       image_zero_fill=4, folder_zero_fill=4,
                       max_concurrent=5, delay_seconds=1.0, timeout=10, log=None,
-                      force=False, image_list_func=None, referer=None):
+                      force=False, image_list_func=None, referer=None, platform=None):
     """
     1단계: 이미지만 내려받는다(압축은 하지 않음 - compress_episode()가 별도
     단계로 처리). 이미 압축까지 끝난 회차는 네트워크 요청 없이 즉시 스킵한다.
@@ -550,6 +574,8 @@ def download_episode(session, download_root, temp_root, title, title_id, episode
             try:
                 with zipfile.ZipFile(existing_archive) as zf:
                     cnt = len(zf.namelist())
+                # 예전에 받아 폴더에 있는 회차도 기록에 (나중에 지우거나 옮겨도 다시 안 받게)
+                _received_mark(platform or ("kakao" if image_list_func else "naver"), title_id, episode_no)
                 return True, True, cnt, None
             except Exception as e:  # noqa: BLE001
                 # 압축파일 자체가 손상돼 열리지 않음 - 예전에는 이런 경우도
@@ -565,6 +591,13 @@ def download_episode(session, download_root, temp_root, title, title_id, episode
                     pass
 
     target_dir = temp_episode_dir(temp_root, title_id, episode_no, folder_zero_fill)
+    platform = platform or ("kakao" if image_list_func else "naver")
+    if not force and not os.path.isdir(target_dir) and _received_has(platform, title_id, episode_no):
+        # 받은 기록은 있는데 파일이 없음 = 사용자가 지웠거나 다른 곳으로 옮김 -> 다시 받지 않는다
+        # (압축 전 낱장 폴더가 남아 있으면 마저 받고 압축하도록 아래로 진행)
+        if log:
+            log("titleId=%s no=%s: 이미 받은 회차(받은 기록 있음, 파일은 옮겼거나 지움) - 건너뜀" % (title_id, episode_no))
+        return True, True, 0, RECEIVED_PREFIX + "이미 받은 회차 (파일은 옮겼거나 지움)"
 
     try:
         # 버그 수정: 예전에는 target_dir에 이미지가 "하나라도" 있으면 무조건

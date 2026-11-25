@@ -379,6 +379,113 @@ def append_history(entry):
         entry.setdefault("ts", time.time())
         _append_capped(HISTORY_PATH, json.dumps(entry, ensure_ascii=False) + "\n",
                        MAX_HISTORY_LINES, 8 * 1024 * 1024)
+    if entry.get("type") in RECEIVED_TYPES and entry.get("title_id") is not None:
+        try:
+            mark_received(history_bucket(entry), entry["title_id"], [entry.get("episode_no")])
+        except OSError:
+            pass
+
+
+# ---- received/<플랫폼>/<작품 id>.json : 받은 회차 기록 (파일을 지우거나 옮겨도 남음) -------
+# 다운로드 이력(history.jsonl)은 줄 수 상한이 있어 오래된 것이 지워지고, 폴더의 zip은 사용자가
+# 지우거나 다른 곳(115·다른 드라이브)으로 옮길 수 있다. 그래서 받은 회차 번호를 작품마다 따로 남겨 두고
+# 자동·이어받기는 이 기록에 있는 회차를 "이미 받음"으로 본다 (강제 다시 받기만 무시).
+# 처음 쓸 때 history.jsonl에 남아 있는 받은 기록으로 한 번 채운다.
+RECEIVED_DIR = os.path.join(DATA_DIR, "received")
+RECEIVED_TYPES = ("download", "manual_download")
+_recv_lock = threading.RLock()
+_recv_cache = {}          # (플랫폼, 작품 id) -> set(회차)
+_recv_seeded = [False]
+
+
+def _recv_key(platform, title_id):
+    platform = "kakao" if str(platform) in ("kakao", "kakao_novel") else "naver"
+    tid = "".join(ch for ch in str(title_id) if ch.isalnum() or ch in "-_")[:64]
+    return platform, tid
+
+
+def _recv_path(platform, tid):
+    return os.path.join(RECEIVED_DIR, platform, "%s.json" % tid)
+
+
+def _recv_load(key):
+    if key not in _recv_cache:
+        data = read_json(_recv_path(*key), {})
+        nos = data.get("nos") if isinstance(data, dict) else None
+        _recv_cache[key] = set(int(n) for n in nos or [] if isinstance(n, int) or str(n).isdigit())
+    return _recv_cache[key]
+
+
+def _recv_save(key):
+    path = _recv_path(*key)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    write_json(path, {"nos": sorted(_recv_cache[key]), "updated": int(time.time())})
+
+
+def _recv_seed():
+    """처음 한 번: history.jsonl에 남은 받은 기록으로 채운다 (표시 파일이 있으면 건너뜀)"""
+    if _recv_seeded[0]:
+        return
+    _recv_seeded[0] = True
+    marker = os.path.join(RECEIVED_DIR, ".seeded")
+    if os.path.exists(marker):
+        return
+    found = {}
+    try:
+        with open(HISTORY_PATH, "r", encoding="utf-8") as f:
+            for line in f:
+                try:
+                    e = json.loads(line)
+                except ValueError:
+                    continue
+                no = e.get("episode_no")
+                if e.get("type") in RECEIVED_TYPES and e.get("title_id") is not None and isinstance(no, int):
+                    found.setdefault(_recv_key(history_bucket(e), e["title_id"]), set()).add(no)
+    except OSError:
+        pass
+    for key, nos in found.items():
+        cur = _recv_load(key)
+        if not nos <= cur:
+            cur |= nos
+            _recv_save(key)
+    os.makedirs(RECEIVED_DIR, exist_ok=True)
+    with open(marker, "w", encoding="utf-8") as f:
+        f.write(str(int(time.time())))
+
+
+def received_nos(platform, title_id):
+    """받은 적 있는 회차 번호 (파일을 지우거나 옮겼어도)"""
+    with _recv_lock:
+        _recv_seed()
+        return set(_recv_load(_recv_key(platform, title_id)))
+
+
+def mark_received(platform, title_id, nos):
+    nos = {int(n) for n in nos or [] if isinstance(n, int) or (isinstance(n, str) and n.isdigit())}
+    if not nos:
+        return
+    with _recv_lock:
+        _recv_seed()
+        key = _recv_key(platform, title_id)
+        cur = _recv_load(key)
+        if not nos <= cur:
+            cur |= nos
+            _recv_save(key)
+
+
+def forget_received(platform, title_id, nos=None):
+    """기록에서 뺀다 (nos=None이면 그 작품 전부) - 다시 받게 하려면"""
+    with _recv_lock:
+        _recv_seed()
+        key = _recv_key(platform, title_id)
+        cur = _recv_load(key)
+        before = len(cur)
+        if nos is None:
+            cur.clear()
+        else:
+            cur -= {int(n) for n in nos}
+        if len(cur) != before:
+            _recv_save(key)
 
 
 _hist_cache = {}

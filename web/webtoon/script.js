@@ -1436,7 +1436,8 @@
                   .filter(Boolean).join('·') + '으로 열 수 있으면 받아짐' + (cfgp.KAKAO_USE_WAITFREE ? ', 기다무는 계정마다 1장' : '') + ')'
               : '구매·대여한 경우만 받아짐)') + '</span>' : '') +
           (e.rented ? ' <span class="wtm-badge up">대여·소장</span>' : '') +
-          (isDone ? ' <span class="wtm-badge" style="background:color-mix(in srgb, #4f9d76 22%, transparent);color:color-mix(in srgb, #4f9d76 90%, var(--app-text-primary))">받음</span>' : '') +
+          (isDone ? ' <span class="wtm-badge" style="background:color-mix(in srgb, #4f9d76 22%, transparent);color:color-mix(in srgb, #4f9d76 90%, var(--app-text-primary))"' +
+            (e.moved ? ' title="받은 기록은 있지만 폴더에 파일이 없습니다(지웠거나 다른 곳으로 옮김) - 자동·전체 다운로드는 다시 받지 않습니다. 다시 받으려면 체크 후 [선택 회차 다운로드]">받음 (옮김·지움)' : '>받음') + '</span>' : '') +
           '</label>';
       }).join('') +
       '</div>' +

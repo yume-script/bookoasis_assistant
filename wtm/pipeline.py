@@ -352,7 +352,8 @@ def _naver_paid_sweep(cfg, session, tid, t, download_root, temp_root, log, skip_
         return 0
     paid = sorted([e for e in eps if e.get("charge") and e.get("no") not in (skip_nos or set())],
                   key=lambda e: e["no"])
-    paid = [e for e in paid if not downloader.find_existing_episode_archive(
+    recv = ss.received_nos("naver", tid)   # 받았다가 지우거나 옮긴 회차도 다시 받지 않음
+    paid = [e for e in paid if e["no"] not in recv and not downloader.find_existing_episode_archive(
         download_root, title, tid, e["no"], fz)]
     if not paid:
         return 0

@@ -140,11 +140,12 @@ def backfill_title(session, cfg, tid, t, args, stats):
     episodes = sorted(episodes, key=lambda e: e.get("no") or 0)
 
     missing = []
+    received = ss.received_nos("naver", tid)   # 받았다가 지우거나 옮긴 회차도 다시 받지 않음
     for ep in episodes:
         no = ep.get("no")
         if not isinstance(no, int):
             continue
-        if downloader.find_existing_episode_archive(
+        if no in received or downloader.find_existing_episode_archive(
                 download_root, title, tid, no, folder_zero_fill):
             stats["already"] += 1
             continue
@@ -213,6 +214,9 @@ def backfill_title(session, cfg, tid, t, args, stats):
         if not ok:
             log("  %s화 실패: %s" % (no, err))
             stats["errors"] += 1
+            continue
+        if downloader.is_received_skip(err):
+            stats["already"] += 1
             continue
 
         c_ok, c_path, c_msg = downloader.compress_episode(
