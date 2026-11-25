@@ -220,7 +220,7 @@
 
     // ── 채널 복사 ──
     // 다른 텔레그램 채널의 영상(메시지)을 내 채널로 한 번 옮긴다 (텔레그램 안에서 전달 - 받았다 다시 올리지 않음). 서버: tgup/chcopy.py
-    const copyState = { account: '', src: '', source: null, dst: '' };
+    const copyState = { account: '', srcSel: '', src: '', source: null, dst: '', kind: 'video', range: 'all', files: [], next: 0, picked: new Map(), q: '' };
     let copyTimer = null;
     const COPY_STATUS = { waiting: '기다림', running: '옮기는 중', flood: '요청 제한으로 쉬는 중', done: '끝', error: '실패', cancelled: '멈춤' };
     async function renderCopy(pane) {
@@ -232,37 +232,105 @@
         clear(pane);
         if (!accs.length) { pane.append(h('p', { class: 'muted', text: '로그인한 텔레그램 계정이 없습니다. [텔레그램 계정] 탭에서 먼저 로그인해 주세요.' })); return; }
         if (!accs.some((a) => a.id === copyState.account)) copyState.account = accs[0].id;
+        const MANUAL = '__manual';
         const accSel = h('select', { class: 'select' }, accs.map((a) => h('option', { value: a.id, selected: a.id === copyState.account, text: a.title })));
-        const srcIn = h('input', { class: 'input', value: copyState.src, placeholder: '@채널이름 · https://t.me/채널이름 · -100으로 시작하는 채널 번호' });
+        const srcSel = h('select', { class: 'select' }, h('option', { value: '', text: '불러오는 중...' }));
+        const srcIn = h('input', { class: 'input', value: copyState.src, placeholder: '@채널이름 · https://t.me/채널이름 · t.me/c/… 링크' });
         const checkBtn = h('button', { class: 'btn' }, icon('magnifying-glass'), ' 확인');
+        const manualBox = h('div', { class: 'toolbar' }, srcIn, checkBtn);
         const srcInfo = h('div', { class: 'field-hint' });
         const dstSel = h('select', { class: 'select' }, h('option', { value: '', text: '불러오는 중...' }));
-        const kindSel = h('select', { class: 'select' }, [['video', '영상만'], ['media', '사진·영상·파일'], ['all', '모든 글 (글만 있는 것도)']].map(([v, t]) => h('option', { value: v, text: t })));
-        const rangeSel = h('select', { class: 'select' }, [['all', '처음부터 전부'], ['recent', '최근 몇 개만'], ['ids', '메시지 번호 범위']].map(([v, t]) => h('option', { value: v, text: t })));
+        const kindSel = h('select', { class: 'select' }, [['video', '영상만'], ['media', '사진·영상·파일'], ['all', '모든 글 (글만 있는 것도)']].map(([v, t]) => h('option', { value: v, selected: v === copyState.kind, text: t })));
+        const rangeSel = h('select', { class: 'select' }, [['all', '처음부터 전부'], ['recent', '최근 몇 개만'], ['pick', '파일 골라서 (파일 이름으로)']].map(([v, t]) => h('option', { value: v, selected: v === copyState.range, text: t })));
         const limitIn = h('input', { class: 'input', type: 'number', min: '1', value: '100', style: { maxWidth: '10em' } });
-        const fromIn = h('input', { class: 'input', type: 'number', min: '1', placeholder: '시작 번호', style: { maxWidth: '10em' } });
-        const toIn = h('input', { class: 'input', type: 'number', min: '1', placeholder: '끝 번호 (비우면 마지막까지)', style: { maxWidth: '14em' } });
-        const rangeBox = h('div', { class: 'toolbar' });
-        const syncRange = () => {
-            clear(rangeBox);
-            if (rangeSel.value === 'recent') rangeBox.append(limitIn, h('span', { class: 'muted', text: '개 (고른 종류 기준, 오래된 것부터 옮김)' }));
-            if (rangeSel.value === 'ids') rangeBox.append(fromIn, h('span', { text: '~' }), toIn,
-                h('span', { class: 'muted', text: '메시지 링크 t.me/…/123 의 끝 숫자' }));
-        };
-        rangeSel.addEventListener('change', syncRange);
-        syncRange();
+        const rangeBox = h('div', {});
         const dropAuthor = h('input', { type: 'checkbox', checked: true });
         const dropCap = h('input', { type: 'checkbox' });
         const startBtn = h('button', { class: 'btn btn-accent' }, icon('copy'), ' 복사 시작');
+        const srcValue = () => (srcSel.value === MANUAL ? srcIn.value.trim() : srcSel.value);
+
+        // ── 파일 골라서: 원본 채널의 파일 이름 목록 (새 것부터), 체크 · Shift+클릭으로 범위 ──
+        const fileList = h('div', { class: 'send-list copy-files' });
+        const pickInfo = h('div', { class: 'field-hint' });
+        const qIn = h('input', { class: 'input', type: 'search', value: copyState.q, placeholder: '파일 이름으로 찾기' });
+        const moreBtn = h('button', { class: 'btn btn-sm' }, icon('chevron-down'), ' 더 불러오기');
+        let lastClick = null;
+        const syncPick = () => {
+            const ids = [...copyState.picked.keys()].sort((x, y) => x - y);
+            clear(pickInfo);
+            if (!ids.length) { pickInfo.append('고른 파일이 없습니다 - 체크하거나, 하나를 누른 뒤 Shift를 누른 채 다른 하나를 누르면 그 사이가 모두 골라집니다.'); return; }
+            const first = copyState.picked.get(ids[0]); const last = copyState.picked.get(ids[ids.length - 1]);
+            pickInfo.append(h('strong', { text: `${ids.length.toLocaleString()}개 고름` }), ids.length > 1 ? ` · ${first} ~ ${last}` : ` · ${first}`);
+        };
+        const drawFiles = () => {
+            const q = copyState.q.trim().toLowerCase();
+            const shown = copyState.files.filter((f) => !q || f.name.toLowerCase().includes(q));
+            clear(fileList);
+            if (!copyState.files.length) { fileList.append(h('p', { class: 'muted', text: copyState.loadingFiles ? '불러오는 중...' : '고를 파일이 없습니다.' })); }
+            shown.forEach((f, i) => {
+                const cb = h('input', { type: 'checkbox', checked: copyState.picked.has(f.id) });
+                cb.addEventListener('click', (e) => {
+                    const on = cb.checked;
+                    if (e.shiftKey && lastClick !== null) {
+                        const [x, y] = [Math.min(lastClick, i), Math.max(lastClick, i)];
+                        shown.slice(x, y + 1).forEach((g) => { if (on) copyState.picked.set(g.id, g.name); else copyState.picked.delete(g.id); });
+                        lastClick = i; drawFiles(); syncPick(); return;
+                    }
+                    if (on) copyState.picked.set(f.id, f.name); else copyState.picked.delete(f.id);
+                    lastClick = i; syncPick();
+                });
+                fileList.append(h('label', { class: 'send-row' }, cb,
+                    h('span', { class: 'send-name', text: f.name, title: `#${f.id}` }),
+                    h('span', { class: 'muted', text: `${f.size ? fmtBytes(f.size) : ''}${f.date ? ` · ${new Date(f.date * 1000).toLocaleDateString()}` : ''}` })));
+            });
+            moreBtn.style.display = copyState.next ? '' : 'none';
+        };
+        async function loadFiles(more) {
+            const src = srcValue();
+            if (!src) { copyState.files = []; drawFiles(); return; }
+            if (!more) { copyState.files = []; copyState.next = 0; copyState.picked.clear(); syncPick(); }
+            copyState.loadingFiles = true; drawFiles(); moreBtn.disabled = true;
+            try {
+                const r = await post('api/tgup/copy', { action: 'files', account: accSel.value, src, kind: kindSel.value, offset_id: more ? copyState.next : 0 });
+                copyState.files = copyState.files.concat(r.items || []); copyState.next = r.next || 0;
+            } catch (e) { toast(e.message, 'error', 6000); } finally { copyState.loadingFiles = false; moreBtn.disabled = false; drawFiles(); }
+        }
+        qIn.addEventListener('input', () => { copyState.q = qIn.value; lastClick = null; drawFiles(); });
+        moreBtn.addEventListener('click', () => loadFiles(true));
+        const selAll = h('button', { class: 'btn btn-sm' }, icon('check'), ' 보이는 것 모두');
+        selAll.addEventListener('click', () => { const q = copyState.q.trim().toLowerCase(); copyState.files.filter((f) => !q || f.name.toLowerCase().includes(q)).forEach((f) => copyState.picked.set(f.id, f.name)); drawFiles(); syncPick(); });
+        const selNone = h('button', { class: 'btn btn-sm' }, icon('xmark'), ' 모두 풀기');
+        selNone.addEventListener('click', () => { copyState.picked.clear(); drawFiles(); syncPick(); });
+
+        const syncRange = () => {
+            copyState.range = rangeSel.value;
+            clear(rangeBox);
+            if (rangeSel.value === 'recent') rangeBox.append(h('div', { class: 'toolbar' }, limitIn, h('span', { class: 'muted', text: '개 (고른 종류 기준, 오래된 것부터 옮김)' })));
+            if (rangeSel.value === 'pick') {
+                rangeBox.append(h('div', { class: 'toolbar' }, qIn, selAll, selNone), fileList, h('div', { class: 'toolbar' }, moreBtn), pickInfo);
+                if (!copyState.files.length) loadFiles(false); else { drawFiles(); syncPick(); }
+            }
+        };
+        rangeSel.addEventListener('change', syncRange);
+        kindSel.addEventListener('change', () => { copyState.kind = kindSel.value; if (rangeSel.value === 'pick') loadFiles(false); });
 
         async function loadChannels() {
             clear(dstSel).append(h('option', { value: '', text: '불러오는 중...' }));
-            try {
-                const r = await api(`api/tgup/channels?account=${encodeURIComponent(accSel.value)}`);
-                const chs = (r.channels || []).filter((c) => c.can_post);
-                clear(dstSel).append(h('option', { value: '', text: chs.length ? '올릴 채널을 고르세요' : '글을 올릴 수 있는 채널이 없습니다' }),
-                    ...chs.map((c) => h('option', { value: `-100${c.id}`, selected: `-100${c.id}` === copyState.dst, text: `${c.title}${c.username ? ` (@${c.username})` : ''}` })));
-            } catch (e) { clear(dstSel).append(h('option', { value: '', text: e.message })); }
+            clear(srcSel).append(h('option', { value: '', text: '불러오는 중...' }));
+            let chs = [];
+            try { chs = (await api(`api/tgup/channels?account=${encodeURIComponent(accSel.value)}`)).channels || []; } catch (e) {
+                clear(dstSel).append(h('option', { value: '', text: e.message }));
+            }
+            const label = (c) => `${c.title}${c.username ? ` (@${c.username})` : ''}${c.kind === 'group' ? ' · 그룹' : ''}`;
+            const posts = chs.filter((c) => c.can_post);
+            clear(dstSel).append(h('option', { value: '', text: posts.length ? '올릴 채널을 고르세요' : '글을 올릴 수 있는 채널이 없습니다' }),
+                ...posts.map((c) => h('option', { value: `-100${c.id}`, selected: `-100${c.id}` === copyState.dst, text: label(c) })));
+            const known = chs.some((c) => `-100${c.id}` === copyState.srcSel);
+            if (copyState.srcSel !== MANUAL && !known) copyState.srcSel = '';
+            clear(srcSel).append(h('option', { value: '', text: chs.length ? `가입한 채널에서 고르세요 (${chs.length}개)` : '가입한 채널이 없습니다' }),
+                ...chs.map((c) => h('option', { value: `-100${c.id}`, selected: `-100${c.id}` === copyState.srcSel, text: label(c) })),
+                h('option', { value: MANUAL, selected: copyState.srcSel === MANUAL, text: '직접 넣기 (가입하지 않은 공개 채널 @이름·링크)' }));
+            manualBox.style.display = srcSel.value === MANUAL ? '' : 'none';
         }
         const showSource = () => {
             const s = copyState.source;
@@ -270,41 +338,57 @@
             if (!s) return;
             const n = (v) => (v === null || v === undefined ? '?' : v.toLocaleString());
             srcInfo.append(h('strong', { text: s.title }), s.username ? ` (@${s.username})` : '',
-                ` · 메시지 ${n(s.messages)}개 · 동영상 ${n(s.videos)}개 · 파일 ${n(s.files)}개`,
-);
+                ` · 메시지 ${n(s.messages)}개 · 동영상 ${n(s.videos)}개 · 파일 ${n(s.files)}개`);
             if (s.protected) srcInfo.append(h('div', { class: 'error', text: '이 채널은 저장·전달 제한(보호된 콘텐츠)이 켜져 있어 복사할 수 없습니다.' }));
         };
-        checkBtn.addEventListener('click', async () => {
-            copyState.src = srcIn.value.trim();
+        async function checkSource() {
+            const src = srcValue();
+            copyState.source = null; copyState.files = []; copyState.next = 0; copyState.picked.clear(); showSource();
+            if (!src) { if (rangeSel.value === 'pick') drawFiles(); return; }
             checkBtn.disabled = true;
-            try { copyState.source = (await post('api/tgup/copy', { action: 'preview', account: accSel.value, src: copyState.src })).source; showSource(); } catch (e) { copyState.source = null; showSource(); toast(e.message, 'error', 6000); } finally { checkBtn.disabled = false; }
+            try { copyState.source = (await post('api/tgup/copy', { action: 'preview', account: accSel.value, src })).source; showSource(); } catch (e) { toast(e.message, 'error', 6000); } finally { checkBtn.disabled = false; }
+            if (rangeSel.value === 'pick') loadFiles(false);
+        }
+        srcSel.addEventListener('change', () => {
+            copyState.srcSel = srcSel.value;
+            manualBox.style.display = srcSel.value === MANUAL ? '' : 'none';
+            if (srcSel.value === MANUAL) { copyState.source = null; showSource(); srcIn.focus(); return; }
+            checkSource();
         });
-        srcIn.addEventListener('input', () => { copyState.source = null; showSource(); });
+        checkBtn.addEventListener('click', () => { copyState.src = srcIn.value.trim(); checkSource(); });
+        srcIn.addEventListener('keydown', (e) => { if (e.key === 'Enter') { copyState.src = srcIn.value.trim(); checkSource(); } });
         accSel.addEventListener('change', () => { copyState.account = accSel.value; copyState.source = null; showSource(); loadChannels(); });
         dstSel.addEventListener('change', () => { copyState.dst = dstSel.value; });
         startBtn.addEventListener('click', async () => {
-            copyState.src = srcIn.value.trim();
-            if (!copyState.src) { toast('원본 채널을 넣어 주세요.', 'error'); return; }
+            const src = srcValue();
+            if (!src) { toast('원본 채널을 골라 주세요.', 'error'); return; }
             if (!dstSel.value) { toast('올릴 채널을 골라 주세요.', 'error'); return; }
+            if (dstSel.value === src) { toast('원본과 올릴 채널이 같습니다.', 'error'); return; }
             if (copyState.source && copyState.source.protected) { toast('원본 채널이 저장·전달을 막아 두어 복사할 수 없습니다.', 'error'); return; }
+            const ids = [...copyState.picked.keys()].sort((x, y) => x - y);
+            if (rangeSel.value === 'pick' && !ids.length) { toast('옮길 파일을 골라 주세요.', 'error'); return; }
             startBtn.disabled = true;
             try {
                 const s = copyState.source || {};
-                await post('api/tgup/copy', { action: 'start', account: accSel.value, src: copyState.src, src_id: s.id || 0, src_title: s.title || copyState.src,
+                const srcTitle = s.title || (srcSel.value !== MANUAL && srcSel.selectedOptions[0] ? srcSel.selectedOptions[0].textContent : src);
+                await post('api/tgup/copy', { action: 'start', account: accSel.value, src, src_id: s.id || 0, src_title: srcTitle,
                     dst: dstSel.value, dst_title: dstSel.selectedOptions[0] ? dstSel.selectedOptions[0].textContent : '', kind: kindSel.value, range: rangeSel.value,
-                    limit: limitIn.value, from_id: fromIn.value, to_id: toIn.value, drop_author: dropAuthor.checked, drop_captions: dropCap.checked });
+                    limit: limitIn.value, ids, first_name: ids.length ? copyState.picked.get(ids[0]) : '', last_name: ids.length ? copyState.picked.get(ids[ids.length - 1]) : '',
+                    drop_author: dropAuthor.checked, drop_captions: dropCap.checked });
                 toast('복사를 시작합니다.', 'success');
+                copyState.picked.clear();
                 renderCopy(pane);
             } catch (e) { toast(e.message, 'error', 6000); startBtn.disabled = false; }
         });
 
+        manualBox.style.display = copyState.srcSel === MANUAL ? '' : 'none';
         pane.append(h('div', { class: 'mirror-rule' },
             field('계정 (원본 채널을 볼 수 있고, 올릴 채널에 글을 쓸 수 있는 계정)', accSel),
-            field('원본 채널', h('div', { class: 'toolbar' }, srcIn, checkBtn), '공개 채널은 이름·링크로, 비공개 채널은 이 계정으로 들어가 있어야 합니다 (번호 또는 t.me/c/… 링크).'),
+            field('원본 채널 (이 계정이 가입한 채널)', h('div', {}, srcSel, manualBox)),
             srcInfo,
             field('올릴 채널 (내가 글을 쓸 수 있는 채널)', dstSel),
             field('옮길 것', kindSel),
-            field('범위', h('div', {}, rangeSel, rangeBox), '시작할 때 원본의 마지막 글까지로 정합니다 - 복사하는 동안 새로 올라온 글은 옮기지 않습니다.'),
+            field('범위', h('div', {}, rangeSel, rangeBox), '시작할 때 원본의 마지막 글까지로 정합니다 - 복사하는 동안 새로 올라온 글은 옮기지 않습니다. 파일 골라서는 새 것부터 보이고, 옮길 때는 오래된 것부터 옮깁니다.'),
             h('div', { class: 'toolbar' },
                 h('label', { class: 'check', title: '"Forwarded from …" 표시 없이 내 채널에 올린 글처럼' }, dropAuthor, ' 출처(전달 표시) 숨기기'),
                 h('label', { class: 'check' }, dropCap, ' 캡션 빼기'), startBtn),
@@ -312,6 +396,7 @@
                 + '원본이 저장·전달 제한을 켜 둔 채널은 복사할 수 없습니다. 많이 옮기면 텔레그램이 잠깐 기다리라고 하는데(FLOOD_WAIT) 그 시간만큼 쉬고 이어서 합니다. '
                 + '권리가 있는 콘텐츠만 옮겨 주세요.' })));
         showSource();
+        syncRange();
         loadChannels();
 
         pane.append(h('h3', { text: '복사 작업' }));
@@ -329,7 +414,7 @@
             return h('div', { class: 'mirror-row copy-row', role: 'row' },
                 h('div', { class: 'mirror-cell grow' },
                     h('strong', { text: `${j.src_title} → ${j.dst_title}` }),
-                    h('div', { class: 'muted', text: `${j.kind_label} · ${j.range === 'recent' ? `최근 ${j.limit}개` : j.range === 'ids' ? `#${j.from_id || 1}~${j.to_id || '끝'}` : '전부'}`
+                    h('div', { class: 'muted', text: `${j.kind_label} · ${j.range === 'recent' ? `최근 ${j.limit}개` : j.range === 'pick' ? `파일 ${(j.count || 0).toLocaleString()}개 (${j.first_name}${j.count > 1 ? ` ~ ${j.last_name}` : ''})` : j.range === 'ids' ? `#${j.from_id || 1}~${j.to_id || '끝'}` : '전부'}`
                         + `${j.drop_author ? ' · 출처 숨김' : ''}${j.drop_captions ? ' · 캡션 뺌' : ''} · ${fmtTime(j.created)}` }),
                     j.error ? h('div', { class: 'error', text: j.error }) : null),
                 h('div', { class: 'mirror-cell' }, h('div', { text: st }),
