@@ -123,7 +123,8 @@ def _tools(mods, svc):
                               "(encode_slots)·한도(max_gb)·인코더·제외 정규식, 규칙들(id·켜짐·종류·폴더/Plex·채널·화질·자막 기다리기 분·"
                               "자막 입히기·같이 올릴 계정·음악 규칙의 이미 있는 곡 올리기).", _schema(), READ),
             ("tgup_set_settings", "텔레그램 자동 올리기 설정 바꾸기 (화면의 규칙 저장과 같음). settings: 바꿀 공통 칸 "
-                                  "{interval, hours, encode_slots, max_gb, encoder, cpu_preset, exclude}, rules: [{id, 바꿀 칸…}] "
+                                  "{interval, hours, encode_slots, max_gb, encoder, cpu_preset, exclude, encode_priority low/normal/high, hw_decode, "
+                                  "upload_parallel 0/1/2/4/8}, rules: [{id, 바꿀 칸…}] "
                                   "(enabled, height 0/480/720/1080, wait_subs, wait_min, burn_subs, caption, tg_alt, upload_existing), "
                                   "add_rules: [새 규칙 - kind folder/music/plex, folder 또는 plex+section, tg, channel …]. "
                                   "규칙을 지우지는 않는다 (끄려면 enabled=false).",
@@ -197,7 +198,8 @@ def wtm_set_settings(values):
             "changed": {k: {"before": cur[k].get("value"), "after": after.get(k)} for k in values if cur[k].get("value") != after.get(k)}}
 
 
-_TGUP_GLOBAL = ("interval", "hours", "encode_slots", "max_gb", "encoder", "cpu_preset", "exclude")
+_TGUP_GLOBAL = ("interval", "hours", "encode_slots", "max_gb", "encoder", "cpu_preset", "exclude",
+                "encode_priority", "hw_decode", "upload_parallel")   # (encode_priority: 봇의 채우기 운영이 재생 중 low ↔ 한가할 때 high)
 _TGUP_RULE = ("enabled", "height", "wait_subs", "wait_min", "burn_subs", "caption", "tg_alt", "upload_existing")
 
 

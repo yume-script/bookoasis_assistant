@@ -129,6 +129,8 @@ class TgupTest(unittest.TestCase):
             r0 = next(r for r in st2["rules"] if r["id"] == vid["id"])
             self.assertEqual((st2["hours"], r0["height"], r0["wait_min"], len(st2["rules"])), ("1-7", 1080, 60, 2))
             self.assertEqual(next(r for r in st2["rules"] if r["id"] == mus["id"])["media"], "music")   # 음악 규칙은 그대로
+            res = mcp.tgup_set_settings({"encode_priority": "high"})   # (봇 채우기 운영: 재생 중 low ↔ 한가할 때 high)
+            self.assertEqual((res["changed"]["encode_priority"]["after"], mcp.tgup_settings()["encode_priority"]), ("high", "high"))
             with self.assertRaises(mcp.ToolError):
                 mcp.tgup_set_settings({"rules": []})
             with self.assertRaises(mcp.ToolError):
