@@ -741,11 +741,13 @@ def encode_plan(info, ext, height_cap, burn_sub=None, enc=None):
     a = (streams(info, "audio") or [None])[0]
     if not v:
         raise FolderError("영상 트랙이 없는 파일입니다.")
+    if (enc or {}).get("video_copy"):   # [인코딩 없이 올리기]: 영상은 그대로 복사 (줄이기·자막 입히기 없음) - 소리 AAC·mp4로 담기만
+        height_cap, burn_sub = 0, None
     h = int(v.get("height") or 0)
     scale = bool(height_cap and h > height_cap)
     v_ok = (str(v.get("codec_name")) == "h264" and str(v.get("pix_fmt")) in ("yuv420p", "yuvj420p")
             and "10" not in str(v.get("profile") or "") and "4:4" not in str(v.get("profile") or "")
-            and not scale and not burn_sub)
+            and not scale and not burn_sub) or bool((enc or {}).get("video_copy"))
     a_ok = a is None or str(a.get("codec_name")) == "aac"   # 텔레그램 앱은 AAC여야 소리가 끊기지 않는다 (MP3·AC3·DTS 등은 AAC로)
     if v_ok and a_ok and ext.lower() in (".mp4", ".m4v"):
         return None
