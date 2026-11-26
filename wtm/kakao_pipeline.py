@@ -957,6 +957,8 @@ def run_waitfree_tick(cfg, log=print, show_status=True):
     due = waitfree_due_titles(cfg)
     cap = tick_max(cfg)
     res = {"titles": len(due), "downloaded": 0, "waitfree_used": 0, "backlog": len(due) > cap}
+    # 충전돼 기다리는 기다무 수 - 화면(wtm_status job)과 디스코드봇 채우기 운영이 본다 (밀린 동안 전체 실행을 따로 돌리지 않게)
+    ss.save_job_state({"waitfree_due": len(due), "waitfree_backlog": res["backlog"], "waitfree_due_at": time.time()})
     if not due:
         flush_pending_yaml(cfg, log=log)   # 밀린 것이 다 빠졌으면 미뤄 둔 yaml을 쓴다
         return res

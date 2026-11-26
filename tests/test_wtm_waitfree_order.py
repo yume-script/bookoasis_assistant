@@ -84,5 +84,24 @@ class DeferYamlTest(unittest.TestCase):
         self.assertEqual(self.written, ["444"])                # 밀리지 않았으면 작품 끝에 바로
 
 
+class TickReportTest(unittest.TestCase):
+    def test_tick_reports_backlog_in_job_state(self):
+        d = tempfile.mkdtemp(prefix="wtm-tick-")
+        self.addCleanup(shutil.rmtree, d, True)
+        saved = (ss.JOB_STATE_PATH, kp.waitfree_due_titles, kp.flush_leftovers, kp._repair_has_locked_once, kp.flush_pending_yaml)
+        self.addCleanup(lambda: (setattr(ss, "JOB_STATE_PATH", saved[0]), setattr(kp, "waitfree_due_titles", saved[1]),
+                                 setattr(kp, "flush_leftovers", saved[2]), setattr(kp, "_repair_has_locked_once", saved[3]),
+                                 setattr(kp, "flush_pending_yaml", saved[4])))
+        ss.JOB_STATE_PATH = os.path.join(d, "job_state.json")
+        kp.flush_leftovers = lambda cfg, log=print: 0
+        kp._repair_has_locked_once = lambda log=print: None
+        kp.flush_pending_yaml = lambda *a, **k: 0
+        kp.waitfree_due_titles = lambda cfg: {}
+        r = kp.run_waitfree_tick({}, log=lambda *a: None)
+        st = ss.load_job_state()
+        self.assertEqual((r["backlog"], st["waitfree_due"], st["waitfree_backlog"]), (False, 0, False))
+        self.assertGreater(st["waitfree_due_at"], 0)
+
+
 if __name__ == "__main__":
     unittest.main()
