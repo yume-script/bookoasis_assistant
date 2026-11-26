@@ -50,7 +50,8 @@
 - 계정 여럿 (규칙의 tg + tg_alt): 놀고 있는 계정이 진행 목록의 앞에서부터 가져간다. 한 계정에 문제가 생기면(로그아웃·세션 만료·
   채널 권한 없음·요청 제한·연결 끊김) 그 항목을 다른 계정에 넘기고, 문제가 생긴 계정은 잠시 쉰다. 화면에서 직접 다른 계정을
   고를 수도 있다 (pin). 진행 목록의 순서는 화면에서 바꿀 수 있다 (위로·아래로·맨 앞).
-- 임시 채널 (규칙의 relay_channel, 선택): 같은 채널에는 한 경로로 한 계정씩만 올려서 계정이 여럿이어도 한 채널이면 하나만 일한다.
+- 임시 채널 (규칙의 relay_channels, 선택, 여러 개): 같은 채널에는 한 경로로 한 계정씩만 올려서 계정이 여럿이어도 한 채널이면 하나만 일한다.
+  임시 채널도 한 채널에 한 계정씩 - 놀고 있는 계정은 비어 있는 임시 채널(고른 순서대로)로.
   임시 채널을 정해 두면 채널을 다른 계정이 쓰는 동안 놀고 있는 계정은 임시 채널로 올리고 -> 원래 채널로 전달(출처 숨김, 캡션 그대로)
   -> 임시 채널에서 지운다. 올린 계정이 원래 채널에 쓸 수 없으면 규칙의 다른 계정이 옮긴다. 나눠 올리다 멈춘 것을 이어 올릴 때와
   음악 규칙은 원래 채널로만.
@@ -319,6 +320,9 @@ _lock = threading.Lock()
 # ---------------------------------------------------------------------------
 # 설정
 # ---------------------------------------------------------------------------
+MAX_RELAYS = 5   # 규칙 하나의 임시 채널 수
+
+
 def clean_settings(raw):
     raw = raw if isinstance(raw, dict) else {}
 
@@ -346,8 +350,8 @@ def clean_settings(raw):
                 "tg_auto": bool(r.get("tg_auto")),
                 # 임시 채널 (선택): 다른 계정이 이 규칙의 채널로 올리는 동안 놀고 있는 계정은 여기에 올린 뒤 채널로 옮긴다(전달, 출처 숨김)
                 # - 같은 채널에는 한 경로(직접/프록시)로 한 계정씩만 올려서, 계정이 여럿이어도 한 채널이면 하나만 일하던 것
-                "relay_channel": str(r.get("relay_channel") or "").strip(),
-                "relay_title": str(r.get("relay_title") or "")[:100],
+                # 여러 개를 고를 수 있다 (relay_channels, 고른 차례대로 비어 있는 것을 씀 - 임시 채널마다 한 번에 한 계정)
+                "relay_channels": [], "relay_titles": {},
                 "burn_subs": bool(r.get("burn_subs", True)),
                 # 폴더 규칙 (rclone 드라이브 등): kind "folder", folder = 절대 경로 또는 rclone "원격:경로"
                 "kind": "folder" if r.get("kind") in ("folder", "music", "youtube") else "plex",
@@ -360,8 +364,15 @@ def clean_settings(raw):
                 "upload_existing": bool(r.get("upload_existing", False)),
                 # height보다 높은 영상은 용량과 상관없이 height로 줄여 올린다 (0이면 줄이지 않음) - Plex·폴더 규칙 모두
                 "height": num(r.get("height"), 0, 2160, 720)}
-        if not re.fullmatch(r"-?\d+", rule["relay_channel"]) or rule["relay_channel"] == rule["channel"]:
-            rule["relay_channel"], rule["relay_title"] = "", ""
+        raw_relays = r.get("relay_channels") if isinstance(r.get("relay_channels"), list) else [r.get("relay_channel")]
+        raw_titles = r.get("relay_titles") if isinstance(r.get("relay_titles"), dict) else {}
+        if r.get("relay_channel") and r.get("relay_title"):   # (예전 한 개짜리 설정)
+            raw_titles = {str(r["relay_channel"]): r["relay_title"], **raw_titles}
+        relays = list(dict.fromkeys(str(x).strip() for x in raw_relays
+                                    if re.fullmatch(r"-?\d+", str(x or "").strip()) and str(x).strip() != rule["channel"]))[:MAX_RELAYS]
+        rule["relay_channels"] = relays
+        rule["relay_titles"] = {c: str(raw_titles.get(c) or "")[:100] for c in relays}
+        rule["relay_channel"] = relays[0] if relays else ""   # (예전 이름 - 첫 임시 채널)
         if rule["height"] not in (0, 480, 720, 1080):
             rule["height"] = 720
         alt = r.get("tg_alt") if isinstance(r.get("tg_alt"), list) else []
@@ -1861,9 +1872,10 @@ class Mirror:
     def _pick_account(self, rule, job, ch, relay=False):
         """지금 보낼 계정: 올릴 수 있는 계정 중 쉬는 중·보내는 중이 아니고, 그 채널에 같은 경로(직접/프록시)가 없는 것.
         텔레그램이 속도를 늦추지 않는 계정을 먼저. 없으면 "".
-        relay: 임시 채널로 올릴 때 - 놀고 있는 계정이 모두 함께 쓰게 경로 제한을 두지 않는다 (예전엔 임시 채널에도 한 경로에 한 계정씩이라
-        계정이 셋이어도 원래 채널 하나 + 임시 채널 하나만 일했다)"""
-        used = [] if relay else (self._chan_routes.get(ch) or [])
+        relay: 임시 채널로 올릴 때 - 경로와 상관없이 한 채널에 한 계정만 (그 임시 채널로 누가 올리는 중이면 아무도 안 됨)"""
+        if relay and self._chan_routes.get(ch):
+            return ""
+        used = self._chan_routes.get(ch) or []
         ok = [a for a in self._accounts_for(rule, job)
               if a and not self._is_down(a) and a not in self._uploading and self._route(a) not in used]
         ok.sort(key=lambda a: throttle.throttled(a))
@@ -1875,22 +1887,28 @@ class Mirror:
         now = time.time()
         if now - self._relay_at > 10:
             try:
-                self._relay_map = {r["id"]: str(r.get("relay_channel") or "") for r in load_settings()["rules"]}
+                self._relay_map = {r["id"]: (list(r.get("relay_channels") or ([r["relay_channel"]] if r.get("relay_channel") else [])),
+                                             dict(r.get("relay_titles") or {}))
+                                   for r in load_settings()["rules"]}
             except Exception:  # noqa: BLE001
                 self._relay_map = {}
             self._relay_at = now
         rid = (rule or {}).get("id")
         if rid in self._relay_map:
             return self._relay_map[rid]
-        return str((rule or {}).get("relay_channel") or "")
+        rule = rule or {}
+        chans = list(rule.get("relay_channels") or ([rule["relay_channel"]] if rule.get("relay_channel") else []))
+        return chans, dict(rule.get("relay_titles") or {})
 
     def _relay_of(self, rule, ch, lane):
-        """이 항목을 임시 채널로 돌릴 수 있으면 그 채널, 아니면 "" (나눠 올리다 멈춘 것을 이어 올릴 때는 원래 채널로 -
-        lane.resume은 항목을 시작할 때마다 새로 정해서 지난 항목의 값이 남지 않는다)"""
-        via = self._live_relay(rule)
-        if not via or via == str(ch) or lane.resume:
-            return ""
-        return via
+        """이 항목을 돌릴 수 있는 임시 채널들 (고른 차례대로, 없으면 []) - 나눠 올리다 멈춘 것을 이어 올릴 때는 원래 채널로
+        (lane.resume은 항목을 시작할 때마다 새로 정해서 지난 항목의 값이 남지 않는다)"""
+        if lane.resume:
+            return []
+        return [c for c in self._live_relay(rule)[0] if c and c != str(ch)]
+
+    def relay_title(self, rule, via):
+        return self._live_relay(rule)[1].get(str(via)) or str(via)
 
     @contextlib.asynccontextmanager
     async def _upload_slot(self, relay_ok=False):
@@ -1960,9 +1978,11 @@ class Mirror:
         tg = self._pick_account(rule, job, ch)
         if tg or not relay_ok:
             return tg, ch
-        via = self._relay_of(rule, ch, lane)
-        tg = self._pick_account(rule, job, via, relay=True) if via else ""
-        return (tg, via) if tg else ("", ch)
+        for via in self._relay_of(rule, ch, lane):   # 비어 있는(아무도 올리지 않는) 임시 채널 중 첫 것
+            tg = self._pick_account(rule, job, via, relay=True)
+            if tg:
+                return tg, via
+        return "", ch
 
     def _better_waiter(self, lane, job):
         """올릴 차례를 기다리는 다른 줄 중 진행 목록에서 더 앞에 있고 지금 바로 보낼 수 있는 것이 있나 (임시 채널로 갈 수 있는 것도)
@@ -3129,7 +3149,7 @@ class Mirror:
             raise
         ids = list(lane.relay_ids)
         title = (self.current or {}).get("title", "")
-        self.current = {"title": title, "phase": "임시 채널에서 채널로 옮기는 중", "done": 0, "total": 0}
+        self.current = {"title": title, "phase": f"임시 채널({self.relay_title(lane.rule, relay['via'])})에서 채널로 옮기는 중", "done": 0, "total": 0}
         try:
             moved = await self._relay_forward(lane.rule, tg, ids, relay)
         except BaseException:
@@ -3140,7 +3160,7 @@ class Mirror:
         for new in moved.values():   # (원래 채널에 올라간 것 - 혹시 뒤에서 실패하면 지울 수 있게)
             self._note_sent(new)
         await self._relay_drop(client, via_peer, ids)
-        lane.relay_used = tg
+        lane.relay_used = f"{tg} · {self.relay_title(lane.rule, relay['via'])}"
         log.info("자동 올리기: %s - 계정 %s가 임시 채널을 거쳐 올림 (%d개)", title, tg, len(ids))
         return n
 
@@ -3221,7 +3241,8 @@ class Mirror:
             attrs = [DocumentAttributeVideo(duration=int(dur), w=width, h=height, supports_streaming=stream),
                      DocumentAttributeFilename(vname)]
             self.current = {"title": title + (f" ({i}/{len(pieces)})" if many else ""),
-                            "phase": "임시 채널에 올리는 중" if (_LANE.get() or self._main).relay else "텔레그램에 올리는 중",
+                            "phase": (f"임시 채널({self.relay_title((_LANE.get() or self._main).rule, (_LANE.get() or self._main).relay['via'])})에 올리는 중"
+                                      if (_LANE.get() or self._main).relay else "텔레그램에 올리는 중"),
                             "done": 0, "total": os.path.getsize(path)}
 
             tg_now = (_LANE.get() or self._main).tg
