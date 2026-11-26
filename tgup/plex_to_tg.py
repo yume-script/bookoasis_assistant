@@ -924,7 +924,8 @@ class Mirror:
         self._chan_cond = None   # 그 표가 바뀔 때 깨우는 조건 (루프 안에서 만든다)
         self._uploading = {}     # 계정 -> 지금 그 계정으로 보내는 줄 (2단계 - 계정 하나는 한 번에 하나씩 보낸다)
         self._enc_waiting = set()   # 인코딩 차례를 기다리는 줄들 (진행 목록 순서대로 차례를 준다)
-        self._up_waiting = {}       # 올릴 차례를 기다리는 줄 -> (규칙, 항목, 채널) (진행 목록 순서대로)
+        self._up_waiting = {}       # 올릴 차례를 기다리는 줄 -> (규칙, 항목, 채널, 임시 채널 가능) (진행 목록 순서대로)
+        self._relay_map, self._relay_at = {}, 0   # 규칙 id -> 임시 채널 (저장된 지금 설정, _live_relay)
         self._acc_sent = {}      # 계정 -> 마지막으로 보내기를 끝낸 때 (연달아 보낼 때 UPLOAD_GAP_SEC 쉼)
         self._acc_last = {}      # 계정 -> 마지막으로 끝낸 항목 {title, ok, at, elapsed} (화면)
         self.offline = {}        # 닿지 못한 원본 드라이브 -> {since, path, last, count, logged} (실패로 세지 않고 다시 시도 중)
@@ -1857,18 +1858,36 @@ class Mirror:
         ch = self._channel_of(rule)
         return bool(ch) and any(ln is not me and ln.channel == ch and ln.current_job for ln in self.lanes.values())
 
-    def _pick_account(self, rule, job, ch):
+    def _pick_account(self, rule, job, ch, relay=False):
         """지금 보낼 계정: 올릴 수 있는 계정 중 쉬는 중·보내는 중이 아니고, 그 채널에 같은 경로(직접/프록시)가 없는 것.
-        텔레그램이 속도를 늦추지 않는 계정을 먼저. 없으면 "" """
-        used = self._chan_routes.get(ch) or []
+        텔레그램이 속도를 늦추지 않는 계정을 먼저. 없으면 "".
+        relay: 임시 채널로 올릴 때 - 놀고 있는 계정이 모두 함께 쓰게 경로 제한을 두지 않는다 (예전엔 임시 채널에도 한 경로에 한 계정씩이라
+        계정이 셋이어도 원래 채널 하나 + 임시 채널 하나만 일했다)"""
+        used = [] if relay else (self._chan_routes.get(ch) or [])
         ok = [a for a in self._accounts_for(rule, job)
               if a and not self._is_down(a) and a not in self._uploading and self._route(a) not in used]
         ok.sort(key=lambda a: throttle.throttled(a))
         return ok[0] if ok else ""
 
+    def _live_relay(self, rule):
+        """규칙의 임시 채널 - 저장된 지금 설정에서 (진행 목록을 도는 동안 바꾼 설정도 바로 쓰게, 10초 기억).
+        예전엔 한 차례를 시작할 때 읽은 규칙만 써서, 밀린 항목이 계속 있으면 나중에 넣은 임시 채널이 몇 시간이고 안 쓰였다"""
+        now = time.time()
+        if now - self._relay_at > 10:
+            try:
+                self._relay_map = {r["id"]: str(r.get("relay_channel") or "") for r in load_settings()["rules"]}
+            except Exception:  # noqa: BLE001
+                self._relay_map = {}
+            self._relay_at = now
+        rid = (rule or {}).get("id")
+        if rid in self._relay_map:
+            return self._relay_map[rid]
+        return str((rule or {}).get("relay_channel") or "")
+
     def _relay_of(self, rule, ch, lane):
-        """이 항목을 임시 채널로 돌릴 수 있으면 그 채널, 아니면 "" (나눠 올리다 멈춘 것을 이어 올릴 때는 원래 채널로)"""
-        via = str((rule or {}).get("relay_channel") or "")
+        """이 항목을 임시 채널로 돌릴 수 있으면 그 채널, 아니면 "" (나눠 올리다 멈춘 것을 이어 올릴 때는 원래 채널로 -
+        lane.resume은 항목을 시작할 때마다 새로 정해서 지난 항목의 값이 남지 않는다)"""
+        via = self._live_relay(rule)
         if not via or via == str(ch) or lane.resume:
             return ""
         return via
@@ -1889,20 +1908,15 @@ class Mirror:
         waited = False
         final = ch
         async with self._chan_cond:
-            self._up_waiting[lane] = (rule, job, ch)
+            self._up_waiting[lane] = (rule, job, ch, relay_ok)
             try:
                 while True:
                     ch = final
-                    tg = self._pick_account(rule, job, ch)
+                    tg, ch = self._slot_for(lane, rule, job, final, relay_ok)
                     if tg and self._better_waiter(lane, job):
-                        # 진행 목록에서 더 앞에 있고 지금 바로 보낼 수 있는 항목이 기다린다 - 그쪽이 먼저 (깨워서 가져가게)
-                        tg = ""
+                        # 진행 목록에서 더 앞에 있고 지금 바로 보낼 수 있는(원래 채널이든 임시 채널이든) 항목이 기다린다 - 그쪽이 먼저
+                        tg, ch = "", final
                         self._chan_cond.notify_all()
-                    via = self._relay_of(rule, ch, lane) if relay_ok and not tg and not self._better_waiter(lane, job) else ""
-                    if via:   # 채널은 다른 계정이 쓰는 중 - 놀고 있는 계정이 임시 채널로 올리고 나중에 옮긴다
-                        tg = self._pick_account(rule, job, via)
-                        if tg:
-                            ch = via
                     if tg:
                         break
                     if not waited:
@@ -1941,12 +1955,21 @@ class Mirror:
                     self._chan_routes.pop(ch, None)
                 self._chan_cond.notify_all()
 
+    def _slot_for(self, lane, rule, job, ch, relay_ok):
+        """(계정, 채널) - 원래 채널로 보낼 계정이 있으면 그것, 없고 임시 채널이 있으면 놀고 있는 계정으로 임시 채널, 아니면 ("", ch)"""
+        tg = self._pick_account(rule, job, ch)
+        if tg or not relay_ok:
+            return tg, ch
+        via = self._relay_of(rule, ch, lane)
+        tg = self._pick_account(rule, job, via, relay=True) if via else ""
+        return (tg, via) if tg else ("", ch)
+
     def _better_waiter(self, lane, job):
-        """올릴 차례를 기다리는 다른 줄 중 진행 목록에서 더 앞에 있고 지금 바로 보낼 수 있는 것이 있나
+        """올릴 차례를 기다리는 다른 줄 중 진행 목록에서 더 앞에 있고 지금 바로 보낼 수 있는 것이 있나 (임시 채널로 갈 수 있는 것도)
         (앞 항목이 그 채널·계정으로 못 가는 동안에는 뒤 항목이 먼저 간다)"""
         me = self._job_prio(job)
-        for ln, (r, j, c) in list(self._up_waiting.items()):
-            if ln is not lane and self._job_prio(j) < me and self._pick_account(r, j, c):
+        for ln, (r, j, c, relay_ok) in list(self._up_waiting.items()):
+            if ln is not lane and self._job_prio(j) < me and self._slot_for(ln, r, j, c, relay_ok)[0]:
                 return True
         return False
 
