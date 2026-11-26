@@ -50,6 +50,10 @@
 - 계정 여럿 (규칙의 tg + tg_alt): 놀고 있는 계정이 진행 목록의 앞에서부터 가져간다. 한 계정에 문제가 생기면(로그아웃·세션 만료·
   채널 권한 없음·요청 제한·연결 끊김) 그 항목을 다른 계정에 넘기고, 문제가 생긴 계정은 잠시 쉰다. 화면에서 직접 다른 계정을
   고를 수도 있다 (pin). 진행 목록의 순서는 화면에서 바꿀 수 있다 (위로·아래로·맨 앞).
+- 임시 채널 (규칙의 relay_channel, 선택): 같은 채널에는 한 경로로 한 계정씩만 올려서 계정이 여럿이어도 한 채널이면 하나만 일한다.
+  임시 채널을 정해 두면 채널을 다른 계정이 쓰는 동안 놀고 있는 계정은 임시 채널로 올리고 -> 원래 채널로 전달(출처 숨김, 캡션 그대로)
+  -> 임시 채널에서 지운다. 올린 계정이 원래 채널에 쓸 수 없으면 규칙의 다른 계정이 옮긴다. 나눠 올리다 멈춘 것을 이어 올릴 때와
+  음악 규칙은 원래 채널로만.
 - 기록마다 걸린 시간(elapsed)과 단계별 시간(times: 받기·인코딩·나누기·올리기·대기)을 남긴다.
 
 설정은 config.json의 "plex_to_tg": {interval, max_gb, encode_slots, exclude, rules: [{id, enabled, plex, section, section_title, tg, tg_alt,
@@ -340,6 +344,10 @@ def clean_settings(raw):
                 "tg_alt": [],
                 # 계정 자동: 넣어 둔 텔레그램 계정 모두 중 놀고 있는 계정이 보낸다 (tg는 채널 목록·준비용 기본 계정)
                 "tg_auto": bool(r.get("tg_auto")),
+                # 임시 채널 (선택): 다른 계정이 이 규칙의 채널로 올리는 동안 놀고 있는 계정은 여기에 올린 뒤 채널로 옮긴다(전달, 출처 숨김)
+                # - 같은 채널에는 한 경로(직접/프록시)로 한 계정씩만 올려서, 계정이 여럿이어도 한 채널이면 하나만 일하던 것
+                "relay_channel": str(r.get("relay_channel") or "").strip(),
+                "relay_title": str(r.get("relay_title") or "")[:100],
                 "burn_subs": bool(r.get("burn_subs", True)),
                 # 폴더 규칙 (rclone 드라이브 등): kind "folder", folder = 절대 경로 또는 rclone "원격:경로"
                 "kind": "folder" if r.get("kind") in ("folder", "music", "youtube") else "plex",
@@ -352,6 +360,8 @@ def clean_settings(raw):
                 "upload_existing": bool(r.get("upload_existing", False)),
                 # height보다 높은 영상은 용량과 상관없이 height로 줄여 올린다 (0이면 줄이지 않음) - Plex·폴더 규칙 모두
                 "height": num(r.get("height"), 0, 2160, 720)}
+        if not re.fullmatch(r"-?\d+", rule["relay_channel"]) or rule["relay_channel"] == rule["channel"]:
+            rule["relay_channel"], rule["relay_title"] = "", ""
         if rule["height"] not in (0, 480, 720, 1080):
             rule["height"] = 720
         alt = r.get("tg_alt") if isinstance(r.get("tg_alt"), list) else []
@@ -838,6 +848,9 @@ class Lane:
         self.phase_kind = ""      # 지금 단계 칸과 그 시작 시각
         self.phase_at = 0
         self.last_done = None     # 마지막으로 끝낸 항목 {title, ok, at, elapsed}
+        self.relay = None         # 임시 채널로 올리는 중이면 {"to": 원래 채널, "via": 임시 채널}
+        self.relay_ids = []       # 임시 채널에 올린 메시지 (영상·자막, 올린 차례)
+        self.relay_used = ""      # 지금 항목을 임시 채널을 거쳐 올렸으면 그 계정
 
     def begin(self):
         self.started, self.times, self.phase_kind, self.phase_at = time.time(), {}, "", 0
@@ -1684,6 +1697,10 @@ class Mirror:
         job = self.current_job or {}
         if not msg_id or not job:
             return
+        lane = _LANE.get() or self._main
+        if lane.relay:   # 임시 채널에 올린 것 - 원래 채널의 이어 올리기 기록(sending)에 넣지 않는다 (실패하면 임시 채널에서 지움)
+            lane.relay_ids.append(int(msg_id))
+            return
         state = load_state()
         rs = state["rules"].setdefault(job["rule"], {"done": [], "fails": {}})
         rs.setdefault("sending", {}).setdefault(job["key"], []).append(int(msg_id))
@@ -1695,7 +1712,7 @@ class Mirror:
     def _note_part(self, i, n, vid):
         """나눈 조각 i/n(과 그 자막)을 다 올렸다 - 서버가 다시 켜지면 i+1번째부터 이어 올린다 (sending_parts)"""
         job = self.current_job or {}
-        if not job or n < 2:
+        if not job or n < 2 or (_LANE.get() or self._main).relay:
             return
         state = load_state()
         rs = state["rules"].setdefault(job["rule"], {"done": [], "fails": {}})
@@ -1849,8 +1866,15 @@ class Mirror:
         ok.sort(key=lambda a: throttle.throttled(a))
         return ok[0] if ok else ""
 
+    def _relay_of(self, rule, ch, lane):
+        """이 항목을 임시 채널로 돌릴 수 있으면 그 채널, 아니면 "" (나눠 올리다 멈춘 것을 이어 올릴 때는 원래 채널로)"""
+        via = str((rule or {}).get("relay_channel") or "")
+        if not via or via == str(ch) or lane.resume:
+            return ""
+        return via
+
     @contextlib.asynccontextmanager
-    async def _upload_slot(self):
+    async def _upload_slot(self, relay_ok=False):
         """2단계: 텔레그램으로 보낼 계정·채널을 함께 잡는다 - 놀고 있는 계정이 없거나 그 채널로 보내는 중이면 기다림.
         돌려주는 값: (계정, 클라이언트, 채널) - 줄에 규칙이 없으면(시험 등) (지금 계정, None, None)"""
         lane = _LANE.get() or self._main
@@ -1863,15 +1887,22 @@ class Mirror:
             self._chan_cond = asyncio.Condition()
         prev = dict(self.current or {})
         waited = False
+        final = ch
         async with self._chan_cond:
             self._up_waiting[lane] = (rule, job, ch)
             try:
                 while True:
+                    ch = final
                     tg = self._pick_account(rule, job, ch)
                     if tg and self._better_waiter(lane, job):
                         # 진행 목록에서 더 앞에 있고 지금 바로 보낼 수 있는 항목이 기다린다 - 그쪽이 먼저 (깨워서 가져가게)
                         tg = ""
                         self._chan_cond.notify_all()
+                    via = self._relay_of(rule, ch, lane) if relay_ok and not tg and not self._better_waiter(lane, job) else ""
+                    if via:   # 채널은 다른 계정이 쓰는 중 - 놀고 있는 계정이 임시 채널로 올리고 나중에 옮긴다
+                        tg = self._pick_account(rule, job, via)
+                        if tg:
+                            ch = via
                     if tg:
                         break
                     if not waited:
@@ -1888,6 +1919,8 @@ class Mirror:
             self._chan_routes.setdefault(ch, []).append(route)
             self._chan_cond.notify_all()   # (양보하고 기다리던 뒤 항목도 다른 계정·채널로 갈 수 있는지 다시 보게)
         lane.tg = tg
+        lane.relay = {"to": final, "via": ch} if ch != final else None
+        lane.relay_ids = []
         try:
             gap = UPLOAD_GAP_SEC - (time.time() - self._acc_sent.get(tg, 0))
             if gap > 0:   # 이 계정이 방금 다른 것을 보냈으면 조금 쉬고 (요청 제한에 덜 걸리게)
@@ -1897,6 +1930,7 @@ class Mirror:
             peer = await acc.peer(int(ch))
             yield tg, client, peer
         finally:
+            lane.relay = None
             self._acc_sent[tg] = time.time()
             async with self._chan_cond:
                 self._uploading.pop(tg, None)
@@ -2655,6 +2689,8 @@ class Mirror:
         if scaled:
             notes.append(f"{rule['height']}p로 줄임")
         notes += remux_notes
+        if (_LANE.get() or self._main).relay_used:
+            notes.append(f"임시 채널을 거쳐 올림 (계정 {(_LANE.get() or self._main).relay_used})")
         if ext.lower() not in STREAMABLE:
             notes.append("mp4가 아니라 앱에서 바로 재생되지 않을 수 있음 (ffmpeg 없음)")
         if enc_used:
@@ -2826,6 +2862,8 @@ class Mirror:
             notes.append(f"자막 없음 ({soft_kind['why']})" if soft_kind["why"] else "자막 없음")
         if poster:
             notes.append(poster)
+        if (_LANE.get() or self._main).relay_used:
+            notes.append(f"임시 채널을 거쳐 올림 (계정 {(_LANE.get() or self._main).relay_used})")
         if mount_note:
             notes.insert(0, mount_note)
         return ", ".join(notes)
@@ -3047,9 +3085,85 @@ class Mirror:
         return await self._sent_anyway(client.send_file(peer, handle, **kw), os.path.basename(path))
 
     async def _send_pieces(self, client, peer, *args):
-        """조각들을 텔레그램으로 - 2단계: 놀고 있는 계정과 빈 채널을 잡고 그 계정으로 (나눈 조각은 한 번에 이어서)"""
-        async with self._upload_slot() as (_tg, c, p):
-            return await self._send_pieces_now(c or client, p or peer, *args)
+        """조각들을 텔레그램으로 - 2단계: 놀고 있는 계정과 빈 채널을 잡고 그 계정으로 (나눈 조각은 한 번에 이어서).
+        채널을 다른 계정이 쓰는 중이고 규칙에 임시 채널이 있으면 놀고 있는 계정이 임시 채널로 올린 뒤 채널로 옮긴다"""
+        lane = _LANE.get() or self._main
+        lane.relay_used = ""
+        async with self._upload_slot(relay_ok=True) as (tg, c, p):
+            if not lane.relay:
+                return await self._send_pieces_now(c or client, p or peer, *args)
+            return await self._relay_pieces(lane, tg, c, p, args)
+
+    async def _relay_pieces(self, lane, tg, client, via_peer, args):
+        """임시 채널로 올리고 -> 원래 채널로 옮기고(전달, 출처 숨김) -> 임시 채널에서 지운다. msgs(올린 영상 id)는 원래 채널의 id로"""
+        relay = dict(lane.relay)
+        msgs = args[-1]
+        before = len(msgs)
+        try:
+            n = await self._send_pieces_now(client, via_peer, *args)
+        except BaseException:
+            await self._relay_drop(client, via_peer, list(lane.relay_ids))
+            raise
+        ids = list(lane.relay_ids)
+        title = (self.current or {}).get("title", "")
+        self.current = {"title": title, "phase": "임시 채널에서 채널로 옮기는 중", "done": 0, "total": 0}
+        try:
+            moved = await self._relay_forward(lane.rule, tg, ids, relay)
+        except BaseException:
+            await self._relay_drop(client, via_peer, ids)
+            raise
+        msgs[before:] = [moved.get(int(x), x) if x else x for x in msgs[before:]]
+        lane.relay = None   # (이제부터 적는 것은 원래 채널의 메시지)
+        for new in moved.values():   # (원래 채널에 올라간 것 - 혹시 뒤에서 실패하면 지울 수 있게)
+            self._note_sent(new)
+        await self._relay_drop(client, via_peer, ids)
+        lane.relay_used = tg
+        log.info("자동 올리기: %s - 계정 %s가 임시 채널을 거쳐 올림 (%d개)", title, tg, len(ids))
+        return n
+
+    async def _relay_forward(self, rule, tg, ids, relay):
+        """임시 채널의 메시지들을 원래 채널로 전달 (출처 숨김, 캡션 그대로) -> {임시 id: 새 id}.
+        올린 계정이 원래 채널에 쓸 수 없으면 규칙의 다른 계정으로 (그 계정도 임시 채널에 들어가 있어야 함)"""
+        if not ids:
+            return {}
+        cands = [tg, *[a for a in self._accounts_for(rule, {}) if a and a != tg]]
+        last = None
+        for a in cands:
+            try:
+                acc = self.tg_for(a)
+                client = await acc.authorized_client()
+                src, dst = await acc.peer(int(relay["via"])), await acc.peer(int(relay["to"]))
+                out = {}
+                for i in range(0, len(ids), 100):
+                    chunk = ids[i:i + 100]
+                    for _try in range(3):
+                        try:
+                            got = await client.forward_messages(dst, chunk, from_peer=src, drop_author=True)
+                            break
+                        except Exception as e:  # noqa: BLE001
+                            wait = int(getattr(e, "seconds", 0) or 0)
+                            if type(e).__name__ not in FLOOD_ERRORS or wait > 600 or _try == 2:
+                                raise
+                            await asyncio.sleep(wait + 1)
+                    got = got if isinstance(got, (list, tuple)) else [got]
+                    out.update({int(o): int(getattr(m, "id", 0) or 0) for o, m in zip(chunk, got) if m is not None})
+                return out
+            except Exception as e:  # noqa: BLE001
+                last = e
+                if account_problem(e) is None and type(e).__name__ not in ("ChatWriteForbiddenError", "ChatAdminRequiredError",
+                                                                             "ChannelPrivateError", "ChatForwardsRestrictedError"):
+                    raise
+                log.warning("자동 올리기: 계정 %s가 임시 채널에서 옮기지 못함 (%s) - 다른 계정으로", a, type(e).__name__)
+        raise last
+
+    async def _relay_drop(self, client, via_peer, ids):
+        """임시 채널에 올려 둔 것 지우기 (실패해도 넘어감 - 임시 채널이라 남아도 괜찮음)"""
+        if not ids:
+            return
+        try:
+            await client.delete_messages(via_peer, ids)
+        except Exception as e:  # noqa: BLE001
+            log.warning("자동 올리기: 임시 채널의 메시지 %d개를 지우지 못함: %s", len(ids), e)
 
     async def _send_pieces_now(self, client, peer, pieces, name, caption, width, height, thumb, sub_files, title, tmp, msgs):
         """영상 조각들을 차례로 올리고(나눴으면 이름 끝에 _0000, _0001…, 캡션에 (i/n)) 그 뒤에 자막 파일. 올린 메시지 id는 msgs에.
@@ -3084,7 +3198,8 @@ class Mirror:
             attrs = [DocumentAttributeVideo(duration=int(dur), w=width, h=height, supports_streaming=stream),
                      DocumentAttributeFilename(vname)]
             self.current = {"title": title + (f" ({i}/{len(pieces)})" if many else ""),
-                            "phase": "텔레그램에 올리는 중", "done": 0, "total": os.path.getsize(path)}
+                            "phase": "임시 채널에 올리는 중" if (_LANE.get() or self._main).relay else "텔레그램에 올리는 중",
+                            "done": 0, "total": os.path.getsize(path)}
 
             tg_now = (_LANE.get() or self._main).tg
 
