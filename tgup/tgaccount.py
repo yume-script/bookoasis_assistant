@@ -149,6 +149,15 @@ def new_account_id():
     return f"tg{n}"
 
 
+def bare_channel_id(channel):
+    """채널 번호를 텔레그램 안쪽 번호로: "-1003762124757"(봇 API·화면 표기) -> 3762124757. 이미 그 모양이면 그대로"""
+    c = int(str(channel).strip())
+    if c < 0:
+        s = str(-c)
+        c = int(s[3:]) if s.startswith("100") and len(s) > 3 else -c
+    return c
+
+
 class TelegramAccount:
     def __init__(self, acc_id=ACCOUNT_ID):
         self.id = acc_id
@@ -333,6 +342,7 @@ class TelegramAccount:
 
     async def peer(self, channel):
         from telethon.tl.types import InputPeerChannel
+        channel = bare_channel_id(channel)
         h = self._peers().get(str(int(channel)))
         if not h or not int(h):
             await self.list_channels()
