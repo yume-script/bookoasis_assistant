@@ -132,8 +132,7 @@ def simulate(cfg, hours=24, per_title=10.0, full_dur=None, now=None, pause_full=
 
     def key(item):
         x = item[1]
-        known = [ready(x, n, t) for n in nums if x["tick"][n]]
-        return (0 if known else 1, min(known) if known else 0)   # waitfree_order와 같게
+        return kp.order_key([ready(x, n, t) for n in nums if x["tick"][n]], x["period"], t)   # waitfree_order와 같게
 
     def next_charge(at):
         best = None
@@ -156,7 +155,7 @@ def simulate(cfg, hours=24, per_title=10.0, full_dur=None, now=None, pause_full=
         if not due:
             t += max(60, TICK) if fixed else waitfree_wait(cfg, t, next_charge(t), now=t)
             continue
-        batch = due[:kp.WAITFREE_TICK_MAX]
+        batch = due[:kp.tick_max(cfg)]
         dur = per_title * len(batch)
         rounds.append((t, len(due), len(batch), dur))
         for i, (sid, x) in enumerate(batch):
