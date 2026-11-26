@@ -149,6 +149,15 @@ class RelayTest(unittest.TestCase):
         self.assertTrue(world["posts"].get("-9"))                            # 임시 채널은 썼고
         self.assertEqual(world["most_per_ch"], 1)                            # 어느 채널이든 동시에 한 계정만
 
+    def test_several_relay_channels_each_one_account(self):
+        """임시 채널 둘: 계정 셋이 원래 채널 1 + 임시 채널 2로 동시에, 채널마다 한 계정씩"""
+        mir, st, world = self.make(accounts=("C", "A", "B"), keys=("k1", "k2", "k3"), slow={"C": 0.4, "A": 0.2, "B": 0.2})
+        st["rules"][0]["relay_channels"] = ["-9", "-8"]
+        asyncio.run(mir.run_queue(st))
+        self.assertEqual(world["most"], 3)
+        self.assertEqual(world["most_per_ch"], 1)
+        self.assertTrue(world["posts"].get("-9") and world["posts"].get("-8"))
+
     def test_relay_set_while_running_is_used(self):
         """도는 중에 저장한 임시 채널도 바로 쓴다 (예전엔 한 차례를 시작할 때 읽은 규칙만 써서 몇 시간이고 안 쓰였다)"""
         m = self.m
@@ -168,3 +177,9 @@ class CleanTest(unittest.TestCase):
         self.assertEqual(m.clean_settings({"rules": [{**base, "relay_channel": "-1009", "relay_title": "임시"}]})["rules"][0]["relay_channel"], "-1009")
         self.assertEqual(m.clean_settings({"rules": [{**base, "relay_channel": "-1003"}]})["rules"][0]["relay_channel"], "")   # 같은 채널이면 끔
         self.assertEqual(m.clean_settings({"rules": [{**base, "relay_channel": "abc"}]})["rules"][0]["relay_channel"], "")
+        r = m.clean_settings({"rules": [{**base, "relay_channels": ["-1009", "-1008", "-1003", "x", "-1009"],
+                                          "relay_titles": {"-1009": "임시1", "-1008": "임시2"}}]})["rules"][0]
+        self.assertEqual((r["relay_channels"], r["relay_titles"], r["relay_channel"]),
+                         (["-1009", "-1008"], {"-1009": "임시1", "-1008": "임시2"}, "-1009"))   # 원래 채널·잘못된 값·겹침 빼고
+        old = m.clean_settings({"rules": [{**base, "relay_channel": "-1009", "relay_title": "예전"}]})["rules"][0]
+        self.assertEqual((old["relay_channels"], old["relay_titles"]), (["-1009"], {"-1009": "예전"}))   # 예전 한 개짜리 설정

@@ -674,20 +674,35 @@
                 }
             };
             // 임시 채널: 다른 계정이 이 채널로 올리는 동안 놀고 있는 계정은 임시 채널로 올린 뒤 이 채널로 옮김 (전달, 출처 숨김)
-            const relaySel = h('select', { class: 'select' }, opt('', '쓰지 않음', !r.relay_channel),
-                ...(r.relay_channel ? [opt(r.relay_channel, r.relay_title || r.relay_channel, true)] : []));
-            const fillRelay = async () => {
-                const keep = relaySel.value;
-                try {
-                    const list = await loadChannels(baseAcc());
-                    clear(relaySel).append(opt('', '쓰지 않음', !keep),
-                        ...list.filter((c) => String(c.id) !== chSel.value).map((c) => opt(String(c.id), c.title, String(c.id) === keep, c.title)));
-                } catch (e) { toast(`텔레그램 채널 목록을 못 받았습니다: ${e.message}`, 'error'); }
+            // 임시 채널 (여러 개): 다른 계정이 이 채널로 올리는 동안 놀고 있는 계정은 비어 있는 임시 채널로 올린 뒤 이 채널로 옮김 (전달, 출처 숨김)
+            const relayBox = h('div', { class: 'toolbar mirror-alt' });
+            const relayChecks = {};   // 채널 id -> {c: 체크박스, title}
+            const relayInit = (r.relay_channels && r.relay_channels.length ? r.relay_channels : (r.relay_channel ? [r.relay_channel] : [])).map(String);
+            const relayTitles = { ...(r.relay_titles || {}), ...(r.relay_channel && r.relay_title ? { [r.relay_channel]: r.relay_title } : {}) };
+            const drawRelay = (list) => {
+                const keep = Object.keys(relayChecks).length
+                    ? Object.entries(relayChecks).filter(([, x]) => x.c.checked).map(([k]) => k) : relayInit;
+                clear(relayBox);
+                Object.keys(relayChecks).forEach((k) => delete relayChecks[k]);
+                const known = new Map(list.map((c) => [String(c.id), c.title]));
+                keep.forEach((k) => { if (!known.has(k)) known.set(k, relayTitles[k] || k); });   // (목록에 없는 채널도 고른 것은 보이게)
+                const ids = [...known.keys()].filter((id) => id !== chSel.value);
+                if (!ids.length) { relayBox.append(h('span', { class: 'muted', text: '고를 채널이 없습니다.' })); return; }
+                for (const id of ids) {
+                    const c = h('input', { type: 'checkbox', checked: keep.includes(id) });
+                    relayChecks[id] = { c, title: known.get(id) };
+                    relayBox.append(h('label', { class: 'check' }, c, ` ${known.get(id)}`));
+                }
             };
-            relaySel.addEventListener('focus', fillRelay, { once: true });
-            const relayField = field('임시 채널 (계정이 여럿일 때)', relaySel, '같은 채널에는 한 번에 한 계정씩만 올려서, 한 계정이 이 채널로 올리는 동안 다른 계정은 놀게 됩니다. '
-                + '임시 채널을 고르면 놀고 있는 계정은 임시 채널에 올린 뒤 이 채널로 옮기고(전달, 출처 숨김 - 다시 올리지 않아 금방) 임시 채널에서는 지웁니다. '
-                + '모든 계정이 임시 채널과 이 채널에 글을 쓸 수 있어야 합니다. 영상만 (음악은 그대로).');
+            drawRelay([]);
+            const fillRelay = async () => {
+                try { drawRelay(await loadChannels(baseAcc())); } catch (e) { toast(`텔레그램 채널 목록을 못 받았습니다: ${e.message}`, 'error'); }
+            };
+            if (opts.telegram.length) fillRelay();   // (채널 목록은 계정마다 한 번만 받아 둠)
+            const relayLoad = h('button', { class: 'btn btn-sm', type: 'button', on: { click: fillRelay } }, icon('rotate'), ' 채널 목록 불러오기');
+            const relayField = field('임시 채널 (계정이 여럿일 때, 여러 개 고를 수 있음)', h('div', {}, relayBox, h('div', { class: 'toolbar' }, relayLoad)), '같은 채널에는 한 번에 한 계정씩만 올려서, 한 계정이 이 채널로 올리는 동안 다른 계정은 놀게 됩니다. '
+                + '임시 채널을 고르면 놀고 있는 계정은 비어 있는 임시 채널(고른 순서대로)에 올린 뒤 이 채널로 옮기고(전달, 출처 숨김 - 다시 올리지 않아 금방) 임시 채널에서는 지웁니다. '
+                + '임시 채널도 한 번에 한 계정씩이라, 임시 채널이 많을수록 여러 계정이 동시에 일합니다. 모든 계정이 임시 채널과 이 채널에 글을 쓸 수 있어야 합니다. 영상만 (음악은 그대로).');
             const capIn = h('textarea', { class: 'input', rows: '3', placeholder: '{name}\n\n{summary}' });
             capIn.value = r.caption || '{name}\n\n{summary}';
             const fillChannels = async () => {
@@ -699,7 +714,7 @@
                 } catch (e) { toast(`텔레그램 채널 목록을 못 받았습니다: ${e.message}`, 'error'); }
             };
             chSel.addEventListener('focus', fillChannels, { once: true });
-            accSel.addEventListener('change', () => { clear(chSel).append(opt('', '채널 고르기', true)); fillChannels(); fillAlt(); });
+            accSel.addEventListener('change', () => { clear(chSel).append(opt('', '채널 고르기', true)); fillChannels(); fillAlt(); fillRelay(); });
             fillAlt();
             const test = h('button', { class: 'btn btn-sm', title: '저장한 뒤에 쓰세요', on: { click: async () => {
                 try { const t = await post('api/tgup/test', { rule: row.id }); toast(`"${t.title}"을(를) 올리기 시작합니다. 진행 상태에서 보세요.`); }
@@ -791,7 +806,8 @@
                     wait_subs: modeWait.checked, wait_min: Math.max(0, Math.round(Number(minIn.value) || 0)),
                     burn_subs: burnIn.checked,
                     tg_alt: Object.entries(altChecks).filter(([, c]) => c.checked).map(([k]) => k), upload_existing: existIn.checked,
-                    relay_channel: relaySel.value, relay_title: ((relaySel.selectedOptions[0] || {}).dataset || {}).name || '' };
+                    relay_channels: Object.entries(relayChecks).filter(([, x]) => x.c.checked).map(([k]) => k),
+                    relay_titles: Object.fromEntries(Object.entries(relayChecks).filter(([, x]) => x.c.checked).map(([k, x]) => [k, x.title])) };
             } };
             rows.push(row);
             rulesBox.appendChild(card);
