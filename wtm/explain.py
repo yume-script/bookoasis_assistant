@@ -176,9 +176,9 @@ def explain(query, days=3, out=print):
             due = kp.waitfree_due_titles(cfg, now)
             if tid in due:
                 pos = [sid for sid, _t in kp.waitfree_order(cfg, due)].index(tid)
-                rounds = pos // kp.WAITFREE_TICK_MAX
+                rounds = pos // kp.tick_max(cfg)
                 out("  지금 기다무 확인 대상: 예 - 충전된 작품 %d개 중 %d번째%s" % (
-                    len(due), pos + 1, " (앞에 %d번 확인이 더 돌아야 차례, 한 번에 %d개씩)" % (rounds, kp.WAITFREE_TICK_MAX)
+                    len(due), pos + 1, " (앞에 %d번 확인이 더 돌아야 차례, 한 번에 %d개씩)" % (rounds, kp.tick_max(cfg))
                     if rounds else " (다음 확인 때 받음)"))
             else:
                 out("  지금 기다무 확인 대상: 아니오(충전 전)")

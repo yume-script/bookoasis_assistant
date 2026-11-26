@@ -568,7 +568,7 @@ def _needs_check(cfg, t, now=None):
     return False
 
 
-WAITFREE_TICK_MAX = 30   # 기다무 확인 한 번에 처리할 작품 수
+WAITFREE_TICK_MAX = 30   # 기다무 확인 한 번에 처리할 작품 수 (최소 - 동시 처리 수 x 10까지 늘림, tick_max)
 
 
 def waitfree_period(t):
@@ -833,17 +833,77 @@ def spread_waitfree(cfg, log=print, now=None):
     return moved
 
 
-def waitfree_order(cfg, due):
-    """기다무 확인 순서 [(sid, 작품)]: 충전 예정 시각이 오래된(가장 많이 늦어진) 것부터.
+def tick_max(cfg):
+    """기다무 확인 한 번에 처리할 작품 수: 동시 처리 수 x 10 (최소 WAITFREE_TICK_MAX) - 동시 수를 늘리면 한 번에 더 많이"""
+    return max(WAITFREE_TICK_MAX, 10 * max(1, min(10, _num(cfg, "PARALLEL_TITLES", 2))))
+
+
+def order_key(known, period, now):
+    """기다무 순서 키: 충전 시각을 아는 것 먼저, 그중 '주기 몇 번만큼 늦었나'(늦은 시간 / 충전 주기)가 큰 것부터.
+    같은 시간을 늦어도 짧은 기다무가 잃는 대여권이 더 많다 (3시간 기다무가 12시간 밀리면 4장, 1일 기다무는 0.5장) -
+    예전처럼 충전 시각이 오래된 순서면 3시간 기다무가 수많은 1일 기다무 뒤에서 하루 넘게 기다렸다."""
+    if not known:
+        return (1, 0.0)
+    return (0, -max(0.0, now - min(known)) / max(60, period or 86400))
+
+
+def waitfree_order(cfg, due, now=None):
+    """기다무 확인 순서 [(sid, 작품)]: '주기 몇 번만큼 늦었나'가 큰 것부터 (order_key).
     이 작품에서 아직 대여권을 쓴 적이 없어 충전 시각을 모르는 작품은 그 뒤에 - 예전엔 이런 작품(수백 개)이
     '아주 오래전 충전'으로 계산돼 맨 앞에 서는 바람에 이미 쓰던 3시간 기다무가 그 뒤에서 몇 시간씩 기다렸다."""
     nums = [n for n, _c in accounts(cfg)] or [1]
+    now = now or time.time()
 
     def key(kv):
         t = kv[1]
-        known = [ready_at(cfg, t, n) for n in nums if _ticket_at(t, n)]
-        return (0 if known else 1, min(known) if known else 0)
+        return order_key([ready_at(cfg, t, n) for n in nums if _ticket_at(t, n)], waitfree_period(t), now)
     return sorted(due.items(), key=key)
+
+
+# 기다무가 밀린 동안은 작품마다 kavita.yaml(표지 포함)을 다시 쓰지 않고 모아 뒀다가, 밀린 것이 빠지면 한 번에 쓴다
+# (yaml 쓰기·표지가 작품 처리 시간의 1/3쯤 - 그동안 대여권 충전 시각이 계속 늦어졌다). 재시작해도 남게 파일로.
+_YAML_PENDING_LOCK = threading.Lock()
+
+
+def _yaml_pending_path():
+    return os.path.join(ss.DATA_DIR, "kakao_yaml_pending.json")
+
+
+def yaml_pending():
+    try:
+        with open(_yaml_pending_path(), encoding="utf-8") as f:
+            return [str(x) for x in json.load(f) or []]
+    except (OSError, ValueError):
+        return []
+
+
+def _yaml_pending_add(sid):
+    with _YAML_PENDING_LOCK:
+        cur = yaml_pending()
+        if str(sid) not in cur:
+            ss.write_json(_yaml_pending_path(), cur + [str(sid)])
+
+
+def flush_pending_yaml(cfg, log=print, limit=None, cancel_check=None):
+    """미뤄 둔 kavita.yaml을 쓴다 -> 쓴 수"""
+    todo = yaml_pending()
+    if not todo:
+        return 0
+    session = build_session_from_cfg(cfg)
+    done = []
+    for sid in todo[:limit] if limit else todo:
+        if cancel_check and cancel_check():
+            break
+        try:
+            update_yaml(cfg, sid, session, log=log)
+        except Exception as e:  # noqa: BLE001 - 하나가 실패해도 나머지는
+            log("kavita.yaml 갱신 실패(%s): %s" % (sid, e))
+        done.append(sid)
+    with _YAML_PENDING_LOCK:
+        ss.write_json(_yaml_pending_path(), [s for s in yaml_pending() if s not in set(done)])
+    if done:
+        log("카카오 기다무: 미뤄 둔 kavita.yaml %d개 갱신" % len(done))
+    return len(done)
 
 
 def flush_leftovers(cfg, log=print):
@@ -895,15 +955,20 @@ def run_waitfree_tick(cfg, log=print, show_status=True):
     flush_leftovers(cfg, log=log)
     _repair_has_locked_once(log=log)
     due = waitfree_due_titles(cfg)
-    res = {"titles": len(due), "downloaded": 0, "waitfree_used": 0}
+    cap = tick_max(cfg)
+    res = {"titles": len(due), "downloaded": 0, "waitfree_used": 0, "backlog": len(due) > cap}
+    # 충전돼 기다리는 기다무 수 - 화면(wtm_status job)과 디스코드봇 채우기 운영이 본다 (밀린 동안 전체 실행을 따로 돌리지 않게)
+    ss.save_job_state({"waitfree_due": len(due), "waitfree_backlog": res["backlog"], "waitfree_due_at": time.time()})
     if not due:
+        flush_pending_yaml(cfg, log=log)   # 밀린 것이 다 빠졌으면 미뤄 둔 yaml을 쓴다
         return res
     # 한 번에 너무 많이 붙잡고 있으면 같은 스케줄러가 도는 네이버·전체 실행이 그동안 밀린다.
-    # 순서(waitfree_order)대로 WAITFREE_TICK_MAX개만 하고 나머지는 다음 확인 때.
+    # 순서(waitfree_order)대로 tick_max개(동시 처리 수 x 10)만 하고 나머지는 다음 확인 때.
     order = waitfree_order(cfg, due)
-    if len(order) > WAITFREE_TICK_MAX:
-        log("카카오 기다무: 대여권이 충전된 작품 %d개 중 %d개만 이번에 확인 (나머지는 다음 확인 때)" % (len(order), WAITFREE_TICK_MAX))
-        order = order[:WAITFREE_TICK_MAX]
+    if len(order) > cap:
+        log("카카오 기다무: 대여권이 충전된 작품 %d개 중 %d개만 이번에 확인 (나머지는 다음 확인 때, kavita.yaml은 밀린 것이 빠진 뒤 한 번에)"
+            % (len(order), cap))
+        order = order[:cap]
     due = dict(order)
     log("카카오 기다무: 대여권이 충전된 작품 %d개 확인" % len(due))
     session = build_session_from_cfg(cfg)
@@ -943,7 +1008,7 @@ def run_waitfree_tick(cfg, log=print, show_status=True):
         ready = [n for n in nums if ready_at(cfg, t, n, now) <= now]
         before = {n: _ticket_at(t, n) for n in ready}
         r = download_series_all(cfg, _main_session(), sid, log=log, dead=dead, session_for=_session_for,
-                                cancel_check=_cancelled)
+                                cancel_check=_cancelled, defer_yaml=res["backlog"])
         with lock:
             res["downloaded"] += r.get("downloaded", 0)
             res["waitfree_used"] += r.get("waitfree_used", 0)
@@ -970,6 +1035,8 @@ def run_waitfree_tick(cfg, log=print, show_status=True):
         for s in sessions:
             kakao_api.save_session_cookies(s)
     _notify_expired_accounts(cfg, dead, log=log)
+    if not res["backlog"]:
+        flush_pending_yaml(cfg, log=log, cancel_check=_cancelled)
     ss.flush_titles()   # 큰 작품 기록 파일은 30초마다만 쓰므로, 확인이 끝나면 바로 저장해 화면에 보이게
     kavita_yaml.flush_all()
     log("카카오 기다무: 대여권 %d장 사용 / 신규 %d화" % (res["waitfree_used"], res["downloaded"]))
@@ -1710,13 +1777,16 @@ def _download_series_all(cfg, session, sid, log=print, session_for=None, dead=No
     session_for(n, cookie): 추가 계정 세션을 주는 함수(없으면 매번 만든다). dead: 이번 실행에서 만료로 뺀 계정 번호 집합.
     force(선택 회차 다시 받기)는 계정 1에만 적용한다 - 추가 계정은 force 없이 아직 없는 회차만 채운다
     (계정 1이 방금 다시 받은 회차를 또 지우고 받지 않게)."""
+    defer = bool(kw.pop("defer_yaml", False))   # 기다무가 밀린 동안: yaml은 모아 뒀다가 (flush_pending_yaml)
     extras = extra_accounts(cfg)
     if extras and "charge_ref" not in kw:   # 계정마다 같은 '처리 시작 때' 충전 기록으로 판단
         kw["charge_ref"] = dict(ss.get_kakao_title(str(sid)) or {})
     # 계정이 여럿이면 kavita.yaml은 계정마다 쓰지 않고 작품 처리가 끝난 뒤 한 번만 쓴다
     # (예전엔 계정 1·2가 각각 회차를 받고 각각 yaml을 다시 써서, 작품 하나에 yaml 쓰기·업로드가 두 번이었다)
-    res = download_series(cfg, session, sid, log=log, yaml=not extras, **kw)
+    res = download_series(cfg, session, sid, log=log, yaml=not extras and not defer, **kw)
     if not extras:
+        if defer and res.get("yaml_due"):
+            _yaml_pending_add(sid)
         return res
     yaml_due = bool(res.get("yaml_due"))
     kw = dict(kw, force=False)
@@ -1755,7 +1825,9 @@ def _download_series_all(cfg, session, sid, log=print, session_for=None, dead=No
             if dead is not None:
                 dead.add(n)
             res.setdefault("expired_accounts", []).append(n)
-    if yaml_due:
+    if yaml_due and defer:
+        _yaml_pending_add(sid)
+    elif yaml_due:
         update_yaml(cfg, sid, session, log=log)
     return res
 
