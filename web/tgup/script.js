@@ -673,7 +673,21 @@
                     altBox.append(h('label', { class: 'check' }, c, ` ${t ? t.name : `${id} (로그인 안 됨)`}`));
                 }
             };
-            const capIn = h('textarea', { class: 'input', rows: '3', placeholder: '{name}\n\n{summary}' });
+            // 임시 채널: 다른 계정이 이 채널로 올리는 동안 놀고 있는 계정은 임시 채널로 올린 뒤 이 채널로 옮김 (전달, 출처 숨김)
+            const relaySel = h('select', { class: 'select' }, opt('', '쓰지 않음', !r.relay_channel),
+                ...(r.relay_channel ? [opt(r.relay_channel, r.relay_title || r.relay_channel, true)] : []));
+            const fillRelay = async () => {
+                const keep = relaySel.value;
+                try {
+                    const list = await loadChannels(baseAcc());
+                    clear(relaySel).append(opt('', '쓰지 않음', !keep),
+                        ...list.filter((c) => String(c.id) !== chSel.value).map((c) => opt(String(c.id), c.title, String(c.id) === keep, c.title)));
+                } catch (e) { toast(`텔레그램 채널 목록을 못 받았습니다: ${e.message}`, 'error'); }
+            };
+            relaySel.addEventListener('focus', fillRelay, { once: true });
+            const relayField = field('임시 채널 (계정이 여럿일 때)', relaySel, '같은 채널에는 한 번에 한 계정씩만 올려서, 한 계정이 이 채널로 올리는 동안 다른 계정은 놀게 됩니다. '
+                + '임시 채널을 고르면 놀고 있는 계정은 임시 채널에 올린 뒤 이 채널로 옮기고(전달, 출처 숨김 - 다시 올리지 않아 금방) 임시 채널에서는 지웁니다. '
+                + '모든 계정이 임시 채널과 이 채널에 글을 쓸 수 있어야 합니다. 영상만 (음악은 그대로).');
             capIn.value = r.caption || '{name}\n\n{summary}';
             const fillChannels = async () => {
                 const keep = chSel.value;
@@ -711,6 +725,7 @@
                 const yt = kindSel.value === 'youtube';
                 const folder = kindSel.value === 'folder' || music;
                 videoOnly.forEach((el) => el.classList.toggle('hidden', music));
+                relayField.classList.toggle('hidden', music);
                 musicNote.classList.toggle('hidden', !music);
                 ytNote.classList.toggle('hidden', !yt);
                 modeRow.classList.toggle('hidden', music || yt);   // (유튜브는 자막을 기다리지 않음 - 받은 한국어 자막 입히기만)
@@ -763,7 +778,7 @@
                 h('div', { class: 'toolbar' }, h('label', { class: 'check' }, enabledIn, ' 켜기'), kindSel),
                 h('div', { class: 'row-2 mirror-pick' }, plexField, folderField, field('올릴 텔레그램 계정 · 채널', h('div', { class: 'toolbar' }, opts.telegram.length > 1 || (r.tg && r.tg !== 'tg') ? accSel : null, chSel))),
                 musicNote, ytNote, existRow, heightRow,
-                altField,
+                altField, relayField,
                 modeRow, capRow,
                 h('div', { class: 'toolbar' }, test, del));
             syncKind();
@@ -774,7 +789,8 @@
                     tg: baseAcc(), tg_auto: accSel.value === 'auto', channel: chSel.value, channel_title: ((chSel.selectedOptions[0] || {}).dataset || {}).name || '', caption: capIn.value,
                     wait_subs: modeWait.checked, wait_min: Math.max(0, Math.round(Number(minIn.value) || 0)),
                     burn_subs: burnIn.checked,
-                    tg_alt: Object.entries(altChecks).filter(([, c]) => c.checked).map(([k]) => k), upload_existing: existIn.checked };
+                    tg_alt: Object.entries(altChecks).filter(([, c]) => c.checked).map(([k]) => k), upload_existing: existIn.checked,
+                    relay_channel: relaySel.value, relay_title: ((relaySel.selectedOptions[0] || {}).dataset || {}).name || '' };
             } };
             rows.push(row);
             rulesBox.appendChild(card);
