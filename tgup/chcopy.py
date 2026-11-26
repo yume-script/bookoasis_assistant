@@ -215,7 +215,7 @@ class Copier:
         src = str(body.get("src") or "").strip()
         parse_source(src)
         try:
-            dst = int(str(body.get("dst") or "").strip())
+            dst = tgaccount.bare_channel_id(body.get("dst") or "")
         except ValueError:
             raise ValueError("올릴 채널을 골라 주세요.") from None
         kind = body.get("kind") if body.get("kind") in KINDS else "video"

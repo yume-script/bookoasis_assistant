@@ -217,3 +217,32 @@ class CopyTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ChannelIdTest(unittest.TestCase):
+    """화면은 올릴 채널을 "-100…"(봇 API 표기)로 보내는데 대화 목록(peers)은 안쪽 번호로 저장 - 예전엔 못 찾아 실패"""
+
+    def test_bare_channel_id(self):
+        self.assertEqual(tgaccount.bare_channel_id("-1003762124757"), 3762124757)
+        self.assertEqual(tgaccount.bare_channel_id(-1003762124757), 3762124757)
+        self.assertEqual(tgaccount.bare_channel_id("3762124757"), 3762124757)
+        self.assertEqual(tgaccount.bare_channel_id(-777), 777)
+
+    def test_peer_accepts_minus_100(self):
+        import json
+        import os
+        compat.DATA_DIR = tempfile.mkdtemp(prefix="chcopy-peer-")
+        acc = tgaccount.TelegramAccount()
+        with open(acc.peers_path, "w", encoding="utf-8") as f:
+            json.dump({"3762124757": "12345"}, f)
+        p = asyncio.run(acc.peer("-1003762124757"))
+        self.assertEqual((p.channel_id, p.access_hash), (3762124757, 12345))
+        self.assertTrue(os.path.exists(acc.peers_path))
+
+    def test_add_stores_bare_dst(self):
+        compat.DATA_DIR = tempfile.mkdtemp(prefix="chcopy-add-")
+        accs = tgaccount.accounts
+        tgaccount.accounts = lambda: [{"id": "tg"}]
+        self.addCleanup(setattr, tgaccount, "accounts", accs)
+        job = chcopy.Copier(lambda a: None).add({"account": "tg", "src": "@srcchan", "dst": "-1003762124757"})
+        self.assertEqual(job["dst"], 3762124757)
