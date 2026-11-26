@@ -1861,9 +1861,10 @@ class Mirror:
     def _pick_account(self, rule, job, ch, relay=False):
         """지금 보낼 계정: 올릴 수 있는 계정 중 쉬는 중·보내는 중이 아니고, 그 채널에 같은 경로(직접/프록시)가 없는 것.
         텔레그램이 속도를 늦추지 않는 계정을 먼저. 없으면 "".
-        relay: 임시 채널로 올릴 때 - 놀고 있는 계정이 모두 함께 쓰게 경로 제한을 두지 않는다 (예전엔 임시 채널에도 한 경로에 한 계정씩이라
-        계정이 셋이어도 원래 채널 하나 + 임시 채널 하나만 일했다)"""
-        used = [] if relay else (self._chan_routes.get(ch) or [])
+        relay: 임시 채널로 올릴 때 - 경로와 상관없이 한 채널에 한 계정만 (그 임시 채널로 누가 올리는 중이면 아무도 안 됨)"""
+        if relay and self._chan_routes.get(ch):
+            return ""
+        used = self._chan_routes.get(ch) or []
         ok = [a for a in self._accounts_for(rule, job)
               if a and not self._is_down(a) and a not in self._uploading and self._route(a) not in used]
         ok.sort(key=lambda a: throttle.throttled(a))

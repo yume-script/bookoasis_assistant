@@ -87,8 +87,12 @@ class RelayTest(unittest.TestCase):
                 mir._note_sent(world["n"])
                 world.setdefault("live", set()).add(client.name)
                 world["most"] = max(world.get("most", 0), len(world["live"]))
+                per = world.setdefault("per_ch", {})
+                per[peer] = per.get(peer, 0) + 1
+                world["most_per_ch"] = max(world.get("most_per_ch", 0), per[peer])
                 await asyncio.sleep((slow or {}).get(client.name, 0.05))
                 world["live"].discard(client.name)
+                per[peer] -= 1
             return 1
         mir._send_pieces_now = send_now
 
@@ -137,12 +141,13 @@ class RelayTest(unittest.TestCase):
         self.assertTrue(fwd and all(p[3] == "A" for p in fwd))
 
 
-    def test_all_idle_accounts_use_relay_together(self):
-        """계정 셋: 하나가 원래 채널로 (느리게) 올리는 동안 나머지 둘이 함께 임시 채널로 (예전엔 임시 채널도 한 계정씩)"""
+    def test_relay_channel_one_account_at_a_time(self):
+        """임시 채널도 한 채널에 한 계정씩: 계정 셋이어도 원래 채널 하나 + 임시 채널 하나 (같은 채널에 두 계정이 동시에 올리지 않음)"""
         mir, st, world = self.make(accounts=("C", "A", "B"), keys=("k1", "k2", "k3"), slow={"C": 0.4, "A": 0.2, "B": 0.2})
         asyncio.run(mir.run_queue(st))
-        self.assertEqual(world["most"], 3)                                   # 세 계정이 동시에
-        self.assertEqual({p[3] for p in world["posts"]["-9"]}, {"A", "B"})   # 임시 채널은 둘이 함께
+        self.assertEqual(world["most"], 2)                                   # 원래 채널 1 + 임시 채널 1
+        self.assertTrue(world["posts"].get("-9"))                            # 임시 채널은 썼고
+        self.assertEqual(world["most_per_ch"], 1)                            # 어느 채널이든 동시에 한 계정만
 
     def test_relay_set_while_running_is_used(self):
         """도는 중에 저장한 임시 채널도 바로 쓴다 (예전엔 한 차례를 시작할 때 읽은 규칙만 써서 몇 시간이고 안 쓰였다)"""
