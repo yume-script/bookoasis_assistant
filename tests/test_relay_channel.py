@@ -52,12 +52,12 @@ class RelayTest(unittest.TestCase):
         m.UPLOAD_GAP_SEC, gap0 = 0, m.UPLOAD_GAP_SEC
         self.addCleanup(setattr, m, "UPLOAD_GAP_SEC", gap0)
 
-    def make(self, relay="-9", deny=None):
+    def make(self, relay="-9", deny=None, accounts=("A", "B"), keys=("k1", "k2"), slow=None):
         m = self.m
         world = {"n": 1000, "posts": {}, "deleted": [], "sent": []}
         mir = m.Mirror(None, None, lambda *a: None, None)
         mir._route = lambda tg: "direct"
-        clients = {a: Client(a, world, (deny or {}).get(a, ())) for a in ("A", "B")}
+        clients = {a: Client(a, world, (deny or {}).get(a, ())) for a in accounts}
 
         class Acc:
             def __init__(self, a):
@@ -85,7 +85,10 @@ class RelayTest(unittest.TestCase):
                 mir._note_sent(vid)
                 world["n"] += 1
                 mir._note_sent(world["n"])
-                await asyncio.sleep(0.05)
+                world.setdefault("live", set()).add(client.name)
+                world["most"] = max(world.get("most", 0), len(world["live"]))
+                await asyncio.sleep((slow or {}).get(client.name, 0.05))
+                world["live"].discard(client.name)
             return 1
         mir._send_pieces_now = send_now
 
@@ -95,10 +98,10 @@ class RelayTest(unittest.TestCase):
             world["sent"].append((key, list(msgs)))
             return "올림"
         mir.upload = upload
-        rule = {"tg": "A", "tg_alt": ["B"], "kind": "folder", "enabled": True, "channel_title": "c", "id": "r1", "channel": "-1",
-                "relay_channel": relay}
-        mir.queue = [{"rule": "r1", "key": k, "title": k} for k in ("k1", "k2")]
-        st = {"rules": [rule], "hours": "", "encode_slots": 2, "max_gb": 2}
+        rule = {"tg": accounts[0], "tg_alt": list(accounts[1:]), "kind": "folder", "enabled": True, "channel_title": "c", "id": "r1",
+                "channel": "-1", "relay_channel": relay}
+        mir.queue = [{"rule": "r1", "key": k, "title": k} for k in keys]
+        st = {"rules": [rule], "hours": "", "encode_slots": len(keys), "max_gb": 2}
         return mir, st, world
 
     def test_idle_account_goes_through_relay(self):
@@ -132,6 +135,25 @@ class RelayTest(unittest.TestCase):
         fwd = [p for p in world["posts"].get("-1", []) if p[0] == "fwd"]
         self.assertTrue(world["posts"].get("-9"))
         self.assertTrue(fwd and all(p[3] == "A" for p in fwd))
+
+
+    def test_all_idle_accounts_use_relay_together(self):
+        """계정 셋: 하나가 원래 채널로 (느리게) 올리는 동안 나머지 둘이 함께 임시 채널로 (예전엔 임시 채널도 한 계정씩)"""
+        mir, st, world = self.make(accounts=("C", "A", "B"), keys=("k1", "k2", "k3"), slow={"C": 0.4, "A": 0.2, "B": 0.2})
+        asyncio.run(mir.run_queue(st))
+        self.assertEqual(world["most"], 3)                                   # 세 계정이 동시에
+        self.assertEqual({p[3] for p in world["posts"]["-9"]}, {"A", "B"})   # 임시 채널은 둘이 함께
+
+    def test_relay_set_while_running_is_used(self):
+        """도는 중에 저장한 임시 채널도 바로 쓴다 (예전엔 한 차례를 시작할 때 읽은 규칙만 써서 몇 시간이고 안 쓰였다)"""
+        m = self.m
+        mir, st, world = self.make(relay="")
+        saved = {"rules": [{**st["rules"][0], "relay_channel": "-9"}]}
+        orig = m.load_settings
+        m.load_settings = lambda: saved
+        self.addCleanup(setattr, m, "load_settings", orig)
+        asyncio.run(mir.run_queue(st))
+        self.assertTrue(world["posts"].get("-9"))
 
 
 class CleanTest(unittest.TestCase):
