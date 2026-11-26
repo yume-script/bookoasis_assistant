@@ -688,6 +688,7 @@
             const relayField = field('임시 채널 (계정이 여럿일 때)', relaySel, '같은 채널에는 한 번에 한 계정씩만 올려서, 한 계정이 이 채널로 올리는 동안 다른 계정은 놀게 됩니다. '
                 + '임시 채널을 고르면 놀고 있는 계정은 임시 채널에 올린 뒤 이 채널로 옮기고(전달, 출처 숨김 - 다시 올리지 않아 금방) 임시 채널에서는 지웁니다. '
                 + '모든 계정이 임시 채널과 이 채널에 글을 쓸 수 있어야 합니다. 영상만 (음악은 그대로).');
+            const capIn = h('textarea', { class: 'input', rows: '3', placeholder: '{name}\n\n{summary}' });
             capIn.value = r.caption || '{name}\n\n{summary}';
             const fillChannels = async () => {
                 const keep = chSel.value;
