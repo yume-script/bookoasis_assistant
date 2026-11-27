@@ -1,12 +1,14 @@
 # -*- coding: utf-8 -*-
 """자동 올리기의 "유튜브" 규칙: 유튜브 링크를 주면 yt-dlp로 받아 그 규칙의 텔레그램 채널에 올린다.
+X(트위터) 게시물 링크도 같은 규칙으로 받는다 (x.com · twitter.com · fxtwitter 등 -> key "x-<게시물 id>",
+여러 영상이 있는 게시물은 '/video/2'처럼 번호를 붙이면 그 영상, 없으면 첫 영상). 로그인이 있어야 보이는 게시물은 받지 못한다.
 
 - 규칙 폴더: DATA_DIR/tgup_youtube/<규칙 id> (이 서버). 링크마다 요청 파일 <key>.request.json {"url", "title"}을 두고
   진행 목록에는 key("yt-<영상 id>")로 넣는다 - 서버를 다시 켜도, 실패해 다시 시도할 때도 링크를 잃지 않는다.
 - 받기: 규칙의 높이(720p 등) 이하에서 mp4(H.264/AAC) 우선 -> 없으면 다른 형식(올릴 때 mp4로 인코딩). 한국어 자막이 있으면 같이.
 - 올리기: 받은 파일을 폴더 규칙과 같은 과정(인코딩·나누기·자막·썸네일)으로. 캡션 칸: {name}(영상 제목) {uploader} {date} {url} {summary}(설명)
 - 다 올리면(또는 중복으로 건너뛰면) 받은 파일을 지운다. 실패하면 남겨 두고 다시 시도할 때 그대로 쓴다.
-- 쿠키 (선택): 유튜브가 "봇이 아닌지 로그인으로 확인"을 요구하면 쿠키 없이는 받지 못한다. [유튜브 보내기] 탭에서 넣은
+- 쿠키 (선택): 유튜브가 "봇이 아닌지 로그인으로 확인"을 요구하면 쿠키 없이는 받지 못한다. [유튜브·X 보내기] 탭에서 넣은
   cookies.txt(Netscape 형식, DATA_DIR/tgup/youtube_cookies.txt, 이 서버만 읽게 600) 또는 .env의 YTDLP_COOKIES(파일 경로)를
   yt-dlp에 --cookies로 넘긴다. 내용은 화면에 다시 보여 주지 않는다. 로그인 요구로 실패하면 다시 시도하지 않고 알린다 (LoginRequired).
 """
@@ -28,6 +30,8 @@ MAX_URLS = 50
 PLAYLIST_MAX = 200
 _ID_RE = re.compile(r"^[A-Za-z0-9_-]{11}$")
 _HOSTS = ("youtube.com", "youtu.be", "youtube-nocookie.com")
+_X_HOSTS = ("x.com", "twitter.com", "fxtwitter.com", "vxtwitter.com", "fixupx.com", "fixvx.com", "twittpr.com")
+_X_PATH = re.compile(r"^/(?:[A-Za-z0-9_]{1,30}|i(?:/web)?)/status(?:es)?/(\d{5,25})(?:/(?:video|photo)/([1-4]))?/?$")
 
 
 def root():
@@ -55,6 +59,35 @@ def video_id(url):
             m = re.match(r"^/(?:shorts|live|embed|v)/([^/?#]+)", p.path)
             cand = m.group(1) if m else ""
     return cand if _ID_RE.match(cand) else ""
+
+
+def x_post(url):
+    """X(트위터) 게시물 주소 -> (게시물 id, 영상 번호 1~4 또는 0), 아니면 ("", 0)"""
+    try:
+        p = urllib.parse.urlsplit(str(url or "").strip())
+    except ValueError:
+        return "", 0
+    host = (p.hostname or "").lower()
+    if not any(host == h or host.endswith("." + h) for h in _X_HOSTS):
+        return "", 0
+    m = _X_PATH.match(p.path)
+    return (m.group(1), int(m.group(2) or 0)) if m else ("", 0)
+
+
+def x_key(tid, n=0):
+    return f"x-{tid}" + (f"-{n}" if n else "")
+
+
+def x_url(tid, n=0):
+    return f"https://x.com/i/status/{tid}" + (f"/video/{n}" if n else "")
+
+
+def is_x(key):
+    return str(key).startswith("x-")
+
+
+def site_of(key):
+    return "X" if is_x(key) else "유튜브"
 
 
 def playlist_id(url):
@@ -102,7 +135,10 @@ def load_request(folder, key):
             return json.load(f) or {}
     except (OSError, ValueError):
         vid = vid_of(key)
-        return {"url": watch_url(vid)} if vid else {}
+        if vid:
+            return {"url": watch_url(vid)}
+        m = re.fullmatch(r"x-(\d+)(?:-([1-4]))?", str(key))
+        return {"url": x_url(m.group(1), int(m.group(2) or 0))} if m else {}
 
 
 def ytdlp_cmd():
@@ -144,12 +180,17 @@ def find_file(folder, key):
 
 
 async def expand(urls, timeout=120):
-    """주소들 -> [(영상 id, 주소)] (재생목록 주소는 안의 영상들로, 최대 PLAYLIST_MAX). 유튜브 영상이 아닌 주소는 ValueError"""
+    """주소들 -> [(진행 목록 key, 주소)] (재생목록 주소는 안의 영상들로, 최대 PLAYLIST_MAX). X 게시물은 key "x-<id>".
+    유튜브·X 영상이 아닌 주소는 ValueError"""
     out, bad = [], []
     for u in split_urls(urls)[:MAX_URLS]:
         vid = video_id(u)
         if vid:
-            out.append((vid, watch_url(vid)))
+            out.append((key_of(vid), watch_url(vid)))
+            continue
+        tid, n = x_post(u)
+        if tid:
+            out.append((x_key(tid, n), x_url(tid, n)))
             continue
         lid = playlist_id(u)
         if not lid:
@@ -172,9 +213,9 @@ async def expand(urls, timeout=120):
             if any(_LOGIN_RE.search(t) for t in lines):
                 raise _fail(lines, proc.returncode)
             raise RuntimeError(f"재생목록을 읽지 못했습니다: {(lines[-1] if lines else '')[:200]}")
-        out += [(v, watch_url(v)) for v in ids]
+        out += [(key_of(v), watch_url(v)) for v in ids]
     if bad:
-        raise ValueError("유튜브 영상·재생목록 주소가 아닙니다: " + ", ".join(bad[:5]))
+        raise ValueError("유튜브 영상·재생목록이나 X 게시물 주소가 아닙니다: " + ", ".join(bad[:5]))
     seen, uniq = set(), []
     for vid, u in out:
         if vid not in seen:
@@ -186,7 +227,8 @@ async def expand(urls, timeout=120):
 _PROG = re.compile(r"^yp:(\d+|NA)/(\d+|NA)")
 COOKIE_NAME = "youtube_cookies.txt"
 COOKIE_MAX = 512 * 1024
-_LOGIN_RE = re.compile(r"Sign in to confirm|cookies-from-browser|--cookies|confirm you.re not a bot|login required|Sign in to view", re.I)
+_LOGIN_RE = re.compile(r"Sign in to confirm|cookies-from-browser|--cookies|confirm you.re not a bot|login required|Sign in to view"
+                       r"|requires authentication|NSFW tweet|log in to", re.I)
 
 
 class LoginRequired(RuntimeError):
@@ -225,7 +267,7 @@ def cookies_status():
 
 
 def save_cookies(text):
-    """[유튜브 보내기]에서 넣은 cookies.txt 내용을 저장 (Netscape 형식, youtube.com 쿠키가 있어야). 돌려주는 값: 쿠키 줄 수"""
+    """[유튜브·X 보내기]에서 넣은 cookies.txt 내용을 저장 (Netscape 형식, youtube.com 쿠키가 있어야). 돌려주는 값: 쿠키 줄 수"""
     text = str(text or "")
     if len(text.encode("utf-8")) > COOKIE_MAX:
         raise ValueError("쿠키 파일이 너무 큽니다 (512KB까지).")
@@ -254,14 +296,20 @@ def delete_cookies():
         return False
 
 
-def _fail(tail, returncode):
+def _fail(tail, returncode, site="유튜브"):
     """yt-dlp 오류 -> 예외 (로그인 요구면 LoginRequired). 오류 줄은 앞부분을 남긴다 (예전엔 뒤 300자라 'Sign in to confirm…'이 잘림)"""
     err = next((t for t in tail if "ERROR" in t), tail[-1] if tail else f"종료 코드 {returncode}")
     err = re.sub(r"^ERROR:\s*(\[[^\]]+\]\s*[\w-]+:\s*)?", "", err)
+    if site == "X":
+        if any(_LOGIN_RE.search(t) for t in tail):
+            return LoginRequired("X가 로그인을 요구하는 게시물입니다 (민감한 내용·비공개 계정 등) - 받지 못합니다.")
+        if re.search(r"No video could be found|no video", err, re.I):
+            return RuntimeError("X 게시물에 영상이 없습니다.")
+        return RuntimeError(f"X에서 받지 못했습니다: {err[:300]}")
     if any(_LOGIN_RE.search(t) for t in tail):
         if cookies_path():
-            return LoginRequired("유튜브가 로그인을 요구합니다 - 넣어 둔 쿠키가 만료됐거나 막혔습니다. [유튜브 보내기] 탭에서 쿠키 파일을 새로 넣어 주세요.")
-        return LoginRequired("유튜브가 로그인(봇 확인)을 요구합니다 - [유튜브 보내기] 탭에서 쿠키 파일(cookies.txt)을 넣어 주세요.")
+            return LoginRequired("유튜브가 로그인을 요구합니다 - 넣어 둔 쿠키가 만료됐거나 막혔습니다. [유튜브·X 보내기] 탭에서 쿠키 파일을 새로 넣어 주세요.")
+        return LoginRequired("유튜브가 로그인(봇 확인)을 요구합니다 - [유튜브·X 보내기] 탭에서 쿠키 파일(cookies.txt)을 넣어 주세요.")
     return RuntimeError(f"유튜브에서 받지 못했습니다: {err[:300]}")
 
 
@@ -272,7 +320,7 @@ async def download(url, folder, key, height=720, progress=None, cancelled=None):
     if not cmd:
         raise RuntimeError("서버에 yt-dlp가 없습니다 (pip install yt-dlp 또는 .env의 YTDLP_PATH).")
     os.makedirs(folder, exist_ok=True)
-    args = [*cmd, *cookie_args(), "--no-playlist", "-q", "--no-warnings", "--newline", "--progress", "--progress-template", "download:yp:%(progress.downloaded_bytes)s/%(progress.total_bytes,progress.total_bytes_estimate)s",
+    args = [*cmd, *([] if is_x(key) else cookie_args()), "--no-playlist", "-q", "--no-warnings", "--newline", "--progress", "--progress-template", "download:yp:%(progress.downloaded_bytes)s/%(progress.total_bytes,progress.total_bytes_estimate)s",
             "-f", fmt_select(height), "--merge-output-format", "mp4", "--write-info-json", "--no-write-playlist-metafiles",
             "--write-subs", "--sub-langs", "ko.*,ko", "--convert-subs", "srt", "--no-mtime",
             "-o", os.path.join(folder, f"{key}.%(ext)s")]
@@ -303,13 +351,14 @@ async def download(url, folder, key, height=720, progress=None, cancelled=None):
     finally:
         await asyncio.gather(err_task, return_exceptions=True)
     if proc.returncode != 0:
-        raise _fail(tail, proc.returncode)
+        raise _fail(tail, proc.returncode, site_of(key))
     path = find_file(folder, key)
     if not path:
-        raise RuntimeError("유튜브에서 받은 파일을 찾지 못했습니다.")
+        raise RuntimeError(f"{site_of(key)}에서 받은 파일을 찾지 못했습니다.")
     info = load_info(folder, key)
     # 읽기 좋은 이름으로 (텔레그램에 그 이름으로 올라간다): '<제목> [<id>].mp4' - 자막도 같이
-    stem = f"{_safe(info.get('title') or key)} [{vid_of(key) or key}]"
+    name = x_text(info) if is_x(key) else info.get("title")
+    stem = f"{_safe(name or key)} [{vid_of(key) or key}]"
     new = os.path.join(folder, stem + os.path.splitext(path)[1])
     os.replace(path, new)
     for sub in glob.glob(os.path.join(glob.escape(folder), glob.escape(key) + ".*.srt")):
@@ -329,16 +378,32 @@ def load_info(folder, key):
             d = json.load(f) or {}
     except (OSError, ValueError):
         return {}
-    return {k: d.get(k) for k in ("id", "title", "uploader", "channel", "upload_date", "description", "webpage_url", "duration")}
+    return {k: d.get(k) for k in ("id", "title", "uploader", "uploader_id", "channel", "upload_date", "description", "webpage_url",
+                                  "duration", "extractor_key")}
+
+
+def x_text(info):
+    """X 게시물 글의 첫 줄 (t.co 링크·해시태그 줄 빼고, 100자) - yt-dlp 제목은 '작성자 - 글…'이라 그대로 쓰면 이름이 두 번 나온다"""
+    for line in str(info.get("description") or "").splitlines():
+        line = re.sub(r"https?://t\.co/\S+", "", line).strip()
+        if line:
+            return line[:100] + ("…" if len(line) > 100 else "")
+    return str(info.get("uploader") or "")
 
 
 def fields(info, req):
     """캡션 칸 ({name} {title} {uploader} {date} {url} {summary}) - 연도는 비워 둔다 (영화 중복 확인에 쓰이지 않게)"""
     d = str(info.get("upload_date") or "")
     date = f"{d[:4]}-{d[4:6]}-{d[6:8]}" if re.fullmatch(r"\d{8}", d) else ""
-    title = str(info.get("title") or req.get("title") or "").strip()
+    x = str(info.get("extractor_key") or "").lower() == "twitter" or "x.com/" in str(req.get("url") or "")
+    title = (x_text(info) if x else str(info.get("title") or req.get("title") or "")).strip()
     desc = str(info.get("description") or "").strip()
-    return {"name": title, "title": title, "uploader": str(info.get("uploader") or info.get("channel") or ""),
+    if x:
+        desc = re.sub(r"\s*https?://t\.co/\S+", "", desc).strip()
+    who = str(info.get("uploader") or info.get("channel") or "")
+    if x and info.get("uploader_id"):
+        who = f"{who} (@{info['uploader_id']})" if who else f"@{info['uploader_id']}"
+    return {"name": title, "title": title, "uploader": who,
             "date": date, "url": str(info.get("webpage_url") or req.get("url") or ""),
             "summary": desc[:600] + ("…" if len(desc) > 600 else ""), "year": "", "show": "", "season": "", "episode": "", "code": ""}
 

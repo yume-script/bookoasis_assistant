@@ -2178,7 +2178,8 @@ class Mirror:
             n = fails[job["key"]] = MAX_TRIES + 1 if no_retry else min(fails.get(job["key"], 0), MAX_TRIES) + 1
             if no_retry:
                 retry.pop(job["key"], None)
-                note += " (다시 시도하지 않음 - 쿠키를 넣은 뒤 [유튜브 보내기]에서 다시 넣어 주세요)"
+                note += (" (다시 시도하지 않음)" if youtube.is_x(job["key"]) else
+                         " (다시 시도하지 않음 - 쿠키를 넣은 뒤 [유튜브·X 보내기]에서 다시 넣어 주세요)")
             elif n <= MAX_TRIES:
                 wait = RETRY_AFTER[min(n, len(RETRY_AFTER)) - 1]
                 retry[job["key"]] = {"title": job["title"], "at": int(time.time()) + wait}
@@ -2925,16 +2926,16 @@ class Mirror:
             raise ValueError("서버에 yt-dlp가 없습니다 (pip install yt-dlp).")
         items = await youtube.expand(urls)
         if not items:
-            raise ValueError("유튜브 주소를 넣어 주세요.")
+            raise ValueError("유튜브나 X 주소를 넣어 주세요.")
         queued = {(j["rule"], j["key"]) for j in self.queue}
         n = dup = 0
-        for vid, url in items:
-            key = youtube.key_of(vid)
+        for key, url in items:
             if (rule_id, key) in queued:
                 dup += 1
                 continue
             youtube.save_request(rule["folder"], key, url)
-            self.queue.append({"rule": rule_id, "key": key, "title": f"유튜브 {vid}", "manual": True, **({"force": True} if again else {})})
+            label = f"X {key[2:]}" if youtube.is_x(key) else f"유튜브 {youtube.vid_of(key)}"
+            self.queue.append({"rule": rule_id, "key": key, "title": label, "manual": True, **({"force": True} if again else {})})
             queued.add((rule_id, key))
             n += 1
         if n:
@@ -2947,11 +2948,11 @@ class Mirror:
         folder = rule["folder"]
         req = youtube.load_request(folder, key)
         if not req.get("url"):
-            raise RuntimeError("유튜브 주소 기록이 없습니다 - 다시 보내 주세요.")
+            raise RuntimeError("주소 기록이 없습니다 - 다시 보내 주세요.")
         path = youtube.find_file(folder, key)
         title = req.get("title") or req["url"]
         if not path:
-            self.current = {"title": title, "phase": "유튜브에서 받는 중", "done": 0, "total": 0}
+            self.current = {"title": title, "phase": f"{youtube.site_of(key)}에서 받는 중", "done": 0, "total": 0}
 
             def prog(done, total):
                 if self.current:

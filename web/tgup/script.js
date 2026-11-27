@@ -190,19 +190,19 @@
         if (!st.ytdlp) pane.append(h('p', { class: 'muted error', text: '서버에 yt-dlp가 없습니다 - 설치 폴더에서 venv/bin/pip install yt-dlp 후 다시 시작하세요 (또는 [설정 > 정보 > 지금 업데이트]).' }));
         pane.append(ytCookieBox(st.yt_cookies || {}));
         if (!rules.length) {
-            pane.append(h('p', { class: 'muted', text: '유튜브 규칙이 없습니다. [규칙] 탭에서 [규칙 더하기] → 종류 "유튜브 링크"를 고르고 올릴 텔레그램 채널을 정해 저장해 주세요.' }));
+            pane.append(h('p', { class: 'muted', text: '유튜브 규칙이 없습니다. [규칙] 탭에서 [규칙 더하기] → 종류 "유튜브·X 링크"를 고르고 올릴 텔레그램 채널을 정해 저장해 주세요.' }));
             return;
         }
         if (!rules.some((r) => r.id === ytState.rule)) ytState.rule = rules[0].id;
         const ruleSel = h('select', { class: 'select' }, rules.map((r) => h('option', {
-            value: r.id, selected: r.id === ytState.rule, text: `▶ 유튜브 → ${r.channel_title || r.channel}${r.enabled ? '' : ' (꺼짐)'}` })));
+            value: r.id, selected: r.id === ytState.rule, text: `▶ 유튜브·X → ${r.channel_title || r.channel}${r.enabled ? '' : ' (꺼짐)'}` })));
         ruleSel.addEventListener('change', () => { ytState.rule = ruleSel.value; });
         const urlsIn = h('textarea', { class: 'input', rows: '5', spellcheck: false,
-            placeholder: 'https://www.youtube.com/watch?v=...\nhttps://youtu.be/...\nhttps://www.youtube.com/playlist?list=... (재생목록은 안의 영상 모두)' });
+            placeholder: 'https://www.youtube.com/watch?v=...\nhttps://youtu.be/...\nhttps://www.youtube.com/playlist?list=... (재생목록은 안의 영상 모두)\nhttps://x.com/계정/status/... (X 게시물의 영상, 여러 개면 끝에 /video/2처럼 번호)' });
         const againIn = h('input', { type: 'checkbox' });
         const sendBtn = h('button', { class: 'btn btn-accent' }, icon('paper-plane'), ' 받아서 올리기');
         sendBtn.addEventListener('click', async () => {
-            if (!urlsIn.value.trim()) { toast('유튜브 링크를 넣어 주세요.', 'error'); return; }
+            if (!urlsIn.value.trim()) { toast('유튜브나 X 링크를 넣어 주세요.', 'error'); return; }
             sendBtn.disabled = true;
             try {
                 const r = await post('api/tgup/youtube', { rule: ruleSel.value, urls: urlsIn.value, again: againIn.checked });
@@ -213,9 +213,10 @@
         });
         pane.append(h('div', { class: 'mirror-rule' },
             field('규칙 (올릴 텔레그램 채널)', ruleSel),
-            field('유튜브 링크 (한 줄에 하나, 여러 개 가능)', urlsIn),
+            field('유튜브·X 링크 (한 줄에 하나, 여러 개 가능)', urlsIn),
             h('div', { class: 'toolbar' }, h('label', { class: 'check', title: '같은 영상(파일 이름)을 이 채널에 이미 올렸어도 다시 올립니다' }, againIn, ' 이미 올린 영상도 다시 올리기'), sendBtn),
             h('p', { class: 'field-hint', text: '진행 목록 끝에 들어가 차례가 되면 받고(규칙의 화질 이하) 올립니다 - 텔레그램에서 바로 재생되는 mp4로, 크면 나눠서. '
+                + 'X 게시물은 글 첫 줄이 {name}, 작성자(@아이디)가 {uploader}, 글 전체가 {summary}입니다 - 로그인해야 보이는 게시물(민감한 내용·비공개 계정)은 받지 못합니다. '
                 + '캡션 틀은 규칙에서 바꿉니다 ({name} 제목 · {uploader} 채널 · {date} · {url} · {summary} 설명). 저작권이 있는 영상은 권리자가 허락한 범위에서만 올려 주세요.' })));
     }
 
@@ -677,7 +678,7 @@
             const kindSel = h('select', { class: 'select' }, opt('plex', 'Plex 라이브러리', r.kind !== 'folder' && !!opts.plex.length),
                 opt('folder', 'rclone 드라이브 · 폴더', (r.kind === 'folder' && !isMusic && !isYt) || (!opts.plex.length && !isMusic && !isYt && r.kind !== 'folder')),
                 opt('music', '음악 (rclone 드라이브 · 폴더)', isMusic),
-                opt('youtube', '유튜브 링크', isYt));
+                opt('youtube', '유튜브·X 링크', isYt));
             // 음악 규칙: 처음 켤 때 폴더에 이미 있는 곡도 올릴지
             const existIn = h('input', { type: 'checkbox', checked: !!r.upload_existing });
             const folderIn = h('input', { class: 'input', placeholder: '/mnt/gdrive/영화 또는 gdrive:영화', value: r.folder || '' });
@@ -776,7 +777,7 @@
                 + '(없으면 "아티스트/앨범 (연도)/01 곡" 폴더 이름)로 곡 제목·아티스트·앨범·트랙·디스크·장르·작곡·작사·편곡·앨범ID를 "이름: 값" 줄로 적고 '
                 + '(YMPlayer 텔레그램 음악 채널이 읽음), 텔레그램 오디오 정보와 앨범 아트(파일 안 그림 또는 cover.jpg)도 붙입니다. '
                 + '같은 이름의 가사(.lrc)가 있으면 곡 뒤에 파일로 올리고, 앨범 폴더별·파일 이름 순서(트랙 순)로 올립니다.' });
-            const ytNote = h('p', { class: 'muted', text: '[유튜브 보내기] 탭에 넣은 유튜브 영상·재생목록 링크를 yt-dlp로 받아 이 채널에 올립니다 '
+            const ytNote = h('p', { class: 'muted', text: '[유튜브·X 보내기] 탭에 넣은 유튜브 영상·재생목록과 X 게시물 영상 링크를 yt-dlp로 받아 이 채널에 올립니다 '
                 + '(아래 화질 이하의 mp4 우선, 한국어 자막이 있으면 같이). 다 올리면 받은 파일은 지웁니다.'
                 + (data.ytdlp ? '' : ' ⚠ 서버에 yt-dlp가 없습니다 - 설치 폴더에서 venv/bin/pip install yt-dlp') });
             const existRow = h('label', { class: 'check' }, existIn, ' 처음 켤 때 폴더에 이미 있는 곡도 올리기 (끄면 켠 뒤 새로 생긴 곡만)');
@@ -795,7 +796,7 @@
                 existRow.classList.toggle('hidden', !music);
                 plexField.classList.toggle('hidden', folder || yt);
                 folderField.classList.toggle('hidden', !folder);
-                capHint.textContent = yt ? '{name} 영상 제목 · {uploader} 유튜브 채널 · {date} 올린 날 · {url} 주소 · {summary} 설명'
+                capHint.textContent = yt ? '{name} 영상 제목(X는 글 첫 줄) · {uploader} 유튜브 채널(X는 작성자) · {date} 올린 날 · {url} 주소 · {summary} 설명'
                     : '{name} 제목(영화 "제목 (연도)", 에피소드 "작품 S01E02 - 제목") · {summary} 줄거리 · {title} {year} {show} {season} {episode} {code} {genres} {tags}(#장르) {library} {filename}';
                 if (yt && (!capIn.value.trim() || capIn.value === '{name}\n\n{summary}')) capIn.value = YT_CAPTION;
                 if (!yt && capIn.value === YT_CAPTION) capIn.value = '{name}\n\n{summary}';
