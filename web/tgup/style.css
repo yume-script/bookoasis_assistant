@@ -146,3 +146,11 @@ textarea.input { resize: vertical; }
 /* 진행 중 항목: 지금 하는 일 / 진행률·남은 시간 / 시작 / 공정별 시간을 한 줄에 하나씩 */
 .mirror-note.mirror-lines { white-space: pre-line; overflow: visible; text-overflow: clip; line-height: 1.55; }
 .mirror-note.mirror-lines .mirror-actions { display: flex; flex-wrap: wrap; gap: 0.3rem; margin-top: 0.35rem; white-space: normal; }
+
+/* 페이지에서 X 영상 찾기 */
+#pageGrab { margin-top: 1rem; }
+#pageGrab h3 { margin: 0 0 0.4rem; font-size: 1rem; }
+#pageGrab .toolbar .input { flex: 1 1 18rem; min-width: 0; }
+.page-grab-list { list-style: none; margin: 0.4rem 0; padding: 0; display: flex; flex-direction: column; gap: 0.25rem; max-height: 22rem; overflow: auto; }
+.page-grab-list li { display: flex; align-items: center; gap: 0.4rem; min-width: 0; overflow-wrap: anywhere; }
+.page-grab-recent { margin-top: 0.75rem; }

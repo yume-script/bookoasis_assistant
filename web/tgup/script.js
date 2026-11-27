@@ -218,6 +218,85 @@
             h('p', { class: 'field-hint', text: '진행 목록 끝에 들어가 차례가 되면 받고(규칙의 화질 이하) 올립니다 - 텔레그램에서 바로 재생되는 mp4로, 크면 나눠서. '
                 + 'X 게시물은 글 첫 줄이 {name}, 작성자(@아이디)가 {uploader}, 글 전체가 {summary}입니다 - 로그인해야 보이는 게시물(민감한 내용·비공개 계정)은 받지 못합니다. video.twimg.com 영상 파일 주소는 글이 없어 "X 영상 <번호>"로 올라갑니다. '
                 + '캡션 틀은 규칙에서 바꿉니다 ({name} 제목 · {uploader} 채널 · {date} · {url} · {summary} 설명). 저작권이 있는 영상은 권리자가 허락한 범위에서만 올려 주세요.' })));
+        pane.append(pageGrabBox(ruleSel, againIn));
+    }
+
+    // 페이지에서 X 영상 찾기: 페이지 주소 -> 서버가 HTML에서 video.twimg.com mp4 주소를 뽑아 저장 -> 고른 것을 위 규칙의 채널로
+    const pgState = { open: '' };
+    function pageGrabBox(ruleSel, againIn) {
+        const box = h('div', { class: 'mirror-rule', id: 'pageGrab' });
+        const urlIn = h('input', { class: 'input', type: 'url', placeholder: 'https://… (X 영상이 들어 있는 페이지 주소)', spellcheck: false });
+        const findBtn = h('button', { class: 'btn btn-accent' }, icon('magnifying-glass'), ' 찾기');
+        const result = h('div', { class: 'page-grab-result' });
+        const recent = h('div', { class: 'page-grab-recent' });
+        const short = (u) => { try { const p = new URL(u).pathname.split('/'); const res = p.find((x) => /^\d+x\d+$/.test(x)); return `${p.find((x) => /^\d{8,}$/.test(x)) || p[p.length - 1]}${res ? ` · ${res}` : ''}`; } catch (e) { return u; } };
+        const when = (t) => new Date(t * 1000).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+        function showPage(page) {
+            pgState.open = page.url;
+            clear(result);
+            const sent = new Set(page.sent || []);
+            const checks = page.urls.map((u) => ({ u, box: h('input', { type: 'checkbox', checked: !sent.has(u) }) }));
+            const allBox = h('input', { type: 'checkbox', checked: checks.every((c) => c.box.checked) });
+            allBox.addEventListener('change', () => checks.forEach((c) => { c.box.checked = allBox.checked; }));
+            const sendBtn = h('button', { class: 'btn btn-accent' }, icon('paper-plane'), ' 고른 영상 올리기');
+            sendBtn.addEventListener('click', async () => {
+                const urls = checks.filter((c) => c.box.checked).map((c) => c.u);
+                if (!urls.length) { toast('올릴 영상을 골라 주세요.', 'error'); return; }
+                sendBtn.disabled = true;
+                try {
+                    const r = await post('api/tgup/youtube', { rule: ruleSel.value, urls, again: againIn.checked });
+                    const m = await post('api/tgup/pages', { action: 'mark', url: page.url, urls });
+                    toast(r.count ? `${r.count}개를 진행 목록에 넣었습니다${r.already ? ` (이미 있던 ${r.already}개 빼고)` : ''}.` : '이미 진행 목록에 있습니다.', 'success');
+                    drawRecent(m.pages || []);
+                    const again = (m.pages || []).find((p) => p.url === page.url);
+                    if (again) showPage(again);
+                } catch (e) { toast(e.message, 'error', 6000); } finally { sendBtn.disabled = false; }
+            });
+            result.append(
+                h('p', { class: 'muted' }, h('b', { text: page.title || page.url }), ` · 영상 ${page.urls.length}개 (같은 영상은 가장 큰 화질 하나) · ${when(page.at)}`),
+                h('label', { class: 'check' }, allBox, ' 모두 고르기'),
+                h('ul', { class: 'page-grab-list' }, checks.map((c) => h('li', {},
+                    h('label', { class: 'check', title: c.u }, c.box, ` ${short(c.u)}`, sent.has(c.u) ? h('span', { class: 'muted', text: ' (보냄)' }) : null),
+                    h('a', { href: c.u, target: '_blank', rel: 'noopener noreferrer', class: 'muted', title: '새 창에서 보기' }, ' ', icon('arrow-up-right-from-square'))))),
+                h('div', { class: 'toolbar' }, sendBtn));
+        }
+        function drawRecent(pages) {
+            clear(recent);
+            if (!pages.length) return;
+            recent.append(h('p', { class: 'field-label', text: '최근에 찾은 페이지' }), h('ul', { class: 'page-grab-list' }, pages.map((p) => {
+                const del = h('button', { class: 'icon-btn', title: '기록 지우기' }, icon('trash'));
+                del.addEventListener('click', async () => {
+                    try {
+                        const r = await post('api/tgup/pages', { action: 'delete', url: p.url });
+                        if (pgState.open === p.url) clear(result);
+                        drawRecent(r.pages || []);
+                    } catch (e) { toast(e.message, 'error'); }
+                });
+                const open = h('a', { href: '#', text: p.title || p.url, title: p.url });
+                open.addEventListener('click', (ev) => { ev.preventDefault(); urlIn.value = p.url; showPage(p); });
+                return h('li', {}, open, h('span', { class: 'muted', text: ` · ${p.urls.length}개 · 보냄 ${(p.sent || []).length} · ${when(p.at)} ` }), del);
+            })));
+        }
+        findBtn.addEventListener('click', async () => {
+            if (!urlIn.value.trim()) { toast('페이지 주소를 넣어 주세요.', 'error'); return; }
+            findBtn.disabled = true;
+            try {
+                const r = await post('api/tgup/pages', { action: 'grab', url: urlIn.value.trim() });
+                showPage(r.page);
+                drawRecent(r.pages || []);
+            } catch (e) { toast(e.message, 'error', 6000); } finally { findBtn.disabled = false; }
+        });
+        urlIn.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); findBtn.click(); } });
+        box.append(h('h3', { text: '페이지에서 X 영상 찾기' }),
+            h('p', { class: 'field-hint', text: '페이지 주소를 넣으면 그 페이지에 들어 있는 X 영상 파일 주소(video.twimg.com의 mp4)를 찾아 저장합니다. '
+                + '고른 영상은 위에서 고른 규칙의 채널로 올립니다. 영상을 스크립트로 나중에 불러오는 페이지는 찾지 못할 수 있습니다.' }),
+            h('div', { class: 'toolbar' }, urlIn, findBtn), result, recent);
+        api('api/tgup/pages').then((r) => {
+            drawRecent(r.pages || []);
+            const p = (r.pages || []).find((x) => x.url === pgState.open);
+            if (p) { urlIn.value = p.url; showPage(p); }
+        }).catch(() => {});
+        return box;
     }
 
     // 유튜브 쿠키: "봇이 아닌지 로그인으로 확인" 요구로 못 받을 때 - cookies.txt(Netscape 형식)를 넣으면 yt-dlp가 씀. 내용은 다시 보여 주지 않음
