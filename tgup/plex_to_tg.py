@@ -2037,6 +2037,7 @@ class Mirror:
 
     async def _run_job(self, lane, job, rule, st):
         ok, note, waiting, offline = False, "", False, None
+        no_retry = False   # 다시 해도 안 되는 실패 (유튜브 로그인 요구 등) - 바로 그만두고 알린다
         wait_why = ""
         lane.begin()
         if rule and lane.tg and lane.tg != rule["tg"]:   # 다른 계정이 이어 올림 - 그 계정으로 (채널은 같음)
@@ -2095,6 +2096,7 @@ class Mirror:
                     self._queue_changed()   # 다른 계정 줄이 바로 다른 항목을 가져가게
                     return
                 note = str(e) or type(e).__name__
+                no_retry = isinstance(e, youtube.LoginRequired)
                 where = source_offline(e)
                 if where:   # 원본 드라이브가 끊김 - 실패로 세지 않고 몇 분 뒤 다시 (같은 드라이브 경고는 30분에 한 번)
                     offline = where
@@ -2173,8 +2175,11 @@ class Mirror:
             (rs.get("skipped") or {}).pop(job["key"], None)
         elif not job.get("test"):
             # 실패: 10분 -> 30분 -> 2시간 뒤에 다시 (3번까지). Plex 최근 목록에서 밀려나도 retry에 남아 있어서 다시 한다
-            n = fails[job["key"]] = min(fails.get(job["key"], 0), MAX_TRIES) + 1
-            if n <= MAX_TRIES:
+            n = fails[job["key"]] = MAX_TRIES + 1 if no_retry else min(fails.get(job["key"], 0), MAX_TRIES) + 1
+            if no_retry:
+                retry.pop(job["key"], None)
+                note += " (다시 시도하지 않음 - 쿠키를 넣은 뒤 [유튜브 보내기]에서 다시 넣어 주세요)"
+            elif n <= MAX_TRIES:
                 wait = RETRY_AFTER[min(n, len(RETRY_AFTER)) - 1]
                 retry[job["key"]] = {"title": job["title"], "at": int(time.time()) + wait}
                 note += f" (다시 시도 {n}/{MAX_TRIES}: {wait // 60}분 뒤)"

@@ -6,6 +6,9 @@
 - 받기: 규칙의 높이(720p 등) 이하에서 mp4(H.264/AAC) 우선 -> 없으면 다른 형식(올릴 때 mp4로 인코딩). 한국어 자막이 있으면 같이.
 - 올리기: 받은 파일을 폴더 규칙과 같은 과정(인코딩·나누기·자막·썸네일)으로. 캡션 칸: {name}(영상 제목) {uploader} {date} {url} {summary}(설명)
 - 다 올리면(또는 중복으로 건너뛰면) 받은 파일을 지운다. 실패하면 남겨 두고 다시 시도할 때 그대로 쓴다.
+- 쿠키 (선택): 유튜브가 "봇이 아닌지 로그인으로 확인"을 요구하면 쿠키 없이는 받지 못한다. [유튜브 보내기] 탭에서 넣은
+  cookies.txt(Netscape 형식, DATA_DIR/tgup/youtube_cookies.txt, 이 서버만 읽게 600) 또는 .env의 YTDLP_COOKIES(파일 경로)를
+  yt-dlp에 --cookies로 넘긴다. 내용은 화면에 다시 보여 주지 않는다. 로그인 요구로 실패하면 다시 시도하지 않고 알린다 (LoginRequired).
 """
 import asyncio
 import glob
@@ -155,7 +158,7 @@ async def expand(urls, timeout=120):
         cmd = ytdlp_cmd()
         if not cmd:
             raise RuntimeError("서버에 yt-dlp가 없습니다 (pip install yt-dlp).")
-        proc = await asyncio.create_subprocess_exec(*cmd, "--flat-playlist", "--print", "id", "--playlist-end", str(PLAYLIST_MAX),
+        proc = await asyncio.create_subprocess_exec(*cmd, *cookie_args(), "--flat-playlist", "--print", "id", "--playlist-end", str(PLAYLIST_MAX),
                                                     f"https://www.youtube.com/playlist?list={lid}",
                                                     stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
         try:
@@ -165,7 +168,10 @@ async def expand(urls, timeout=120):
             raise RuntimeError("재생목록을 읽는 데 너무 오래 걸립니다.") from None
         ids = [x.strip() for x in so.decode("utf-8", "replace").splitlines() if _ID_RE.match(x.strip())]
         if not ids:
-            raise RuntimeError(f"재생목록을 읽지 못했습니다: {se.decode('utf-8', 'replace').strip()[-200:]}")
+            lines = se.decode("utf-8", "replace").strip().splitlines()
+            if any(_LOGIN_RE.search(t) for t in lines):
+                raise _fail(lines, proc.returncode)
+            raise RuntimeError(f"재생목록을 읽지 못했습니다: {(lines[-1] if lines else '')[:200]}")
         out += [(v, watch_url(v)) for v in ids]
     if bad:
         raise ValueError("유튜브 영상·재생목록 주소가 아닙니다: " + ", ".join(bad[:5]))
@@ -178,6 +184,85 @@ async def expand(urls, timeout=120):
 
 
 _PROG = re.compile(r"^yp:(\d+|NA)/(\d+|NA)")
+COOKIE_NAME = "youtube_cookies.txt"
+COOKIE_MAX = 512 * 1024
+_LOGIN_RE = re.compile(r"Sign in to confirm|cookies-from-browser|--cookies|confirm you.re not a bot|login required|Sign in to view", re.I)
+
+
+class LoginRequired(RuntimeError):
+    """유튜브가 로그인(쿠키)을 요구함 - 바로 다시 해도 안 되므로 다시 시도하지 않는다"""
+
+
+def _upload_cookie_path():
+    return os.path.join(compat.DATA_DIR, COOKIE_NAME)
+
+
+def cookies_path():
+    """yt-dlp에 줄 쿠키 파일 (.env YTDLP_COOKIES > 화면에서 넣은 것), 없으면 None"""
+    env = os.environ.get("YTDLP_COOKIES", "").strip()
+    if env and os.path.isfile(env):
+        return env
+    p = _upload_cookie_path()
+    return p if os.path.isfile(p) and os.path.getsize(p) > 0 else None
+
+
+def cookie_args():
+    p = cookies_path()
+    return ["--cookies", p] if p else []
+
+
+def cookies_status():
+    """화면에 보일 쿠키 상태 (내용은 보여 주지 않음)"""
+    env = os.environ.get("YTDLP_COOKIES", "").strip()
+    if env:
+        ok = os.path.isfile(env)
+        return {"set": ok, "source": "env", "path": env, "missing": not ok,
+                "updated": int(os.path.getmtime(env)) if ok else 0}
+    p = _upload_cookie_path()
+    if os.path.isfile(p) and os.path.getsize(p) > 0:
+        return {"set": True, "source": "upload", "updated": int(os.path.getmtime(p)), "size": os.path.getsize(p)}
+    return {"set": False}
+
+
+def save_cookies(text):
+    """[유튜브 보내기]에서 넣은 cookies.txt 내용을 저장 (Netscape 형식, youtube.com 쿠키가 있어야). 돌려주는 값: 쿠키 줄 수"""
+    text = str(text or "")
+    if len(text.encode("utf-8")) > COOKIE_MAX:
+        raise ValueError("쿠키 파일이 너무 큽니다 (512KB까지).")
+    rows = [ln for ln in text.splitlines() if ln.strip() and (not ln.startswith("#") or ln.startswith("#HttpOnly_"))]
+    good = [ln for ln in rows if len(ln.split("\t")) >= 7]
+    if not good:
+        raise ValueError("Netscape 형식(cookies.txt)이 아닙니다 - 브라우저 확장(예: Get cookies.txt LOCALLY)으로 내보낸 파일을 넣어 주세요.")
+    if not any("youtube.com" in ln.split("\t")[0] for ln in good):
+        raise ValueError("youtube.com 쿠키가 없습니다 - 유튜브에 로그인한 상태에서 내보내 주세요.")
+    os.makedirs(compat.DATA_DIR, exist_ok=True)
+    p = _upload_cookie_path()
+    body = text if text.lstrip().startswith("# ") else "# Netscape HTTP Cookie File\n" + text
+    fd = os.open(p + ".tmp", os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(body if body.endswith("\n") else body + "\n")
+    os.replace(p + ".tmp", p)
+    os.chmod(p, 0o600)
+    return len(good)
+
+
+def delete_cookies():
+    try:
+        os.remove(_upload_cookie_path())
+        return True
+    except OSError:
+        return False
+
+
+def _fail(tail, returncode):
+    """yt-dlp 오류 -> 예외 (로그인 요구면 LoginRequired). 오류 줄은 앞부분을 남긴다 (예전엔 뒤 300자라 'Sign in to confirm…'이 잘림)"""
+    err = next((t for t in tail if "ERROR" in t), tail[-1] if tail else f"종료 코드 {returncode}")
+    err = re.sub(r"^ERROR:\s*(\[[^\]]+\]\s*[\w-]+:\s*)?", "", err)
+    if any(_LOGIN_RE.search(t) for t in tail):
+        if cookies_path():
+            return LoginRequired("유튜브가 로그인을 요구합니다 - 넣어 둔 쿠키가 만료됐거나 막혔습니다. [유튜브 보내기] 탭에서 쿠키 파일을 새로 넣어 주세요.")
+        return LoginRequired("유튜브가 로그인(봇 확인)을 요구합니다 - [유튜브 보내기] 탭에서 쿠키 파일(cookies.txt)을 넣어 주세요.")
+    return RuntimeError(f"유튜브에서 받지 못했습니다: {err[:300]}")
 
 
 async def download(url, folder, key, height=720, progress=None, cancelled=None):
@@ -187,7 +272,7 @@ async def download(url, folder, key, height=720, progress=None, cancelled=None):
     if not cmd:
         raise RuntimeError("서버에 yt-dlp가 없습니다 (pip install yt-dlp 또는 .env의 YTDLP_PATH).")
     os.makedirs(folder, exist_ok=True)
-    args = [*cmd, "--no-playlist", "-q", "--no-warnings", "--newline", "--progress", "--progress-template", "download:yp:%(progress.downloaded_bytes)s/%(progress.total_bytes,progress.total_bytes_estimate)s",
+    args = [*cmd, *cookie_args(), "--no-playlist", "-q", "--no-warnings", "--newline", "--progress", "--progress-template", "download:yp:%(progress.downloaded_bytes)s/%(progress.total_bytes,progress.total_bytes_estimate)s",
             "-f", fmt_select(height), "--merge-output-format", "mp4", "--write-info-json", "--no-write-playlist-metafiles",
             "--write-subs", "--sub-langs", "ko.*,ko", "--convert-subs", "srt", "--no-mtime",
             "-o", os.path.join(folder, f"{key}.%(ext)s")]
@@ -218,8 +303,7 @@ async def download(url, folder, key, height=720, progress=None, cancelled=None):
     finally:
         await asyncio.gather(err_task, return_exceptions=True)
     if proc.returncode != 0:
-        msg = next((t for t in reversed(tail) if "ERROR" in t), tail[-1] if tail else f"종료 코드 {proc.returncode}")
-        raise RuntimeError(f"유튜브에서 받지 못했습니다: {msg[-300:]}")
+        raise _fail(tail, proc.returncode)
     path = find_file(folder, key)
     if not path:
         raise RuntimeError("유튜브에서 받은 파일을 찾지 못했습니다.")
