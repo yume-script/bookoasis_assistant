@@ -16,3 +16,5 @@ python-socks[asyncio]>=2.4
 cryptg>=0.4; platform_machine == "x86_64" or platform_machine == "AMD64" or platform_machine == "aarch64"
 # 유튜브 규칙 (링크 -> 받아서 텔레그램 채널). 없으면 그 규칙만 못 씀:
 yt-dlp>=2025.1.15
+# 페이지 감시·찾기: 브라우저(크롬) TLS 지문 흉내 - 파이썬 요청을 끊는 사이트용. 없으면 requests로:
+curl_cffi>=0.7
