@@ -27,7 +27,7 @@ import os
 import threading
 import time
 
-from . import chcopy, compat, folder_watch, hardsub_llm, notify, plex_to_tg, tgaccount, youtube
+from . import chcopy, compat, folder_watch, hardsub_llm, notify, pagegrab, plex_to_tg, tgaccount, youtube
 
 log = logging.getLogger("tgup")
 CALL_TIMEOUT = 120
@@ -247,6 +247,8 @@ def api_get(path, query):
         return {**_state(), "account": accs[0], "accounts": [{**a, "title": account_title(a)} for a in accs]}
     if path == "/api/tgup/options":
         return RUNNER.call(_options(), 60)
+    if path == "/api/tgup/pages":   # 페이지에서 찾은 X 영상 기록 (최근 것부터)
+        return {"success": True, "pages": pagegrab.load()}
     if path == "/api/tgup/channels":
         try:
             acc = RUNNER.get_account(query.get("account") or tgaccount.ACCOUNT_ID)
@@ -420,6 +422,19 @@ def api_post(path, body):
         except (ValueError, RuntimeError) as e:
             raise ApiError(400, str(e))
         return {"success": True, "count": n, "already": dup}
+    if path == "/api/tgup/pages":   # 페이지에서 X 영상 찾기 {action: grab|delete|mark, url, urls}
+        act, url = str(body.get("action") or "grab"), str(body.get("url") or "").strip()
+        if act == "delete":
+            pagegrab.delete(url)
+            return {"success": True, "pages": pagegrab.load()}
+        if act == "mark":
+            pagegrab.mark_sent(url, [str(u) for u in body.get("urls") or []])
+            return {"success": True, "pages": pagegrab.load()}
+        try:
+            page = pagegrab.grab(url)
+        except pagegrab.GrabError as e:
+            raise ApiError(400, str(e))
+        return {"success": True, "page": page, "pages": pagegrab.load()}
     if path == "/api/tgup/requeue":   # 취소·건너뛴 항목 다시 올리기 {days: 7 | 30 | 0(전체)} - 이미 올린 같은 파일·회차는 빼고
         try:
             days = int(body.get("days") or 0)
