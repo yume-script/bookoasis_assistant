@@ -109,9 +109,10 @@ class _Runner:
         self._notify_task = asyncio.ensure_future(notify.watch(self.http, plex_to_tg.load_state))   # 디스코드 알림
         self.copier = chcopy.Copier(tg_for)   # 다른 채널 영상 복사 (한 번만)
         self._copy_task = asyncio.ensure_future(self.copier.loop())
+        self._watch_task = asyncio.ensure_future(pagegrab.watch_loop(self.mirror))   # 페이지 감시 (주기마다 새 X 영상)
 
     async def _teardown(self):
-        for task in (self._task, getattr(self, "_notify_task", None), getattr(self, "_copy_task", None)):
+        for task in (self._task, getattr(self, "_notify_task", None), getattr(self, "_copy_task", None), getattr(self, "_watch_task", None)):
             if task:
                 task.cancel()
                 try:
@@ -249,6 +250,8 @@ def api_get(path, query):
         return RUNNER.call(_options(), 60)
     if path == "/api/tgup/pages":   # 페이지에서 찾은 X 영상 기록 (최근 것부터)
         return {"success": True, "pages": pagegrab.load()}
+    if path == "/api/tgup/watches":   # 페이지 감시 목록
+        return {"success": True, "watches": [pagegrab.public(w) for w in pagegrab.watches()]}
     if path == "/api/tgup/channels":
         try:
             acc = RUNNER.get_account(query.get("account") or tgaccount.ACCOUNT_ID)
@@ -435,6 +438,23 @@ def api_post(path, body):
         except pagegrab.GrabError as e:
             raise ApiError(400, str(e))
         return {"success": True, "page": page, "pages": pagegrab.load()}
+    if path == "/api/tgup/watches":   # 페이지 감시 {action: save|delete|run, watch: {...} | id}
+        act = str(body.get("action") or "save")
+        try:
+            if act == "delete":
+                pagegrab.delete_watch(str(body.get("id") or ""))
+            elif act == "run":
+                w = RUNNER.call(pagegrab.check_watch(m, str(body.get("id") or "")), 120)
+                return {"success": True, "watch": w, "watches": [pagegrab.public(x) for x in pagegrab.watches()]}
+            else:
+                data = body.get("watch") or {}
+                rule = next((r for r in plex_to_tg.load_settings()["rules"] if r["id"] == str(data.get("rule") or "")), None)
+                if not rule or rule.get("media") != "youtube":
+                    raise pagegrab.GrabError("유튜브·X 규칙을 골라 주세요.")
+                pagegrab.save_watch(data)
+        except pagegrab.GrabError as e:
+            raise ApiError(400, str(e))
+        return {"success": True, "watches": [pagegrab.public(x) for x in pagegrab.watches()]}
     if path == "/api/tgup/requeue":   # 취소·건너뛴 항목 다시 올리기 {days: 7 | 30 | 0(전체)} - 이미 올린 같은 파일·회차는 빼고
         try:
             days = int(body.get("days") or 0)

@@ -154,3 +154,6 @@ textarea.input { resize: vertical; }
 .page-grab-list { list-style: none; margin: 0.4rem 0; padding: 0; display: flex; flex-direction: column; gap: 0.25rem; max-height: 22rem; overflow: auto; }
 .page-grab-list li { display: flex; align-items: center; gap: 0.4rem; min-width: 0; overflow-wrap: anywhere; }
 .page-grab-recent { margin-top: 0.75rem; }
+.watch-list { display: flex; flex-direction: column; gap: 0.6rem; margin-bottom: 1rem; }
+.watch-item p { margin: 0.2rem 0; overflow-wrap: anywhere; }
+.watch-title { font-weight: 600; overflow-wrap: anywhere; min-width: 0; }

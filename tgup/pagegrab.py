@@ -159,3 +159,144 @@ def delete(url):
     with _lock:
         pages = load()
         _save([p for p in pages if p.get("url") != url])
+
+
+# ===================================================================== 페이지 감시 (정해 둔 페이지를 주기마다 읽어 새 영상만 올리기)
+# DATA_DIR/tgup_page_watch.json [{id, url, rule, every(분), enabled, existing, seen: [미디어 key], last_at, last_new, last_error, title}]
+# - 주기마다(기본 10분, 최소 WATCH_MIN) 페이지를 읽어, 전에 본 적 없는 영상만 그 규칙(유튜브·X)의 진행 목록에 넣는다.
+# - 처음 확인 때: existing이 켜져 있으면 지금 페이지에 있는 영상도 올리고, 꺼져 있으면 '본 것'으로만 적어 둔다(그 뒤 새 것만).
+# - 이미 올린 같은 영상(같은 파일 이름)은 진행 목록·올리기 단계에서 다시 건너뛴다.
+WATCH_EVERY = 10
+WATCH_MIN = 5
+WATCH_MAX = 50
+SEEN_MAX = 3000
+TICK_SEC = 60
+
+
+def _watch_path():
+    return os.path.join(compat.DATA_DIR, "tgup_page_watch.json")
+
+
+def watches():
+    try:
+        with open(_watch_path(), encoding="utf-8") as f:
+            d = json.load(f)
+            return d if isinstance(d, list) else []
+    except (OSError, ValueError):
+        return []
+
+
+def _save_watches(ws):
+    os.makedirs(compat.DATA_DIR, exist_ok=True)
+    tmp = _watch_path() + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(ws, f, ensure_ascii=False)
+    os.replace(tmp, _watch_path())
+
+
+def public(w):
+    """화면용 (본 목록은 개수만)"""
+    return {k: v for k, v in w.items() if k != "seen"} | {"seen_count": len(w.get("seen") or [])}
+
+
+def save_watch(data):
+    """감시 더하기/고치기 {id?, url, rule, every, enabled, existing} -> 저장한 것"""
+    url = str(data.get("url") or "").strip()
+    p = urllib.parse.urlsplit(url)
+    if p.scheme not in ("http", "https") or not p.hostname:
+        raise GrabError("http:// 또는 https:// 페이지 주소를 넣어 주세요.")
+    rule = str(data.get("rule") or "").strip()
+    if not rule:
+        raise GrabError("올릴 규칙(유튜브·X)을 골라 주세요.")
+    try:
+        every = max(WATCH_MIN, min(24 * 60, int(data.get("every") or WATCH_EVERY)))
+    except (TypeError, ValueError):
+        every = WATCH_EVERY
+    with _lock:
+        ws = watches()
+        wid = str(data.get("id") or "")
+        cur = next((w for w in ws if w["id"] == wid), None) if wid else None
+        if not cur and any(w["url"] == url and w["rule"] == rule for w in ws):
+            raise GrabError("같은 페이지·규칙의 감시가 이미 있습니다.")
+        if not cur:
+            if len(ws) >= WATCH_MAX:
+                raise GrabError(f"감시는 {WATCH_MAX}개까지 둘 수 있습니다.")
+            cur = {"id": os.urandom(4).hex(), "seen": [], "last_at": 0, "created": int(time.time())}
+            ws.append(cur)
+        elif cur["url"] != url:      # 주소를 바꾸면 처음부터
+            cur.update(seen=[], last_at=0)
+            cur.pop("first_done", None)
+        cur.update(url=url, rule=rule, every=every, enabled=bool(data.get("enabled", True)),
+                   existing=bool(data.get("existing", True)))
+        _save_watches(ws)
+        return public(cur)
+
+
+def delete_watch(wid):
+    with _lock:
+        _save_watches([w for w in watches() if w["id"] != wid])
+
+
+def due(w, now):
+    return w.get("enabled") and now - int(w.get("last_at") or 0) >= int(w.get("every") or WATCH_EVERY) * 60
+
+
+async def check_watch(mirror, wid, fetcher=None):
+    """감시 하나를 지금 확인: 페이지를 읽어 새 영상만 진행 목록에. 돌려주는 값: 그 감시 (화면용)"""
+    import asyncio
+    w = next((x for x in watches() if x["id"] == wid), None)
+    if not w:
+        raise GrabError("그 감시가 없습니다.")
+    res = {"last_at": int(time.time()), "last_error": "", "last_new": 0}
+    seen_add, sent = [], []
+    try:
+        page = await asyncio.to_thread(grab, w["url"], fetcher)
+        res["title"] = page.get("title") or ""
+        seen = set(w.get("seen") or [])
+        fresh = [u for u in page["urls"] if youtube.twimg_key(u) not in seen]
+        first = not w.get("first_done")
+        if fresh and (not first or w.get("existing", True)):
+            n, dup = await mirror.add_youtube(w["rule"], fresh)
+            res["last_new"] = n
+            sent = fresh
+        seen_add = [youtube.twimg_key(u) for u in fresh]
+        res["first_done"] = True
+    except GrabError as e:
+        if "찾지 못했습니다" in str(e) and w.get("first_done"):   # 이번엔 영상이 없음 - 오류는 아님
+            res["last_error"] = ""
+            res["note"] = "영상 없음"
+        else:
+            res["last_error"] = str(e)
+    except Exception as e:  # noqa: BLE001 - 규칙이 없어졌거나 넣지 못함
+        res["last_error"] = str(e)[:300]
+    with _lock:
+        ws = watches()
+        for x in ws:
+            if x["id"] == wid:
+                x.update(res)
+                if "note" not in res:
+                    x.pop("note", None)
+                x["seen"] = ((x.get("seen") or []) + [k for k in seen_add if k not in set(x.get("seen") or [])])[-SEEN_MAX:]
+                w = x
+        _save_watches(ws)
+    if sent:
+        mark_sent(w["url"], sent)
+    return public(w)
+
+
+async def watch_loop(mirror, tick=TICK_SEC):
+    """[자동 올리기가 켜져 있는 동안] 매분 때가 된 감시를 하나씩 확인"""
+    import asyncio
+    import logging
+    log = logging.getLogger("tgup")
+    await asyncio.sleep(20)
+    while True:
+        now = int(time.time())
+        for w in watches():
+            if due(w, now):
+                got = await check_watch(mirror, w["id"])
+                if got.get("last_error"):
+                    log.warning("페이지 감시 실패 %s: %s", w["url"], got["last_error"])
+                elif got.get("last_new"):
+                    log.info("페이지 감시 %s: 새 영상 %d개를 진행 목록에", w["url"], got["last_new"])
+        await asyncio.sleep(tick)
