@@ -29,13 +29,20 @@ import json, os, sys
 a = sys.argv[1:]
 if "--flat-playlist" in a:
     print("aaaaaaaaaaa"); print("bbbbbbbbbbb"); sys.exit(0)
+if "nsfw" in a[-1]:
+    print("ERROR: [twitter] 123: NSFW tweet requires authentication. Use --cookies", file=sys.stderr); sys.exit(1)
 if "fail" in a[-1]:
     print("ERROR: [youtube] fail: Video unavailable", file=sys.stderr); sys.exit(1)
 out = a[a.index("-o") + 1]
 vid = a[-1].split("v=")[-1]
 base = out.replace(".%(ext)s", "")
 open(base + ".mp4", "wb").write(b"x" * 1000)
-json.dump({"id": vid, "title": "고양이 / 영상: 1편", "uploader": "냥채널", "upload_date": "20250102",
+if "x.com/" in a[-1]:
+    json.dump({"id": "1790000000000000001", "title": "냥이 - 오늘의 고양이 https://t.co/abc", "uploader": "냥이",
+               "uploader_id": "nyang", "upload_date": "20251120", "extractor_key": "Twitter",
+               "description": "오늘의 고양이 https://t.co/abc\n둘째 줄", "webpage_url": a[-1]}, open(base + ".info.json", "w"))
+else:
+  json.dump({"id": vid, "title": "고양이 / 영상: 1편", "uploader": "냥채널", "upload_date": "20250102",
            "description": "설명입니다", "webpage_url": a[-1], "formats": [1, 2, 3]}, open(base + ".info.json", "w"))
 open(base + ".ko.srt", "w").write("1\n00:00:01,000 --> 00:00:02,000\nhi\n")
 print("yp:500/1000"); print("yp:1000/1000")
@@ -63,6 +70,23 @@ class ParseTest(unittest.TestCase):
         self.assertTrue(f["summary"].endswith("…") and len(f["summary"]) == 601)
         cap = make_caption(youtube.YT_CAPTION, f)
         self.assertTrue(cap.startswith("제목\n\n📺 채널 · 2024-03-05\n🔗 https://youtu.be/x"))
+
+    def test_x_post(self):
+        t = "1790000000000000001"
+        for u in (f"https://x.com/nyang/status/{t}", f"https://twitter.com/nyang/status/{t}?s=20", f"https://mobile.twitter.com/i/web/status/{t}",
+                  f"https://fxtwitter.com/nyang/status/{t}/", f"https://vxtwitter.com/nyang/statuses/{t}"):
+            self.assertEqual(youtube.x_post(u), (t, 0), u)
+        self.assertEqual(youtube.x_post(f"https://x.com/nyang/status/{t}/video/3"), (t, 3))
+        for u in ("https://x.com/nyang", f"https://example.com/nyang/status/{t}", "https://x.com/home"):
+            self.assertEqual(youtube.x_post(u), ("", 0), u)
+        self.assertEqual(youtube.load_request("/없음", "x-123456-2")["url"], "https://x.com/i/status/123456/video/2")
+        self.assertEqual(youtube.site_of("x-1"), "X")
+
+    def test_x_fields(self):
+        f = youtube.fields({"title": "냥이 - 오늘의 고양이 https://t.co/abc", "uploader": "냥이", "uploader_id": "nyang",
+                            "upload_date": "20251120", "extractor_key": "Twitter", "description": "오늘의 고양이 https://t.co/abc\n둘째 줄",
+                            "webpage_url": "https://x.com/i/status/1"}, {})
+        self.assertEqual((f["name"], f["uploader"], f["summary"]), ("오늘의 고양이", "냥이 (@nyang)", "오늘의 고양이\n둘째 줄"))
 
     def test_fmt_select(self):
         self.assertIn("[height<=720]", youtube.fmt_select(720))
@@ -115,6 +139,19 @@ class DownloadTest(unittest.TestCase):
             args = json.load(f)
         self.assertEqual(args[args.index("--cookies") + 1], youtube.cookies_path())
 
+    def test_download_x(self):
+        key, url = "x-1790000000000000001", "https://x.com/i/status/1790000000000000001"
+        youtube.save_cookies(".youtube.com\tTRUE\t/\tTRUE\t1999999999\tSID\tabc\n")
+        self.addCleanup(youtube.delete_cookies)
+        youtube.save_request(self.folder, key, url)
+        path = asyncio.run(youtube.download(url, self.folder, key, 720))
+        self.assertEqual(os.path.basename(path), "오늘의 고양이 [x-1790000000000000001].mp4")
+        with open(os.environ["FAKE_ARGS"]) as f:
+            self.assertNotIn("--cookies", json.load(f))     # 유튜브 쿠키는 X에 넘기지 않는다
+        with self.assertRaises(youtube.LoginRequired) as cm:
+            asyncio.run(youtube.download("https://x.com/i/status/9/nsfw", self.folder, "x-9", 720))
+        self.assertIn("X가 로그인을 요구", str(cm.exception))
+
     def test_download_error(self):
         with self.assertRaises(RuntimeError) as cm:
             asyncio.run(youtube.download("https://www.youtube.com/watch?v=fail", self.folder, "yt-fail", 720))
@@ -122,7 +159,10 @@ class DownloadTest(unittest.TestCase):
 
     def test_expand_playlist(self):
         got = asyncio.run(youtube.expand("https://www.youtube.com/playlist?list=PLabcdefghij123\nhttps://youtu.be/aaaaaaaaaaa"))
-        self.assertEqual([v for v, _ in got], ["aaaaaaaaaaa", "bbbbbbbbbbb"])   # 같은 영상은 한 번
+        self.assertEqual([v for v, _ in got], ["yt-aaaaaaaaaaa", "yt-bbbbbbbbbbb"])   # 같은 영상은 한 번
+        got = asyncio.run(youtube.expand("https://x.com/nyang/status/1790000000000000001?s=20 https://twitter.com/i/status/1790000000000000001/video/2"))
+        self.assertEqual(got, [("x-1790000000000000001", "https://x.com/i/status/1790000000000000001"),
+                               ("x-1790000000000000001-2", "https://x.com/i/status/1790000000000000001/video/2")])
         with self.assertRaises(ValueError):
             asyncio.run(youtube.expand("https://example.com/x"))
 
@@ -179,6 +219,30 @@ class MirrorYoutubeTest(DownloadTest):
         self.assertEqual((f["name"], f["uploader"], f["date"]), ("고양이 / 영상: 1편", "냥채널", "2025-01-02"))
         self.assertEqual(mir.queue[0]["title"], "고양이 / 영상: 1편")   # 진행 목록·기록에 영상 제목
         self.assertEqual(os.listdir(self.rule["folder"]), [])         # 다 올렸으니 받은 것은 지움
+
+    def test_add_and_upload_x(self):
+        m = self.m
+        mir = m.Mirror(None, None, lambda *a: None, None)
+        mir.queue, mir.wake = [], lambda: None
+        n, dup = asyncio.run(mir.add_youtube("yt1", "https://x.com/nyang/status/1790000000000000001"))
+        self.assertEqual((n, mir.queue[0]["key"], mir.queue[0]["title"]), (1, "x-1790000000000000001", "X 1790000000000000001"))
+        calls = []
+
+        async def fake_upload_file(rule, key, max_gb, test=False, extra_fields=None):
+            calls.append((key, extra_fields))
+            return "그대로 올림"
+        mir.upload_file = fake_upload_file
+
+        async def run():
+            lane = m.Lane("tg")
+            m._LANE.set(lane)
+            lane.job = mir.queue[0]
+            lane.current_job = {"rule": "yt1", "key": "x-1790000000000000001", "tg": "tg"}
+            return await mir.upload(self.rule, "x-1790000000000000001", 2)
+        self.assertEqual(asyncio.run(run()), "그대로 올림")
+        key, f = calls[0]
+        self.assertEqual((key, f["name"], f["uploader"]), ("오늘의 고양이 [x-1790000000000000001].mp4", "오늘의 고양이", "냥이 (@nyang)"))
+        self.assertEqual(os.listdir(self.rule["folder"]), [])
 
     def test_mcp_tool(self):
         import types
