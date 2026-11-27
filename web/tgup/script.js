@@ -198,7 +198,7 @@
             value: r.id, selected: r.id === ytState.rule, text: `▶ 유튜브·X → ${r.channel_title || r.channel}${r.enabled ? '' : ' (꺼짐)'}` })));
         ruleSel.addEventListener('change', () => { ytState.rule = ruleSel.value; });
         const urlsIn = h('textarea', { class: 'input', rows: '5', spellcheck: false,
-            placeholder: 'https://www.youtube.com/watch?v=...\nhttps://youtu.be/...\nhttps://www.youtube.com/playlist?list=... (재생목록은 안의 영상 모두)\nhttps://x.com/계정/status/... (X 게시물의 영상, 여러 개면 끝에 /video/2처럼 번호)' });
+            placeholder: 'https://www.youtube.com/watch?v=...\nhttps://youtu.be/...\nhttps://www.youtube.com/playlist?list=... (재생목록은 안의 영상 모두)\nhttps://x.com/계정/status/... (X 게시물의 영상, 여러 개면 끝에 /video/2처럼 번호)\nhttps://video.twimg.com/.../영상.mp4 (X 영상 파일 주소)' });
         const againIn = h('input', { type: 'checkbox' });
         const sendBtn = h('button', { class: 'btn btn-accent' }, icon('paper-plane'), ' 받아서 올리기');
         sendBtn.addEventListener('click', async () => {
@@ -216,7 +216,7 @@
             field('유튜브·X 링크 (한 줄에 하나, 여러 개 가능)', urlsIn),
             h('div', { class: 'toolbar' }, h('label', { class: 'check', title: '같은 영상(파일 이름)을 이 채널에 이미 올렸어도 다시 올립니다' }, againIn, ' 이미 올린 영상도 다시 올리기'), sendBtn),
             h('p', { class: 'field-hint', text: '진행 목록 끝에 들어가 차례가 되면 받고(규칙의 화질 이하) 올립니다 - 텔레그램에서 바로 재생되는 mp4로, 크면 나눠서. '
-                + 'X 게시물은 글 첫 줄이 {name}, 작성자(@아이디)가 {uploader}, 글 전체가 {summary}입니다 - 로그인해야 보이는 게시물(민감한 내용·비공개 계정)은 받지 못합니다. '
+                + 'X 게시물은 글 첫 줄이 {name}, 작성자(@아이디)가 {uploader}, 글 전체가 {summary}입니다 - 로그인해야 보이는 게시물(민감한 내용·비공개 계정)은 받지 못합니다. video.twimg.com 영상 파일 주소는 글이 없어 "X 영상 <번호>"로 올라갑니다. '
                 + '캡션 틀은 규칙에서 바꿉니다 ({name} 제목 · {uploader} 채널 · {date} · {url} · {summary} 설명). 저작권이 있는 영상은 권리자가 허락한 범위에서만 올려 주세요.' })));
     }
 

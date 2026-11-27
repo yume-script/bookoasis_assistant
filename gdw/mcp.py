@@ -132,7 +132,7 @@ def _tools(mods, svc):
                       "add_rules": {"type": "array", "items": {"type": "object"}}}), WRITE),
             ("tgup_youtube", "유튜브 영상·재생목록이나 X(트위터) 게시물 영상 링크를 받아서 텔레그램 채널에 올리기 (유튜브 규칙의 진행 목록 끝에 넣는다 - 받기·올리기는 뒤에서, "
                              "진행은 tgup_status). rule: 유튜브 규칙 id 또는 채널 이름 (유튜브 규칙이 하나면 생략). again: 이미 올린 영상도 다시.",
-             _schema({"urls": {"type": "string", "description": "유튜브·X 주소들 (줄·빈칸으로 여러 개, 재생목록이면 안의 영상 모두, X는 /video/2처럼 번호로 그 영상)"},
+             _schema({"urls": {"type": "string", "description": "유튜브·X 주소들 (줄·빈칸으로 여러 개, 재생목록이면 안의 영상 모두, X는 /video/2처럼 번호로 그 영상, video.twimg.com의 mp4 주소도 됨)"},
                       "rule": {"type": "string"}, "again": {"type": "boolean", "default": False}}, ["urls"]), WRITE),
             ("tgup_status", "텔레그램 자동 올리기 현황: 계정마다 지금 올리는 것(단계·진행률·걸린 시간), 진행 목록(대기열 - 순서·제목·채널·계정), "
                             "자막 기다림, 다시 시도 대기, 끊긴 드라이브, 최근 기록(올림·건너뜀·실패와 까닭). "

@@ -2934,8 +2934,7 @@ class Mirror:
                 dup += 1
                 continue
             youtube.save_request(rule["folder"], key, url)
-            label = f"X {key[2:]}" if youtube.is_x(key) else f"유튜브 {youtube.vid_of(key)}"
-            self.queue.append({"rule": rule_id, "key": key, "title": label, "manual": True, **({"force": True} if again else {})})
+            self.queue.append({"rule": rule_id, "key": key, "title": youtube.label_of(key), "manual": True, **({"force": True} if again else {})})
             queued.add((rule_id, key))
             n += 1
         if n:
