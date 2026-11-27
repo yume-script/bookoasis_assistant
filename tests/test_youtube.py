@@ -37,7 +37,9 @@ out = a[a.index("-o") + 1]
 vid = a[-1].split("v=")[-1]
 base = out.replace(".%(ext)s", "")
 open(base + ".mp4", "wb").write(b"x" * 1000)
-if "x.com/" in a[-1]:
+if "video.twimg.com/" in a[-1]:
+    json.dump({"id": "abc", "title": "abcDEF", "extractor_key": "Generic", "webpage_url": a[-1]}, open(base + ".info.json", "w"))
+elif "x.com/" in a[-1]:
     json.dump({"id": "1790000000000000001", "title": "냥이 - 오늘의 고양이 https://t.co/abc", "uploader": "냥이",
                "uploader_id": "nyang", "upload_date": "20251120", "extractor_key": "Twitter",
                "description": "오늘의 고양이 https://t.co/abc\n둘째 줄", "webpage_url": a[-1]}, open(base + ".info.json", "w"))
@@ -81,6 +83,21 @@ class ParseTest(unittest.TestCase):
             self.assertEqual(youtube.x_post(u), ("", 0), u)
         self.assertEqual(youtube.load_request("/없음", "x-123456-2")["url"], "https://x.com/i/status/123456/video/2")
         self.assertEqual(youtube.site_of("x-1"), "X")
+
+    def test_twimg_key(self):
+        u = "https://video.twimg.com/ext_tw_video/1790000000000000009/pu/vid/avc1/1280x720/AbCdEf.mp4?tag=12"
+        self.assertEqual(youtube.twimg_key(u), "xv-1790000000000000009")
+        self.assertEqual(youtube.twimg_key("https://video.twimg.com/amplify_video/1790000000000000010/vid/avc1/720x1280/x.mp4"),
+                         "xv-1790000000000000010")
+        self.assertEqual(youtube.twimg_key("https://video.twimg.com/tweet_video/GabcD-ef.mp4"), "xv-GabcD-ef")   # 움짤
+        for bad in ("https://video.twimg.com/ext_tw_video/1790000000000000009/pu/pl/x.m3u8", "http://video.twimg.com/a/1790000000000000009/x.mp4",
+                    "https://pbs.twimg.com/media/1790000000000000009.mp4", "https://evil.com/video.twimg.com/1790000000000000009.mp4"):
+            self.assertEqual(youtube.twimg_key(bad), "", bad)
+        self.assertEqual((youtube.is_x("xv-1"), youtube.site_of("xv-1"), youtube.label_of("xv-1")), (True, "X", "X 영상 1"))
+        got = asyncio.run(youtube.expand(u))
+        self.assertEqual(got, [("xv-1790000000000000009", u)])
+        f = youtube.fields({"title": "AbCdEf", "extractor_key": "Generic", "webpage_url": u}, {"url": u, "title": "X 영상 1790000000000000009"})
+        self.assertEqual((f["name"], f["uploader"], f["summary"], f["url"]), ("X 영상 1790000000000000009", "", "", u))
 
     def test_x_fields(self):
         f = youtube.fields({"title": "냥이 - 오늘의 고양이 https://t.co/abc", "uploader": "냥이", "uploader_id": "nyang",
@@ -242,6 +259,31 @@ class MirrorYoutubeTest(DownloadTest):
         self.assertEqual(asyncio.run(run()), "그대로 올림")
         key, f = calls[0]
         self.assertEqual((key, f["name"], f["uploader"]), ("오늘의 고양이 [x-1790000000000000001].mp4", "오늘의 고양이", "냥이 (@nyang)"))
+        self.assertEqual(os.listdir(self.rule["folder"]), [])
+
+    def test_add_and_upload_twimg(self):
+        m = self.m
+        mir = m.Mirror(None, None, lambda *a: None, None)
+        mir.queue, mir.wake = [], lambda: None
+        u = "https://video.twimg.com/ext_tw_video/1790000000000000009/pu/vid/avc1/1280x720/AbCdEf.mp4?tag=12"
+        self.assertEqual(asyncio.run(mir.add_youtube("yt1", u)), (1, 0))
+        self.assertEqual((mir.queue[0]["key"], mir.queue[0]["title"]), ("xv-1790000000000000009", "X 영상 1790000000000000009"))
+        calls = []
+
+        async def fake_upload_file(rule, key, max_gb, test=False, extra_fields=None):
+            calls.append((key, extra_fields))
+            return "그대로 올림"
+        mir.upload_file = fake_upload_file
+
+        async def run():
+            lane = m.Lane("tg")
+            m._LANE.set(lane)
+            lane.job = mir.queue[0]
+            lane.current_job = {"rule": "yt1", "key": "xv-1790000000000000009", "tg": "tg"}
+            return await mir.upload(self.rule, "xv-1790000000000000009", 2)
+        self.assertEqual(asyncio.run(run()), "그대로 올림")
+        key, f = calls[0]
+        self.assertEqual((key, f["name"], f["url"]), ("X 영상 1790000000000000009 [xv-1790000000000000009].mp4", "X 영상 1790000000000000009", u))
         self.assertEqual(os.listdir(self.rule["folder"]), [])
 
     def test_mcp_tool(self):

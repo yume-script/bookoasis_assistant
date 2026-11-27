@@ -2,6 +2,7 @@
 """자동 올리기의 "유튜브" 규칙: 유튜브 링크를 주면 yt-dlp로 받아 그 규칙의 텔레그램 채널에 올린다.
 X(트위터) 게시물 링크도 같은 규칙으로 받는다 (x.com · twitter.com · fxtwitter 등 -> key "x-<게시물 id>",
 여러 영상이 있는 게시물은 '/video/2'처럼 번호를 붙이면 그 영상, 없으면 첫 영상). 로그인이 있어야 보이는 게시물은 받지 못한다.
+X 영상 파일 주소(https://video.twimg.com/....mp4)도 그대로 받는다 (key "xv-<미디어 id>", 게시물 글이 없어 제목은 "X 영상 <id>").
 
 - 규칙 폴더: DATA_DIR/tgup_youtube/<규칙 id> (이 서버). 링크마다 요청 파일 <key>.request.json {"url", "title"}을 두고
   진행 목록에는 key("yt-<영상 id>")로 넣는다 - 서버를 다시 켜도, 실패해 다시 시도할 때도 링크를 잃지 않는다.
@@ -82,8 +83,33 @@ def x_url(tid, n=0):
     return f"https://x.com/i/status/{tid}" + (f"/video/{n}" if n else "")
 
 
+def twimg_key(url):
+    """X 영상 파일 주소(video.twimg.com/....mp4) -> 진행 목록 key "xv-<미디어 id>", 아니면 "" """
+    try:
+        p = urllib.parse.urlsplit(str(url or "").strip())
+    except ValueError:
+        return ""
+    if (p.hostname or "").lower() != "video.twimg.com" or p.scheme != "https" or not p.path.lower().endswith(".mp4"):
+        return ""
+    m = re.search(r"/(\d{8,25})(?:/|$)", p.path)          # ext_tw_video/<id>/… · amplify_video/<id>/…
+    if m:
+        return f"xv-{m.group(1)}"
+    stem = re.sub(r"[^A-Za-z0-9_-]", "", os.path.splitext(os.path.basename(p.path))[0])[:40]   # tweet_video/<이름>.mp4 (움짤)
+    return f"xv-{stem}" if stem else ""
+
+
 def is_x(key):
-    return str(key).startswith("x-")
+    return str(key).startswith(("x-", "xv-"))
+
+
+def label_of(key):
+    """진행 목록에 처음 보일 이름 (받으면 제목으로 바뀐다)"""
+    k = str(key)
+    if k.startswith("xv-"):
+        return f"X 영상 {k[3:]}"
+    if k.startswith("x-"):
+        return f"X {k[2:]}"
+    return f"유튜브 {vid_of(k)}"
 
 
 def site_of(key):
@@ -192,6 +218,10 @@ async def expand(urls, timeout=120):
         if tid:
             out.append((x_key(tid, n), x_url(tid, n)))
             continue
+        xv = twimg_key(u)
+        if xv:
+            out.append((xv, u.strip()))
+            continue
         lid = playlist_id(u)
         if not lid:
             bad.append(u)
@@ -215,7 +245,7 @@ async def expand(urls, timeout=120):
             raise RuntimeError(f"재생목록을 읽지 못했습니다: {(lines[-1] if lines else '')[:200]}")
         out += [(key_of(v), watch_url(v)) for v in ids]
     if bad:
-        raise ValueError("유튜브 영상·재생목록이나 X 게시물 주소가 아닙니다: " + ", ".join(bad[:5]))
+        raise ValueError("유튜브 영상·재생목록이나 X 게시물·영상 파일(video.twimg.com) 주소가 아닙니다: " + ", ".join(bad[:5]))
     seen, uniq = set(), []
     for vid, u in out:
         if vid not in seen:
@@ -357,7 +387,7 @@ async def download(url, folder, key, height=720, progress=None, cancelled=None):
         raise RuntimeError(f"{site_of(key)}에서 받은 파일을 찾지 못했습니다.")
     info = load_info(folder, key)
     # 읽기 좋은 이름으로 (텔레그램에 그 이름으로 올라간다): '<제목> [<id>].mp4' - 자막도 같이
-    name = x_text(info) if is_x(key) else info.get("title")
+    name = label_of(key) if str(key).startswith("xv-") else x_text(info) if is_x(key) else info.get("title")
     stem = f"{_safe(name or key)} [{vid_of(key) or key}]"
     new = os.path.join(folder, stem + os.path.splitext(path)[1])
     os.replace(path, new)
@@ -365,7 +395,7 @@ async def download(url, folder, key, height=720, progress=None, cancelled=None):
         lang = sub[len(os.path.join(folder, key)) + 1:-4]
         os.replace(sub, os.path.join(folder, f"{stem}.{lang}.srt"))
     req = load_request(folder, key)
-    req.update(file=os.path.basename(new), title=info.get("title") or req.get("title") or "")
+    req.update(file=os.path.basename(new), title=name or info.get("title") or req.get("title") or "")
     with open(_req_path(folder, key), "w", encoding="utf-8") as f:
         json.dump(req, f, ensure_ascii=False)
     return new
@@ -395,8 +425,12 @@ def fields(info, req):
     """캡션 칸 ({name} {title} {uploader} {date} {url} {summary}) - 연도는 비워 둔다 (영화 중복 확인에 쓰이지 않게)"""
     d = str(info.get("upload_date") or "")
     date = f"{d[:4]}-{d[4:6]}-{d[6:8]}" if re.fullmatch(r"\d{8}", d) else ""
-    x = str(info.get("extractor_key") or "").lower() == "twitter" or "x.com/" in str(req.get("url") or "")
-    title = (x_text(info) if x else str(info.get("title") or req.get("title") or "")).strip()
+    url = str(req.get("url") or "")
+    xv = "video.twimg.com/" in url            # 영상 파일만 (게시물 글·작성자 없음)
+    x = xv or str(info.get("extractor_key") or "").lower() == "twitter" or "x.com/" in url
+    title = (str(req.get("title") or label_of(twimg_key(url) or "xv-")) if xv else x_text(info) if x else str(info.get("title") or req.get("title") or "")).strip()
+    if xv:
+        info = {k: v for k, v in info.items() if k not in ("description", "uploader", "uploader_id", "channel")}
     desc = str(info.get("description") or "").strip()
     if x:
         desc = re.sub(r"\s*https?://t\.co/\S+", "", desc).strip()
