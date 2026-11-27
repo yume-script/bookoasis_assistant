@@ -80,33 +80,81 @@ def _check_host(url):
             raise GrabError("내부(사설) 주소의 페이지는 열지 않습니다.")
 
 
-def fetch(url, session=None):
-    """페이지 HTML (리다이렉트를 하나씩 확인하며 따라감)"""
+_REDIRECT = (301, 302, 303, 307, 308)
+
+
+def _requests_get(session=None):
+    """requests로 한 번 받기 -> (상태, location, 본문, 인코딩). 테스트는 session을 넘긴다"""
     import requests
     s = session or requests.Session()
-    cur = str(url or "").strip()
-    for _ in range(6):
-        _check_host(cur)
+
+    def get(url):
         try:
-            r = s.get(cur, headers={"User-Agent": UA, "Accept-Language": "ko,en;q=0.8"}, timeout=TIMEOUT,
+            r = s.get(url, headers={"User-Agent": UA, "Accept-Language": "ko,en;q=0.8"}, timeout=TIMEOUT,
                       allow_redirects=False, stream=True)
         except requests.RequestException as e:
             raise GrabError(f"페이지를 열지 못했습니다: {str(e)[:200]}") from None
-        if r.is_redirect and r.headers.get("location"):
-            cur = urllib.parse.urljoin(cur, r.headers["location"])
+        try:
+            body = b""
+            if r.status_code < 300:
+                for chunk in r.iter_content(65536):
+                    body += chunk
+                    if len(body) > MAX_BYTES:
+                        break
+            return r.status_code, r.headers.get("location") or "", body, r.encoding
+        finally:
             r.close()
+    return get
+
+
+def _cffi_get():
+    """curl_cffi로 브라우저(크롬)를 흉내 내 받기 - 파이썬 요청을 TLS 지문으로 끊는 사이트용. 설치돼 있지 않으면 None"""
+    try:
+        from curl_cffi import requests as cr
+    except ImportError:
+        return None
+    s = cr.Session(impersonate="chrome")
+
+    def get(url):
+        try:
+            r = s.get(url, headers={"Accept-Language": "ko-KR,ko;q=0.9,en;q=0.8"}, timeout=TIMEOUT, allow_redirects=False)
+        except Exception as e:  # noqa: BLE001 - curl 오류(연결 끊김·시간 초과 등)
+            raise GrabError(f"페이지를 열지 못했습니다: {str(e)[:200]}") from None
+        return r.status_code, r.headers.get("location") or "", (r.content or b"")[:MAX_BYTES + 1], r.encoding
+    return get
+
+
+def _follow(get, url):
+    """리다이렉트를 하나씩 확인하며 따라가 (HTML, 마지막 주소)"""
+    cur = str(url or "").strip()
+    for _ in range(6):
+        _check_host(cur)
+        status, loc, body, enc = get(cur)
+        if status in _REDIRECT and loc:
+            cur = urllib.parse.urljoin(cur, loc)
             continue
-        if r.status_code >= 400:
-            r.close()
-            raise GrabError(f"페이지가 응답하지 않습니다 (HTTP {r.status_code}).")
-        body = b""
-        for chunk in r.iter_content(65536):
-            body += chunk
-            if len(body) > MAX_BYTES:
-                break
-        r.close()
-        return body.decode(r.encoding or "utf-8", "replace"), cur
+        if status >= 400:
+            raise GrabError(f"페이지가 응답하지 않습니다 (HTTP {status}).")
+        return body[:MAX_BYTES].decode(enc or "utf-8", "replace"), cur
     raise GrabError("리다이렉트가 너무 많습니다.")
+
+
+def fetch(url, session=None):
+    """페이지 HTML. 브라우저 흉내(curl_cffi)로 먼저, 없거나 끊기면 requests로. 테스트는 session(requests 모양)을 넘긴다"""
+    if session is not None:
+        return _follow(_requests_get(session), url)
+    cffi = _cffi_get()
+    if cffi is None:
+        return _follow(_requests_get(), url)
+    try:
+        return _follow(cffi, url)
+    except GrabError as e:
+        if "내부(사설)" in str(e) or "http:// 또는" in str(e) or "주소를 찾지" in str(e):
+            raise
+        try:
+            return _follow(_requests_get(), url)
+        except GrabError:
+            raise e from None
 
 
 def _path():

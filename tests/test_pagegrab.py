@@ -85,6 +85,69 @@ class PageGrabTest(unittest.TestCase):
         with self.assertRaises(pagegrab.GrabError):     # 공인 주소에서 내부 주소로 리다이렉트하면 막음
             pagegrab.fetch("https://example.org/a", session=S([R(302, "http://127.0.0.1:5999/api")]))
 
+    def test_fetch_prefers_browser_and_falls_back(self):
+        calls = []
+
+        def cffi(url):
+            calls.append(("cffi", url))
+            raise pagegrab.GrabError("페이지를 열지 못했습니다: Connection reset by peer")
+
+        def req(url):
+            calls.append(("req", url))
+            return 200, "", HTML.encode(), "utf-8"
+        old = (pagegrab._cffi_get, pagegrab._requests_get, pagegrab._check_host)
+        self.addCleanup(lambda: (setattr(pagegrab, "_cffi_get", old[0]), setattr(pagegrab, "_requests_get", old[1]),
+                                 setattr(pagegrab, "_check_host", old[2])))
+        pagegrab._check_host = lambda u: None
+        pagegrab._cffi_get, pagegrab._requests_get = (lambda: cffi), (lambda session=None: req)
+        text, _ = pagegrab.fetch("https://example.org/a")
+        self.assertEqual([c[0] for c in calls], ["cffi", "req"])          # 브라우저 흉내가 끊기면 requests로
+        self.assertIn("video.twimg.com", text)
+        calls.clear()
+        pagegrab._cffi_get = lambda: (lambda url: calls.append(("cffi", url)) or (200, "", b"<p>ok</p>", None))
+        self.assertEqual(pagegrab.fetch("https://example.org/a")[0], "<p>ok</p>")
+        self.assertEqual([c[0] for c in calls], ["cffi"])                  # 되면 그것만
+        pagegrab._cffi_get = lambda: None                                   # curl_cffi가 없으면 requests
+        calls.clear()
+        pagegrab.fetch("https://example.org/a")
+        self.assertEqual([c[0] for c in calls], ["req"])
+
+    def test_cffi_real_request(self):
+        """curl_cffi가 설치돼 있으면 실제로 (이 컴퓨터 안의 작은 서버에서) 받아 본다"""
+        try:
+            import curl_cffi  # noqa: F401
+        except ImportError:
+            self.skipTest("curl_cffi 없음")
+        import http.server
+        import threading
+
+        class H(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                if self.path == "/go":
+                    self.send_response(302)
+                    self.send_header("Location", "/page")
+                    self.end_headers()
+                    return
+                body = HTML.encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *a):
+                pass
+        srv = http.server.HTTPServer(("127.0.0.1", 0), H)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        self.addCleanup(srv.shutdown)
+        old = pagegrab._check_host
+        pagegrab._check_host = lambda u: None
+        self.addCleanup(setattr, pagegrab, "_check_host", old)
+        os.environ["NO_PROXY"] = "127.0.0.1"
+        text, final = pagegrab._follow(pagegrab._cffi_get(), f"http://127.0.0.1:{srv.server_port}/go")
+        self.assertTrue(final.endswith("/page"))
+        self.assertEqual(len(pagegrab.extract(text)), 2)
+
 
 class FakeMirror:
     def __init__(self):
