@@ -31,6 +31,8 @@ import hashlib
 import json
 import os
 import re
+import tempfile
+import threading
 import time
 import zipfile
 
@@ -614,11 +616,15 @@ _atexit.register(flush_state)
 _atexit.register(lambda: flush_epub_cache(force=True))
 
 
-def _save_state(series_dir, archives, sig, dir_mtime=None):
+def _save_state(series_dir, archives, sig, dir_mtime=None, size=None):
+    if size is None:
+        size = _size(os.path.join(series_dir, YAML_NAME))
     with ss._lock:   # 여러 작품을 동시에 처리할 때 서로 덮어쓰지 않게
         st = _load_state()
         rec = {"latest": archives[-1][0], "count": len(archives), "sig": sig,
                "v": SIG_VERSION, "at": time.time()}
+        if size is not None:
+            rec["size"] = size       # 쓴 파일 크기 - 다음 점검 때 stat만으로 잘린 파일을 알아본다
         if dir_mtime is None:
             dir_mtime = _dir_mtime(series_dir)
         if dir_mtime is not None:
@@ -667,6 +673,30 @@ def _quick_unchanged(series_dir, path, sig):
     return os.path.exists(path)
 
 
+def _size(path):
+    try:
+        return os.path.getsize(path)
+    except OSError:
+        return None
+
+
+class _Broken(Exception):
+    """기존 kavita.yaml이 UTF-8로 읽히지 않음 (쓰다가 잘린 파일 등)"""
+
+
+def _read_existing(path):
+    """기존 kavita.yaml 내용 (없으면 None). 깨져 있으면(UTF-8이 아님·끝이 잘림) _Broken"""
+    try:
+        with open(path, "rb") as f:
+            raw = f.read()
+    except OSError:
+        return None
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError as e:
+        raise _Broken("%d바이트 중 %d번째에서 UTF-8이 깨짐 (%s)" % (len(raw), e.start, e.reason)) from None
+
+
 def _already_current(path, series_dir, archives, sig):
     """kavita.yaml에 최종 회차가 이미 반영돼 있고 작품 정보도 그대로면 True."""
     if not os.path.exists(path):
@@ -676,6 +706,8 @@ def _already_current(path, series_dir, archives, sig):
     if rec:
         if rec.get("latest") != latest or rec.get("count") != count:
             return False                    # 새 회차/회차 변경 -> 다시 씀
+        if rec.get("size") is not None and _size(path) != rec["size"]:
+            return False                    # 쓴 뒤로 크기가 바뀜(잘림·다른 곳에서 씀) -> 다시 씀
         if rec.get("v") != SIG_VERSION:
             # 1.32.1 이전 기록(서명 방식이 다름): 회차는 그대로이므로 다시 쓰지 않고
             # 새 방식 서명만 기록해 둔다(업데이트 직후 전체 yaml이 한꺼번에 바뀌지 않게)
@@ -685,9 +717,10 @@ def _already_current(path, series_dir, archives, sig):
     # 이 기능 이전에 만들어진 yaml: 파일 안에 최종 회차 항목이 있고 회차 수가 같으면
     # 최신으로 보고 기록만 남긴다(작품 정보 변경은 다음부터 서명으로 감지).
     try:
-        with open(path, "r", encoding="utf-8") as f:
-            text = f.read()
-    except OSError:
+        text = _read_existing(path)
+    except _Broken:
+        return False                        # 깨진 파일 -> 다시 씀
+    if text is None:
         return False
     if ("    %s:\n" % json.dumps(latest, ensure_ascii=False)) in text and \
             text.count("\n        page: ") == count:
@@ -768,12 +801,12 @@ def _write_kavita_yaml_impl(download_root, title_id, session=None, embed_cover=T
         # 없어도 파일이 바뀌었다. 새로 받는 건 표지가 아직 없을 때와
         # [전체 작품 kavita.yaml 생성/갱신](force_info) 때뿐.
         # 기존 파일은 한 번만 읽는다 (원격 마운트라 읽기마다 느림 - 예전엔 표지 꺼내기와 비교로 두 번 읽었다)
-        old = None
         try:
-            with open(path, "r", encoding="utf-8") as f:
-                old = f.read()
-        except OSError:
-            pass
+            old = _read_existing(path)
+        except _Broken as e:                # 잘린 파일 등 - 버리고 새로 만든다 (표지도 새로 받음)
+            old = None
+            if log:
+                log("%s: 기존 kavita.yaml이 깨져 있어 새로 만듭니다 - %s" % (title, e))
         cover = None
         if embed_cover:
             if not force_info and old:
@@ -790,11 +823,8 @@ def _write_kavita_yaml_impl(download_root, title_id, session=None, embed_cover=T
             _save_state(series_dir, archives, _meta_sig(t, platform, embed_cover))
             return "unchanged"
 
-        tmp_path = path + ".tmp"
-        with open(tmp_path, "w", encoding="utf-8", newline="\n") as f:
-            f.write(text)
-        ss.replace_file(tmp_path, path)
-        _save_state(series_dir, archives, _meta_sig(t, platform, embed_cover))
+        size = _write_atomic(path, text)
+        _save_state(series_dir, archives, _meta_sig(t, platform, embed_cover), size=size)
         if log:
             log("%s: kavita.yaml 갱신 (%d개 회차)" % (title, len(archives)))
         return "written"
@@ -802,6 +832,47 @@ def _write_kavita_yaml_impl(download_root, title_id, session=None, embed_cover=T
         if log:
             log("titleId=%s: kavita.yaml 생성 실패(무시하고 계속) - %s" % (tid, e))
         return "error"
+
+
+_PATH_LOCKS = {}
+_PATH_LOCKS_GUARD = threading.Lock()
+
+
+def _path_lock(path):
+    with _PATH_LOCKS_GUARD:
+        return _PATH_LOCKS.setdefault(os.path.abspath(path), threading.Lock())
+
+
+def _write_atomic(path, text):
+    """kavita.yaml을 안전하게 쓴다 -> 쓴 바이트 수.
+    - 임시 파일 이름을 쓸 때마다 따로 (예전엔 모두 'kavita.yaml.tmp'라, 같은 작품을 두 곳에서 동시에 쓰면
+      한쪽이 임시 파일을 비우는 사이 다른 쪽이 그것을 옮겨 끝이 잘린 kavita.yaml이 남을 수 있었다)
+    - 다 쓴 뒤 크기를 확인하고 디스크로 밀어낸 다음에만 바꿔 넣는다
+    - 같은 파일은 이 프로세스 안에서 한 번에 하나만 쓴다"""
+    data = text.encode("utf-8")
+    d = os.path.dirname(path) or "."
+    with _path_lock(path):
+        fd, tmp = tempfile.mkstemp(dir=d, prefix=".%s." % YAML_NAME, suffix=".tmp")
+        try:
+            with os.fdopen(fd, "wb") as f:
+                f.write(data)
+                f.flush()
+                try:
+                    os.fsync(f.fileno())
+                except OSError:
+                    pass                    # 원격 마운트에 따라 fsync를 못 할 수 있음
+            got = _size(tmp)
+            if got != len(data):
+                raise OSError("임시 파일 크기가 다릅니다 (%s / %d바이트)" % (got, len(data)))
+            ss.replace_file(tmp, path)
+            tmp = None
+        finally:
+            if tmp and os.path.exists(tmp):
+                try:
+                    os.remove(tmp)
+                except OSError:
+                    pass
+    return len(data)
 
 
 def _first_cover_in(text):
@@ -822,10 +893,10 @@ def _first_cover_in(text):
 def _existing_first_cover(path):
     """기존 kavita.yaml에서 files 블록 첫 항목의 cover 값(base64)을 읽는다."""
     try:
-        with open(path, "r", encoding="utf-8") as f:
-            return _first_cover_in(f.read())
-    except OSError:
+        text = _read_existing(path)
+    except _Broken:
         return None
+    return _first_cover_in(text) if text else None
 
 
 def write_kavita_yaml(*args, **kwargs):

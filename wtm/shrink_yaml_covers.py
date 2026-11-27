@@ -58,11 +58,7 @@ def shrink_file(path, width, apply):
         lines[i] = indent + "cover: " + (json.dumps(small) if raw.startswith('"') else small)
         new = "\n".join(lines)
         if apply:
-            tmp = path + ".tmp"
-            with open(tmp, "w", encoding="utf-8", newline="\n") as f:
-                f.write(new)
-            from wtm import state_store as ss
-            ss.replace_file(tmp, path)
+            ky._write_atomic(path, new)   # 임시 파일 이름을 따로 (kavita_yaml과 동시에 써도 잘리지 않게)
         return len(text.encode("utf-8")), len(new.encode("utf-8"))
     return None
 
