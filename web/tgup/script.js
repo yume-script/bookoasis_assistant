@@ -78,6 +78,7 @@
         if (name === 'rules') renderRules(panes.rules);
         if (name === 'send') renderSend(panes.send);
         if (name === 'youtube') renderYoutube(panes.youtube);
+        if (name === 'pagewatch') renderWatch(panes.pagewatch);
         if (name === 'copy') renderCopy(panes.copy);
         if (name === 'account') renderAccount(panes.account);
         try { history.replaceState(null, '', `#${name}`); } catch (e) { /* 무시 */ }
@@ -218,12 +219,115 @@
             h('p', { class: 'field-hint', text: '진행 목록 끝에 들어가 차례가 되면 받고(규칙의 화질 이하) 올립니다 - 텔레그램에서 바로 재생되는 mp4로, 크면 나눠서. '
                 + 'X 게시물은 글 첫 줄이 {name}, 작성자(@아이디)가 {uploader}, 글 전체가 {summary}입니다 - 로그인해야 보이는 게시물(민감한 내용·비공개 계정)은 받지 못합니다. video.twimg.com 영상 파일 주소는 글이 없어 "X 영상 <번호>"로 올라갑니다. '
                 + '캡션 틀은 규칙에서 바꿉니다 ({name} 제목 · {uploader} 채널 · {date} · {url} · {summary} 설명). 저작권이 있는 영상은 권리자가 허락한 범위에서만 올려 주세요.' })));
-        pane.append(pageGrabBox(ruleSel, againIn));
+    }
+
+    // ── 페이지 감시 ──
+    // 페이지를 정해 두면 서버가 주기마다(기본 10분) 읽어 새 X 영상(video.twimg.com mp4)만 그 규칙의 채널에 올린다 + 한 번만 찾기
+    async function renderWatch(pane) {
+        clear(pane).appendChild(loading());
+        let st, ws;
+        try { [st, ws] = await Promise.all([api('api/tgup'), api('api/tgup/watches')]); } catch (e) { clear(pane).append(h('p', { class: 'muted error', text: e.message })); return; }
+        const rules = (st.settings.rules || []).filter((r) => r.media === 'youtube');
+        clear(pane);
+        if (!rules.length) {
+            pane.append(h('p', { class: 'muted', text: '유튜브·X 규칙이 없습니다. [규칙] 탭에서 [규칙 더하기] → 종류 "유튜브·X 링크"를 고르고 올릴 텔레그램 채널을 정해 저장해 주세요.' }));
+            return;
+        }
+        const ruleName = (id) => { const r = rules.find((x) => x.id === id); return r ? `${r.channel_title || r.channel}${r.enabled ? '' : ' (규칙 꺼짐)'}` : '(지워진 규칙)'; };
+        const ruleSelect = (cur) => h('select', { class: 'select' }, rules.map((r) => h('option', { value: r.id, selected: r.id === cur, text: `▶ ${r.channel_title || r.channel}${r.enabled ? '' : ' (꺼짐)'}` })));
+        const when = (t) => (t ? new Date(t * 1000).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '아직 안 함');
+        const list = h('div', { class: 'watch-list' });
+
+        function drawList(items) {
+            clear(list);
+            if (!items.length) { list.append(h('p', { class: 'muted', text: '감시하는 페이지가 없습니다. 아래에서 더해 주세요.' })); return; }
+            items.forEach((w) => {
+                const onBox = h('input', { type: 'checkbox', checked: !!w.enabled });
+                onBox.addEventListener('change', async () => {
+                    try { drawList((await post('api/tgup/watches', { action: 'save', watch: { ...w, enabled: onBox.checked } })).watches || []); } catch (e) { toast(e.message, 'error'); onBox.checked = !onBox.checked; }
+                });
+                const runBtn = h('button', { class: 'btn' }, icon('rotate'), ' 지금 확인');
+                runBtn.addEventListener('click', async () => {
+                    runBtn.disabled = true;
+                    try {
+                        const r = await post('api/tgup/watches', { action: 'run', id: w.id });
+                        const x = r.watch || {};
+                        toast(x.last_error ? x.last_error : x.last_new ? `새 영상 ${x.last_new}개를 진행 목록에 넣었습니다.` : '새 영상이 없습니다.', x.last_error ? 'error' : 'success', 6000);
+                        drawList(r.watches || []);
+                    } catch (e) { toast(e.message, 'error', 6000); } finally { runBtn.disabled = false; }
+                });
+                const editBtn = h('button', { class: 'btn' }, icon('pen'), ' 고치기');
+                editBtn.addEventListener('click', () => fill(w));
+                const delBtn = h('button', { class: 'icon-btn', title: '감시 지우기' }, icon('trash'));
+                delBtn.addEventListener('click', async () => {
+                    if (!confirm(`이 페이지 감시를 지울까요?\n${w.url}`)) return;
+                    try { drawList((await post('api/tgup/watches', { action: 'delete', id: w.id })).watches || []); } catch (e) { toast(e.message, 'error'); }
+                });
+                const state = w.last_error ? h('span', { class: 'error', text: `⚠ ${w.last_error}` })
+                    : h('span', { class: 'muted', text: w.last_at ? `마지막 확인 ${when(w.last_at)} · 새 영상 ${w.last_new || 0}개${w.note ? ` · ${w.note}` : ''} · 지금까지 본 영상 ${w.seen_count || 0}개` : '아직 확인하지 않았습니다' });
+                list.append(h('div', { class: 'mirror-rule watch-item' },
+                    h('div', { class: 'toolbar' }, h('label', { class: 'check', title: '켜 두면 주기마다 확인합니다' }, onBox, ' '),
+                        h('a', { href: w.url, target: '_blank', rel: 'noopener noreferrer', class: 'watch-title', text: w.title || w.url, title: w.url })),
+                    h('p', { class: 'muted', text: `→ ${ruleName(w.rule)} · ${w.every}분마다${w.existing ? '' : ' · 처음 있던 영상은 건너뜀'}` }),
+                    h('p', {}, state),
+                    h('div', { class: 'toolbar' }, runBtn, editBtn, delBtn)));
+            });
+        }
+
+        // 더하기/고치기
+        const editing = { id: '' };
+        const urlIn = h('input', { class: 'input', type: 'url', placeholder: 'https://… (X 영상이 올라오는 페이지 주소)', spellcheck: false });
+        const ruleSel = ruleSelect(rules[0].id);
+        const everyIn = h('input', { class: 'input', type: 'number', min: '5', max: '1440', value: '10', style: { width: '7rem' } });
+        const existIn = h('input', { type: 'checkbox', checked: true });
+        const saveBtn = h('button', { class: 'btn btn-accent' }, icon('plus'), ' 감시 더하기');
+        const cancelBtn = h('button', { class: 'btn hidden' }, '고치기 그만');
+        function fill(w) {
+            editing.id = w ? w.id : '';
+            urlIn.value = w ? w.url : '';
+            ruleSel.value = w ? w.rule : rules[0].id;
+            everyIn.value = w ? w.every : 10;
+            existIn.checked = w ? !!w.existing : true;
+            saveBtn.lastChild.textContent = w ? ' 고친 것 저장' : ' 감시 더하기';
+            cancelBtn.classList.toggle('hidden', !w);
+            if (w) form.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+        cancelBtn.addEventListener('click', () => fill(null));
+        saveBtn.addEventListener('click', async () => {
+            if (!urlIn.value.trim()) { toast('페이지 주소를 넣어 주세요.', 'error'); return; }
+            saveBtn.disabled = true;
+            try {
+                const cur = (ws.watches || []).find((x) => x.id === editing.id) || {};
+                const r = await post('api/tgup/watches', { action: 'save', watch: { id: editing.id, url: urlIn.value.trim(), rule: ruleSel.value,
+                    every: Number(everyIn.value) || 10, existing: existIn.checked, enabled: editing.id ? cur.enabled !== false : true } });
+                ws.watches = r.watches || [];
+                drawList(ws.watches);
+                toast(editing.id ? '저장했습니다.' : '감시를 더했습니다 - 1분 안에 처음 확인합니다.', 'success');
+                fill(null);
+            } catch (e) { toast(e.message, 'error', 6000); } finally { saveBtn.disabled = false; }
+        });
+        const form = h('div', { class: 'mirror-rule' },
+            h('h3', { text: '페이지 감시 더하기' }),
+            field('페이지 주소', urlIn),
+            field('올릴 채널 (유튜브·X 규칙)', ruleSel),
+            field('확인 주기 (분)', everyIn, '5분부터. 페이지를 너무 자주 읽으면 사이트가 막을 수 있습니다.'),
+            h('label', { class: 'check' }, existIn, ' 처음 확인 때 페이지에 이미 있는 영상도 올리기 (끄면 그 뒤 새로 올라온 것만)'),
+            h('div', { class: 'toolbar' }, saveBtn, cancelBtn));
+
+        pane.append(
+            h('p', { class: 'field-hint', text: '정해 둔 페이지를 주기마다 읽어, 전에 본 적 없는 X 영상(video.twimg.com의 mp4)만 그 규칙의 텔레그램 채널에 올립니다. '
+                + '같은 영상은 가장 큰 화질 하나, 이미 올린 영상은 다시 올리지 않습니다. 자동 올리기가 켜져 있는 동안 돌아갑니다. 저작권이 있는 영상은 권리자가 허락한 범위에서만 올려 주세요.' }),
+            list, form);
+        drawList(ws.watches || []);
+        const onceSel = ruleSelect(rules[0].id);
+        const onceAgain = h('input', { type: 'checkbox' });
+        pane.append(pageGrabBox(onceSel, onceAgain, h('div', { class: 'toolbar' }, field('올릴 채널', onceSel),
+            h('label', { class: 'check', title: '같은 영상(파일 이름)을 이 채널에 이미 올렸어도 다시 올립니다' }, onceAgain, ' 이미 올린 영상도 다시 올리기'))));
     }
 
     // 페이지에서 X 영상 찾기: 페이지 주소 -> 서버가 HTML에서 video.twimg.com mp4 주소를 뽑아 저장 -> 고른 것을 위 규칙의 채널로
     const pgState = { open: '' };
-    function pageGrabBox(ruleSel, againIn) {
+    function pageGrabBox(ruleSel, againIn, extra) {
         const box = h('div', { class: 'mirror-rule', id: 'pageGrab' });
         const urlIn = h('input', { class: 'input', type: 'url', placeholder: 'https://… (X 영상이 들어 있는 페이지 주소)', spellcheck: false });
         const findBtn = h('button', { class: 'btn btn-accent' }, icon('magnifying-glass'), ' 찾기');
@@ -287,9 +391,10 @@
             } catch (e) { toast(e.message, 'error', 6000); } finally { findBtn.disabled = false; }
         });
         urlIn.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); findBtn.click(); } });
-        box.append(h('h3', { text: '페이지에서 X 영상 찾기' }),
+        box.append(h('h3', { text: '한 번만 찾아 올리기' }),
             h('p', { class: 'field-hint', text: '페이지 주소를 넣으면 그 페이지에 들어 있는 X 영상 파일 주소(video.twimg.com의 mp4)를 찾아 저장합니다. '
-                + '고른 영상은 위에서 고른 규칙의 채널로 올립니다. 영상을 스크립트로 나중에 불러오는 페이지는 찾지 못할 수 있습니다.' }),
+                + '고른 영상만 아래 채널로 올립니다. 영상을 스크립트로 나중에 불러오는 페이지는 찾지 못할 수 있습니다.' }),
+            extra || null,
             h('div', { class: 'toolbar' }, urlIn, findBtn), result, recent);
         api('api/tgup/pages').then((r) => {
             drawRecent(r.pages || []);

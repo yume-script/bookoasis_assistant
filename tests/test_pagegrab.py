@@ -86,5 +86,72 @@ class PageGrabTest(unittest.TestCase):
             pagegrab.fetch("https://example.org/a", session=S([R(302, "http://127.0.0.1:5999/api")]))
 
 
+class FakeMirror:
+    def __init__(self):
+        self.added = []
+
+    async def add_youtube(self, rule, urls, again=False):
+        if rule != "yt1":
+            raise ValueError("유튜브 규칙을 골라 주세요.")
+        self.added.append((rule, list(urls)))
+        return len(urls), 0
+
+
+V3 = "https://video.twimg.com/ext_tw_video/1790000000000000003/pu/vid/avc1/720x1280/n.mp4"
+
+
+class WatchTest(unittest.TestCase):
+    def setUp(self):
+        compat.DATA_DIR = tempfile.mkdtemp(prefix="pw-data-")
+
+    def run_(self, coro):
+        import asyncio
+        return asyncio.run(coro)
+
+    def test_save_validates(self):
+        w = pagegrab.save_watch({"url": "https://example.org/p", "rule": "yt1", "every": 2})
+        self.assertEqual((w["every"], w["enabled"], w["existing"], w["seen_count"]), (pagegrab.WATCH_MIN, True, True, 0))
+        with self.assertRaises(pagegrab.GrabError):
+            pagegrab.save_watch({"url": "https://example.org/p", "rule": "yt1"})     # 같은 페이지·규칙
+        with self.assertRaises(pagegrab.GrabError):
+            pagegrab.save_watch({"url": "ftp://x", "rule": "yt1"})
+        with self.assertRaises(pagegrab.GrabError):
+            pagegrab.save_watch({"url": "https://example.org/q", "rule": ""})
+        w2 = pagegrab.save_watch({"id": w["id"], "url": "https://example.org/p", "rule": "yt1", "every": 30, "enabled": False})
+        self.assertEqual((w2["id"], w2["every"], w2["enabled"]), (w["id"], 30, False))
+        self.assertNotIn("seen", w2)
+        pagegrab.delete_watch(w["id"])
+        self.assertEqual(pagegrab.watches(), [])
+
+    def test_sends_only_new_videos(self):
+        mir, html_now = FakeMirror(), [HTML]
+        fetch = lambda u: (html_now[0], u)   # noqa: E731
+        w = pagegrab.save_watch({"url": "https://example.org/p", "rule": "yt1"})
+        got = self.run_(pagegrab.check_watch(mir, w["id"], fetch))
+        self.assertEqual((got["last_new"], got["last_error"], got["seen_count"], got["title"]), (2, "", 2, "고양이 & 강아지 모음"))
+        self.assertFalse(pagegrab.due(pagegrab.watches()[0], got["last_at"] + 60))           # 10분 안엔 다시 안 함
+        self.assertTrue(pagegrab.due(pagegrab.watches()[0], got["last_at"] + 600))
+        got = self.run_(pagegrab.check_watch(mir, w["id"], fetch))
+        self.assertEqual((got["last_new"], len(mir.added)), (0, 1))                          # 같은 페이지면 아무것도
+        html_now[0] = HTML + f' <video src="{V3}"></video>'
+        got = self.run_(pagegrab.check_watch(mir, w["id"], fetch))
+        self.assertEqual((got["last_new"], mir.added[-1][1]), (1, [V3]))                     # 새로 올라온 것만
+        self.assertIn(V3, pagegrab.load()[0]["sent"])                                          # 찾은 기록에도 보냄 표시
+        html_now[0] = "<p>지금은 없음</p>"
+        got = self.run_(pagegrab.check_watch(mir, w["id"], fetch))
+        self.assertEqual((got["last_error"], got.get("note")), ("", "영상 없음"))
+
+    def test_first_check_can_skip_existing_and_errors_retry(self):
+        mir = FakeMirror()
+        fetch = lambda u: (HTML, u)   # noqa: E731
+        w = pagegrab.save_watch({"url": "https://example.org/p", "rule": "yt1", "existing": False})
+        got = self.run_(pagegrab.check_watch(mir, w["id"], fetch))
+        self.assertEqual((got["last_new"], got["seen_count"], mir.added), (0, 2, []))        # 처음 있던 것은 본 것으로만
+        bad = pagegrab.save_watch({"url": "https://example.org/z", "rule": "nope"})
+        got = self.run_(pagegrab.check_watch(mir, bad["id"], fetch))
+        self.assertIn("유튜브 규칙", got["last_error"])
+        self.assertEqual(got["seen_count"], 0)                                                 # 못 넣었으면 다음에 다시
+
+
 if __name__ == "__main__":
     unittest.main()
