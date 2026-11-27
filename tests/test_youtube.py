@@ -101,6 +101,20 @@ class DownloadTest(unittest.TestCase):
         youtube.cleanup(self.folder, key, path)
         self.assertEqual(os.listdir(self.folder), [])
 
+    def test_download_passes_cookies(self):
+        """넣어 둔 쿠키 파일을 yt-dlp에 --cookies로"""
+        from tgup import compat
+        old_dir = compat.DATA_DIR
+        compat.DATA_DIR = self.d
+        self.addCleanup(setattr, compat, "DATA_DIR", old_dir)
+        youtube.save_cookies(".youtube.com\tTRUE\t/\tTRUE\t1999999999\tSID\tabc\n")
+        key = "yt-AAAAAAAAAAA"
+        youtube.save_request(self.folder, key, "https://www.youtube.com/watch?v=AAAAAAAAAAA")
+        asyncio.run(youtube.download("https://www.youtube.com/watch?v=AAAAAAAAAAA", self.folder, key, 720))
+        with open(os.environ["FAKE_ARGS"]) as f:
+            args = json.load(f)
+        self.assertEqual(args[args.index("--cookies") + 1], youtube.cookies_path())
+
     def test_download_error(self):
         with self.assertRaises(RuntimeError) as cm:
             asyncio.run(youtube.download("https://www.youtube.com/watch?v=fail", self.folder, "yt-fail", 720))

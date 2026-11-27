@@ -188,6 +188,7 @@
         const rules = (st.settings.rules || []).filter((r) => r.media === 'youtube');
         clear(pane);
         if (!st.ytdlp) pane.append(h('p', { class: 'muted error', text: '서버에 yt-dlp가 없습니다 - 설치 폴더에서 venv/bin/pip install yt-dlp 후 다시 시작하세요 (또는 [설정 > 정보 > 지금 업데이트]).' }));
+        pane.append(ytCookieBox(st.yt_cookies || {}));
         if (!rules.length) {
             pane.append(h('p', { class: 'muted', text: '유튜브 규칙이 없습니다. [규칙] 탭에서 [규칙 더하기] → 종류 "유튜브 링크"를 고르고 올릴 텔레그램 채널을 정해 저장해 주세요.' }));
             return;
@@ -216,6 +217,50 @@
             h('div', { class: 'toolbar' }, h('label', { class: 'check', title: '같은 영상(파일 이름)을 이 채널에 이미 올렸어도 다시 올립니다' }, againIn, ' 이미 올린 영상도 다시 올리기'), sendBtn),
             h('p', { class: 'field-hint', text: '진행 목록 끝에 들어가 차례가 되면 받고(규칙의 화질 이하) 올립니다 - 텔레그램에서 바로 재생되는 mp4로, 크면 나눠서. '
                 + '캡션 틀은 규칙에서 바꿉니다 ({name} 제목 · {uploader} 채널 · {date} · {url} · {summary} 설명). 저작권이 있는 영상은 권리자가 허락한 범위에서만 올려 주세요.' })));
+    }
+
+    // 유튜브 쿠키: "봇이 아닌지 로그인으로 확인" 요구로 못 받을 때 - cookies.txt(Netscape 형식)를 넣으면 yt-dlp가 씀. 내용은 다시 보여 주지 않음
+    function ytCookieBox(ck) {
+        const stateEl = h('p', { class: 'field-hint' });
+        const sumEl = h('summary');
+        const draw = (c) => {
+            sumEl.textContent = `유튜브 쿠키 ${c.set ? '(넣어 둠)' : '(없음)'}`;
+            stateEl.className = `field-hint${c.set ? '' : ' muted'}`;
+            stateEl.textContent = c.source === 'env'
+                ? (c.missing ? `.env의 YTDLP_COOKIES 경로(${c.path})에 파일이 없습니다.` : `.env의 YTDLP_COOKIES 파일을 씁니다 (${c.path}, ${new Date(c.updated * 1000).toLocaleString()} 수정).`)
+                : c.set ? `✓ 쿠키를 넣어 두었습니다 (${new Date(c.updated * 1000).toLocaleString()} 저장).`
+                    : '쿠키 없음 - 유튜브가 로그인(봇 확인)을 요구하면 받지 못합니다.';
+            delBtn.classList.toggle('hidden', c.source !== 'upload');
+        };
+        const fileIn = h('input', { type: 'file', accept: '.txt,text/plain' });
+        const textIn = h('textarea', { class: 'input', rows: '3', spellcheck: false, style: { width: '100%' }, placeholder: '# Netscape HTTP Cookie File\n.youtube.com\tTRUE\t/\tTRUE\t…   (또는 위에서 파일 고르기)' });
+        fileIn.addEventListener('change', async () => { const f = fileIn.files && fileIn.files[0]; if (f) textIn.value = await f.text(); });
+        const saveBtn = h('button', { class: 'btn btn-sm btn-accent', type: 'button' }, icon('cookie-bite'), ' 쿠키 저장');
+        const delBtn = h('button', { class: 'btn btn-sm', type: 'button' }, icon('trash'), ' 지우기');
+        saveBtn.addEventListener('click', async () => {
+            if (!textIn.value.trim()) { toast('cookies.txt 파일을 고르거나 내용을 붙여 넣어 주세요.', 'error'); return; }
+            saveBtn.disabled = true;
+            try {
+                const r = await post('api/tgup/youtube_cookies', { text: textIn.value });
+                textIn.value = ''; fileIn.value = '';
+                draw(r.cookies);
+                toast(`쿠키 ${r.rows}줄을 저장했습니다. 실패한 영상은 [받아서 올리기]로 다시 넣어 주세요.`, 'success', 6000);
+            } catch (e) { toast(e.message, 'error', 8000); } finally { saveBtn.disabled = false; }
+        });
+        delBtn.addEventListener('click', async () => {
+            try { const r = await post('api/tgup/youtube_cookies', { delete: true }); draw(r.cookies); toast('쿠키를 지웠습니다.'); }
+            catch (e) { toast(e.message, 'error'); }
+        });
+        draw(ck);
+        return h('details', { class: 'mirror-rule', open: !ck.set },
+            sumEl,
+            stateEl,
+            h('div', { class: 'toolbar' }, fileIn),
+            textIn,
+            h('div', { class: 'toolbar' }, saveBtn, delBtn),
+            h('p', { class: 'field-hint', text: '유튜브가 서버를 봇으로 보고 "로그인해서 확인"을 요구하면 쿠키가 있어야 받을 수 있습니다. '
+                + '브라우저의 시크릿 창에서 유튜브 부계정으로 로그인한 뒤 확장 프로그램(예: Get cookies.txt LOCALLY)으로 youtube.com 쿠키를 cookies.txt로 내보내 넣고, 그 창은 닫으세요 '
+                + '(본 계정은 제한될 수 있어 부계정을 권합니다). 쿠키는 이 서버에만 저장되고 화면에 다시 보이지 않습니다. 만료되면 실패 사유에 다시 알려 줍니다.' }));
     }
 
     // ── 채널 복사 ──

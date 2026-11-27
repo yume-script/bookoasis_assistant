@@ -231,7 +231,7 @@ def account_title(st):
 
 def _state():
     return {"success": True, "settings": plex_to_tg.load_settings(), "status": RUNNER.run(RUNNER.mirror.status),
-            "ytdlp": youtube.available(),
+            "ytdlp": youtube.available(), "yt_cookies": youtube.cookies_status(),
             "llm_key": bool(hardsub_llm.api_key()), "llm_key_env": hardsub_llm.key_from_env(),
             "plex": bool(compat.plex_conf()["url"]), "ffmpeg": compat.available(),
             "rclone": bool(folder_watch.rclone_path()), "notify": notify.public(notify.settings())}
@@ -405,6 +405,15 @@ def api_post(path, body):
         conf = hardsub_llm.settings({**(body or {}), "enabled": True})
         key = str(body.get("key") or "").strip()
         return {"success": True, **RUNNER.call(hardsub_llm.check(RUNNER.http, conf, None if key in ("", "-") else key), 90)}
+    if path == "/api/tgup/youtube_cookies":   # 유튜브 쿠키 {text: cookies.txt 내용} 저장 / {delete: true} 지우기 - 내용은 돌려주지 않음
+        if body.get("delete"):
+            youtube.delete_cookies()
+            return {"success": True, "cookies": youtube.cookies_status()}
+        try:
+            n = youtube.save_cookies(body.get("text") or "")
+        except ValueError as e:
+            raise ApiError(400, str(e))
+        return {"success": True, "rows": n, "cookies": youtube.cookies_status()}
     if path == "/api/tgup/youtube":   # 유튜브 보내기 {rule, urls(글 또는 목록), again}
         try:
             n, dup = RUNNER.call(m.add_youtube(str(body.get("rule") or ""), body.get("urls") or "", bool(body.get("again"))), 180)
