@@ -73,6 +73,40 @@ class TgupTest(unittest.TestCase):
         finally:
             shutil.rmtree(folder, ignore_errors=True)
 
+    def test_send_dirs(self):
+        """파일 골라 보내기: 폴더를 고르면 그 안(하위 폴더까지)의 올릴 파일 모두 - 이미 올린 것은 빼고, 폴더 밖은 막음"""
+        api_post, ApiError = self.service.api_post, self.service.ApiError
+        from tgup import plex_to_tg
+        data = self.compat.load()
+        data.pop("telegram", None)
+        self.compat.save(data)
+        folder = tempfile.mkdtemp(prefix="tgup-dirs-")
+        try:
+            for rel in ("시즌2/E02.mp4", "시즌2/특별/E99.mkv", "시즌2/메모.txt", "시즌2/.숨김.mkv", "시즌3/E01.mp4", "영화.mkv"):
+                os.makedirs(os.path.dirname(os.path.join(folder, rel)), exist_ok=True)
+                with open(os.path.join(folder, rel), "wb") as f:
+                    f.write(b"x" * 10)
+            vid = api_post("/api/tgup/settings", {"rules": [
+                {"kind": "folder", "folder": folder, "tg": "tg", "channel": "-100123", "channel_title": "채널"}]})["settings"]["rules"][0]
+            st = plex_to_tg.load_state()
+            st["rules"].setdefault(vid["id"], {})["done"] = ["시즌3/E01.mp4"]            # 이미 올린 것
+            plex_to_tg.save_state(st)
+            m = self.service.RUNNER.mirror
+            keys = lambda: [j["key"] for j in self.service.RUNNER.run(lambda: list(m.queue)) if j.get("rule") == vid["id"]]   # noqa: E731
+            r = api_post("/api/tgup/send", {"rule": vid["id"], "dirs": ["시즌2"], "keys": ["영화.mkv"]})
+            self.assertEqual(r["count"], 3)
+            self.assertEqual(keys(), ["영화.mkv", "시즌2/E02.mp4", "시즌2/특별/E99.mkv"])
+            with self.assertRaises(ApiError) as cm:                                     # 이미 올린 것뿐
+                api_post("/api/tgup/send", {"rule": vid["id"], "dirs": ["시즌3"]})
+            self.assertIn("이미 올린", str(cm.exception))
+            self.assertEqual(api_post("/api/tgup/send", {"rule": vid["id"], "dirs": ["시즌3"], "again": True})["count"], 1)
+            for bad in ("../..", ""):
+                with self.assertRaises(ApiError):
+                    api_post("/api/tgup/send", {"rule": vid["id"], "dirs": [bad]})
+        finally:
+            api_post("/api/tgup/item", {"action": "cancel_all"})   # (다음 시험의 진행 목록에 남지 않게)
+            shutil.rmtree(folder, ignore_errors=True)
+
     def test_send_files(self):
         """파일 골라 보내기: 규칙 폴더 안을 보고(동영상만, 하위 폴더), 고른 파일을 진행 목록에 (폴더 밖은 막음)"""
         api_post, api_get, ApiError = self.service.api_post, self.service.api_get, self.service.ApiError

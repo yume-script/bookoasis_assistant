@@ -27,8 +27,8 @@ from . import compat
 
 log = logging.getLogger("tgup")
 YT_CAPTION = "{name}\n\n📺 {uploader} · {date}\n🔗 {url}\n\n{summary}"
-MAX_URLS = 50
-PLAYLIST_MAX = 200
+MAX_URLS = 300       # 한 번에 넣을 수 있는 링크 수
+PLAYLIST_MAX = 300   # 재생목록 하나에서 가져오는 영상 수
 _ID_RE = re.compile(r"^[A-Za-z0-9_-]{11}$")
 _HOSTS = ("youtube.com", "youtu.be", "youtube-nocookie.com")
 _X_HOSTS = ("x.com", "twitter.com", "fxtwitter.com", "vxtwitter.com", "fixupx.com", "fixvx.com", "twittpr.com")

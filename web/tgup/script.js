@@ -697,9 +697,11 @@
         const listBox = h('div', { class: 'send-list' });
         const crumb = h('div', { class: 'toolbar send-crumb' });
         const picked = new Map();   // key -> 파일 이름 (폴더를 옮겨 다녀도 고른 것은 남는다)
+        const pickedDirs = new Map();   // 폴더 경로 -> 이름 (그 안의 파일 모두 - 하위 폴더까지, 보낼 때 서버가 펼친다)
         const syncBtn = () => {
-            sendBtn.disabled = !picked.size;
-            sendBtn.lastChild.textContent = picked.size ? ` 보내기 (${picked.size}개)` : ' 보내기';
+            sendBtn.disabled = !picked.size && !pickedDirs.size;
+            const parts = [picked.size ? `파일 ${picked.size}개` : '', pickedDirs.size ? `폴더 ${pickedDirs.size}개` : ''].filter(Boolean);
+            sendBtn.lastChild.textContent = parts.length ? ` 보내기 (${parts.join(' · ')})` : ' 보내기';
         };
         async function show(sub) {
             sendState.sub = sub;
@@ -718,8 +720,14 @@
             clear(listBox);
             if (sub) listBox.append(h('button', { class: 'send-row send-dir', type: 'button', on: { click: () => show(parts.slice(0, -1).join('/')) } },
                 icon('arrow-up'), h('span', { text: '위로' })));
-            d.dirs.forEach((n) => listBox.append(h('button', { class: 'send-row send-dir', type: 'button', on: { click: () => show(sub ? `${sub}/${n}` : n) } },
-                icon('folder'), h('span', { text: n }))));
+            d.dirs.forEach((n) => {
+                const path = sub ? `${sub}/${n}` : n;
+                const c = h('input', { type: 'checkbox', checked: pickedDirs.has(path), title: '이 폴더의 파일 모두 (하위 폴더까지)' });
+                c.addEventListener('change', () => { if (c.checked) pickedDirs.set(path, n); else pickedDirs.delete(path); syncBtn(); });
+                listBox.append(h('div', { class: 'send-row send-dir send-dir-pick' }, c,
+                    h('button', { class: 'send-dir-open', type: 'button', title: '폴더 열기', on: { click: () => show(path) } },
+                        icon('folder'), h('span', { text: n }))));
+            });
             const boxes = [];
             d.files.forEach((f) => {
                 const c = h('input', { type: 'checkbox', checked: picked.has(f.key) });
@@ -737,13 +745,15 @@
             };
             if (!d.dirs.length && !d.files.length) listBox.append(h('p', { class: 'muted', text: d.music ? '음악 파일이 없습니다.' : '동영상 파일이 없습니다.' }));
         }
-        ruleSel.addEventListener('change', () => { sendState.rule = ruleSel.value; picked.clear(); syncBtn(); show(''); });
+        ruleSel.addEventListener('change', () => { sendState.rule = ruleSel.value; picked.clear(); pickedDirs.clear(); syncBtn(); show(''); });
         sendBtn.addEventListener('click', async () => {
             sendBtn.disabled = true;
             try {
-                const r = await post('api/tgup/send', { rule: sendState.rule, keys: [...picked.keys()], again: againIn.checked });
+                if (pickedDirs.size) toast('고른 폴더의 파일을 찾는 중... (드라이브에 따라 시간이 걸릴 수 있습니다)');
+                const r = await post('api/tgup/send', { rule: sendState.rule, keys: [...picked.keys()], dirs: [...pickedDirs.keys()], again: againIn.checked });
                 toast(r.count ? `${r.count}개를 진행 목록에 넣었습니다.` : '이미 진행 목록에 있습니다.', 'success');
                 picked.clear();
+                pickedDirs.clear();
                 showTab('status');
             } catch (e) { toast(e.message, 'error', 6000); syncBtn(); }
         });
@@ -754,7 +764,7 @@
                 h('label', { class: 'check', title: '같은 파일·파일 이름·회차를 이미 올렸어도 다시 올립니다' }, againIn, ' 이미 올린 파일도 다시 올리기'),
                 sendBtn),
             listBox,
-            h('p', { class: 'field-hint', text: '폴더를 옮겨 다니며 여러 폴더의 파일을 함께 고를 수 있습니다. 고른 파일은 진행 목록 끝에 들어가고, 제외 정규식·자막 기다리기는 건너뜁니다 (나머지 처리 - 인코딩·자막 입히기·나누기, 음악은 태그 캡션 - 는 규칙대로).' })));
+            h('p', { class: 'field-hint', text: '폴더를 옮겨 다니며 여러 폴더의 파일을 함께 고를 수 있습니다. 폴더 앞을 체크하면 그 폴더의 파일 모두(하위 폴더까지, 이미 올린 파일은 빼고)를 보냅니다. 고른 파일은 진행 목록 끝에 들어가고, 제외 정규식·자막 기다리기는 건너뜁니다 (나머지 처리 - 인코딩·자막 입히기·나누기, 음악은 태그 캡션 - 는 규칙대로).' })));
         show(sendState.rule === ruleSel.value ? sendState.sub : '');
     }
 
