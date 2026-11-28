@@ -157,3 +157,8 @@ textarea.input { resize: vertical; }
 .watch-list { display: flex; flex-direction: column; gap: 0.6rem; margin-bottom: 1rem; }
 .watch-item p { margin: 0.2rem 0; overflow-wrap: anywhere; }
 .watch-title { font-weight: 600; overflow-wrap: anywhere; min-width: 0; }
+/* 파일 골라 보내기: 폴더 줄 = [체크(그 안의 파일 모두)] + [폴더 열기] */
+.send-dir-pick { cursor: default; }
+.send-dir-open { display: flex; align-items: center; gap: 0.6rem; flex: 1; min-width: 0; padding: 0; border: 0; background: none; color: inherit;
+  font: inherit; text-align: left; cursor: pointer; }
+.send-dir-open span { overflow-wrap: anywhere; }

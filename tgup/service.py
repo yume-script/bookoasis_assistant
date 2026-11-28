@@ -351,6 +351,36 @@ async def _files(rule_id, sub):
             "music": rule.get("media") == "music"}
 
 
+SEND_MAX = 1000   # [파일 골라 보내기] 한 번에 넣을 수 있는 파일 수 (폴더를 고르면 그 안의 파일 모두를 센다)
+
+
+async def _dir_keys(rule_id, dirs, again=False):
+    """[파일 골라 보내기] 고른 폴더들 -> 그 안(하위 폴더까지)의 올릴 파일 key들 (이름순).
+    again이 아니면 이 규칙으로 이미 올린 파일은 뺀다"""
+    rule = next((r for r in plex_to_tg.load_settings()["rules"] if r["id"] == rule_id), None)
+    if not rule or rule["kind"] != "folder" or rule.get("media") == "youtube":
+        raise ApiError(400, "폴더(rclone 드라이브) 규칙을 골라 주세요.")
+    folder, exts = rule["folder"], plex_to_tg.rule_exts(rule)
+    done = set() if again else set((plex_to_tg.load_state()["rules"].get(rule_id) or {}).get("done") or [])
+    out = []
+    for raw in dirs:
+        sub = plex_to_tg.clean_key(str(raw or ""))
+        if not sub:
+            raise ApiError(400, "규칙 폴더 밖은 고를 수 없습니다.")
+        target = folder_watch._join_remote(folder, sub) if folder_watch.is_remote(folder) else os.path.join(folder, sub)
+        try:
+            found = await folder_watch.scan(target, exts)
+        except OSError as e:
+            raise ApiError(400, f"폴더를 열 수 없습니다 ({sub}): {e.strerror or e}")
+        except folder_watch.FolderError as e:
+            raise ApiError(400, f"{sub}: {e}")
+        keys = sorted((f"{sub}/{f['key']}" for f in found), key=str.casefold)
+        out += [k for k in keys if k not in done]
+        if len(out) > SEND_MAX:
+            raise ApiError(400, f"고른 폴더의 파일이 너무 많습니다 ({SEND_MAX}개까지) - 폴더를 나눠서 보내 주세요.")
+    return out
+
+
 def api_post(path, body):
     if not RUNNER.loop:
         raise ApiError(503, "자동 올리기가 꺼져 있습니다 (aiohttp·telethon 설치 후 다시 시작).")
@@ -395,12 +425,17 @@ def api_post(path, body):
             return {"success": True, "title": RUNNER.call(m.test_latest(str(body.get("rule") or "")))}
         except Exception as e:  # noqa: BLE001
             raise ApiError(400, str(e))
-    if path == "/api/tgup/send":   # 파일 골라 보내기 {rule, keys, again}
+    if path == "/api/tgup/send":   # 파일 골라 보내기 {rule, keys, dirs(폴더 - 그 안의 파일 모두), again}
         keys = body.get("keys") if isinstance(body.get("keys"), list) else []
+        dirs = body.get("dirs") if isinstance(body.get("dirs"), list) else []
+        if dirs:
+            keys = list(dict.fromkeys([*map(str, keys), *RUNNER.call(_dir_keys(str(body.get("rule") or ""), dirs, bool(body.get("again"))), 900)]))
+            if not keys:
+                raise ApiError(400, "고른 폴더에 올릴 파일이 없습니다 (이미 올린 파일은 뺐습니다 - 다시 올리려면 [이미 올린 파일도 다시 올리기]).")
         if not keys:
             raise ApiError(400, "보낼 파일을 골라 주세요.")
-        if len(keys) > 500:
-            raise ApiError(400, "한 번에 500개까지 보낼 수 있습니다.")
+        if len(keys) > SEND_MAX:
+            raise ApiError(400, f"한 번에 {SEND_MAX}개까지 보낼 수 있습니다.")
         try:
             n = RUNNER.run(m.send_files, str(body.get("rule") or ""), [str(k) for k in keys], bool(body.get("again")))
         except ValueError as e:
